@@ -1,4 +1,4 @@
-import { decryptField } from "./crypto";
+import { decryptField } from "./crypto.js";
 
 const dateOnly = (d: Date | null | undefined) => (d ? d.toISOString().split("T")[0] : "");
 const isoDate = (d: Date | null | undefined) => (d ? d.toISOString() : "");

@@ -8,7 +8,7 @@ import {
   setSessionCookie,
   clearSessionCookie,
   requireSession,
-} from "./auth";
+} from "./auth.js";
 import {
   mapUser,
   mapClient,
@@ -19,7 +19,7 @@ import {
   mapConfigItem,
   mapInstrument,
   mapInstrumentLog,
-} from "./mappers";
+} from "./mappers.js";
 
 const app = express();
 app.use(express.json({ limit: "2mb" }));

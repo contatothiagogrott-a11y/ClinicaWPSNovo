@@ -5,7 +5,7 @@
  * testar a API na sua própria máquina antes de publicar.
  */
 import "dotenv/config";
-import app from "./_lib/app";
+import app from "./_lib/app.js";
 
 const PORT = process.env.API_PORT ? Number(process.env.API_PORT) : 8787;
 
