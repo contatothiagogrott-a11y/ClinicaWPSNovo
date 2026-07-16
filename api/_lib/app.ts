@@ -1,6 +1,6 @@
 import express, { type Request, type Response, type NextFunction } from "express";
-import { prisma } from "./prisma";
-import { encryptField } from "./crypto";
+import { prisma } from "./prisma.js";
+import { encryptField } from "./crypto.js";
 import {
   hashPassword,
   verifyPassword,
