@@ -1,0 +1,261 @@
+// Schema completo do sistema da clínica.
+// Campos que terminam em "Enc" guardam texto CRIPTOGRAFADO (AES-256-GCM)
+// em base64. A criptografia/decriptação acontece na camada da API
+// (api/_lib/crypto.ts), nunca no banco. O Prisma só vê strings opacas.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  SUPERVISOR
+  ADMIN
+  PSICO
+}
+
+enum ClientStatus {
+  FILA_ESPERA
+  TRIAGEM
+  TRIADOS
+  EM_ATENDIMENTO
+  FINALIZADO
+}
+
+enum Priority {
+  BAIXA
+  MEDIA
+  ALTA
+  URGENTE
+}
+
+enum ConfigType {
+  AFFILIATION
+  ALLOCATION
+  ROOM
+  TAG
+}
+
+enum InstrumentLogType {
+  CONSUMPTION
+  ADJUSTMENT
+  INITIAL
+}
+
+model User {
+  id                String    @id @default(uuid())
+  name              String
+  email             String    @unique
+  passwordHash      String
+  role              Role      @default(PSICO)
+
+  title             String?
+  institutionalLink String?
+  birthDate         DateTime?
+  matricula         String?
+  crp               String?
+  color             String?
+  capacity          Json?
+
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  assignedClients   Client[]          @relation("AssignedPsico")
+  sessions          SessionRecord[]
+  groupsLed         Group[]
+  groupRecords      GroupRecord[]
+  appointments      Appointment[]
+  instrumentLogs    InstrumentLog[]
+  instrumentApps    InstrumentApplication[]
+  historyLogs       HistoryLog[]
+}
+
+model Client {
+  id                     String        @id @default(uuid())
+  protocolNumber         String
+  signedAgreement        Boolean       @default(false)
+
+  // Dados pessoais sensíveis (LGPD) - criptografados em repouso
+  fullNameEnc              String
+  whatsappEnc              String
+  birthDateEnc             String
+  emergencyContactNameEnc  String
+  emergencyContactPhoneEnc String
+
+  registrationCode       String
+  affiliation            String
+  allocation             String
+  dependencyType         String?
+  dependencySponsor      String?
+  tags                   String[]      @default([])
+  dateIncluded           DateTime      @default(now())
+  status                 ClientStatus  @default(FILA_ESPERA)
+  priority               Priority?
+  assignedPsicoId        String?
+  assignedPsico          User?         @relation("AssignedPsico", fields: [assignedPsicoId], references: [id])
+  maxSessions            Int           @default(0)
+  completedSessions      Int           @default(0)
+  defaultRoom            String?
+  defaultTime            String?
+
+  createdAt              DateTime      @default(now())
+  updatedAt              DateTime      @updatedAt
+
+  history                HistoryLog[]
+  sessions               SessionRecord[]
+  appointments           Appointment[]
+  instrumentApps         InstrumentApplication[]
+  groupMemberships       GroupMember[]
+
+  @@index([status])
+  @@index([assignedPsicoId])
+}
+
+model HistoryLog {
+  id          String   @id @default(uuid())
+  clientId    String
+  client      Client   @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  date        DateTime @default(now())
+  actorId     String
+  actor       User     @relation(fields: [actorId], references: [id])
+  action      String
+  detailsEnc  String?
+
+  @@index([clientId])
+}
+
+model SessionRecord {
+  id            String    @id @default(uuid())
+  clientId      String
+  client        Client    @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  psicoId       String
+  psico         User      @relation(fields: [psicoId], references: [id])
+  date          DateTime
+  notesEnc      String    @default("")
+  isDraft       Boolean   @default(true)
+  status        String?
+  groupId       String?
+  appointmentId String?
+  attendance    String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  versions      RecordVersion[]
+
+  @@index([clientId])
+  @@index([psicoId])
+}
+
+model RecordVersion {
+  id            String        @id @default(uuid())
+  sessionId     String
+  session       SessionRecord @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  oldContentEnc String
+  savedAt       DateTime      @default(now())
+}
+
+model Group {
+  id             String    @id @default(uuid())
+  name           String
+  objective      String
+  methodology    String?
+  frequency      String?
+  criteria       String?
+  createdAt      DateTime  @default(now())
+  isActive       Boolean   @default(true)
+  psychologistId String
+  psychologist   User      @relation(fields: [psychologistId], references: [id])
+
+  members        GroupMember[]
+  records        GroupRecord[]
+  appointments   Appointment[]
+}
+
+model GroupMember {
+  groupId  String
+  group    Group  @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  clientId String
+  client   Client @relation(fields: [clientId], references: [id], onDelete: Cascade)
+
+  @@id([groupId, clientId])
+}
+
+model GroupRecord {
+  id          String   @id @default(uuid())
+  contentEnc  String
+  sessionDate DateTime
+  groupId     String
+  group       Group    @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  authorId    String
+  author      User     @relation(fields: [authorId], references: [id])
+  createdAt   DateTime @default(now())
+  isDraft     Boolean  @default(true)
+}
+
+model ConfigItem {
+  id       String     @id @default(uuid())
+  type     ConfigType
+  name     String
+  isActive Boolean    @default(true)
+
+  @@index([type])
+}
+
+model Appointment {
+  id            String    @id @default(uuid())
+  clientId      String?
+  client        Client?   @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  groupId       String?
+  group         Group?    @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  psicoId       String
+  psico         User      @relation(fields: [psicoId], references: [id])
+  roomId        String
+  date          DateTime
+  time          String
+  endTime       String?
+  seriesId      String?
+  recurrence    String?
+  sessionNumber Int?
+  attendance    String? @default("PENDENTE")
+
+  @@index([date])
+  @@index([psicoId])
+}
+
+model Instrument {
+  id           String                   @id @default(uuid())
+  name         String
+  sheetCount   Int                      @default(0)
+  logs         InstrumentLog[]
+  applications InstrumentApplication[]
+}
+
+model InstrumentLog {
+  id             String            @id @default(uuid())
+  instrumentId   String
+  instrument     Instrument        @relation(fields: [instrumentId], references: [id], onDelete: Cascade)
+  date           DateTime          @default(now())
+  type           InstrumentLogType
+  amount         Int
+  newCount       Int
+  userId         String
+  user           User              @relation(fields: [userId], references: [id])
+  protocolNumber String?
+  reason         String?
+}
+
+model InstrumentApplication {
+  id           String     @id @default(uuid())
+  clientId     String
+  client       Client     @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  instrumentId String
+  instrument   Instrument @relation(fields: [instrumentId], references: [id])
+  date         DateTime   @default(now())
+  psychoId     String
+  psycho       User       @relation(fields: [psychoId], references: [id])
+  resultsEnc   String
+}

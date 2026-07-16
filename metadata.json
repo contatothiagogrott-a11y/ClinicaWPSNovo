@@ -1,0 +1,4 @@
+{
+  "name": "Clínica Inteligente",
+  "description": "Sistema de gestão para clínica psicológica com níveis de acesso estruturados, prontuários criptografados e banco de dados próprio (Neon/Postgres)."
+}
