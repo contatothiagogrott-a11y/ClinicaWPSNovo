@@ -1,275 +1,244 @@
-import { useState, useMemo } from "react";
-import { useNavigate } from "react-router-dom";
+import { useMemo, useState, useCallback } from "react";
 import { useStore } from "../contexts/StoreContext";
-import { format, startOfToday, isSameDay, parse } from "date-fns";
+import { Calendar, dateFnsLocalizer, Views, type View } from "react-big-calendar";
+import withDragAndDrop from "react-big-calendar/lib/addons/dragAndDrop";
+import "react-big-calendar/lib/css/react-big-calendar.css";
+import "react-big-calendar/lib/addons/dragAndDrop/styles.css";
+import { format, parse, startOfWeek as dfStartOfWeek, getDay, addHours } from "date-fns";
 import { ptBR } from "date-fns/locale";
-import { ChevronLeft, MapPin, User as UserIcon, Plus } from "lucide-react";
+import { Plus, LayoutGrid, Columns3 } from "lucide-react";
 import { cn } from "../lib/utils";
 import AgendaModal from "../components/AgendaModal";
-import { DayPicker } from "react-day-picker";
-import "react-day-picker/dist/style.css";
 import { Appointment } from "../types";
 
-export default function Agenda() {
-  const navigate = useNavigate();
-  const { config, appointments, clients, currentUser, users, groups } = useStore();
-  const [selectedDate, setSelectedDate] = useState<Date>(startOfToday());
-  const [modalData, setModalData] = useState<{ time: string, endTime?: string, roomId: string, date: string } | null>(null);
-  const [editAppt, setEditAppt] = useState<Appointment | null>(null);
-  const rooms = config.rooms.filter(r => r.isActive).map(r => r.name);
-  
-  const [filterMode, setFilterMode] = useState<"GERAL" | "MEUS">("GERAL");
-  const [selectedRoom, setSelectedRoom] = useState<string | null>(null);
+const localizer = dateFnsLocalizer({
+  format,
+  parse,
+  startOfWeek: (date: Date) => dfStartOfWeek(date, { weekStartsOn: 1 }),
+  getDay,
+  locales: { "pt-BR": ptBR },
+});
 
-  const dateStr = format(selectedDate, "yyyy-MM-dd");
+// Definido fora do componente para não recriar o componente a cada render
+// (isso faria o calendário perder estado interno de arraste/scroll).
+const DnDCalendar = withDragAndDrop(Calendar as any) as any;
+
+interface CalEvent {
+  id: string;
+  title: string;
+  start: Date;
+  end: Date;
+  resourceId: string;
+  appt: Appointment;
+}
+
+const messages = {
+  today: "Hoje",
+  previous: "Anterior",
+  next: "Próximo",
+  month: "Mês",
+  week: "Semana",
+  day: "Dia",
+  agenda: "Lista",
+  date: "Data",
+  time: "Hora",
+  event: "Evento",
+  noEventsInRange: "Nenhum agendamento neste período.",
+  showMore: (total: number) => `+${total} mais`,
+};
+
+export default function AgendaPage() {
+  const { config, appointments, clients, currentUser, users, groups, updateAppointment } = useStore();
+  const activeRooms = config.rooms.filter(r => r.isActive).map(r => r.name);
+
+  const [view, setView] = useState<View>(Views.WEEK);
+  const [date, setDate] = useState(new Date());
+  const [viewMode, setViewMode] = useState<"geral" | "porSala">("geral");
+  const [scopeFilter, setScopeFilter] = useState<"GERAL" | "MEUS">("GERAL");
+  const [roomFilter, setRoomFilter] = useState<string>("");
+
+  const [modalData, setModalData] = useState<{ time: string; endTime?: string; roomId: string; date: string } | null>(null);
+  const [editAppt, setEditAppt] = useState<Appointment | null>(null);
 
   let filteredAppointments = appointments;
-  if (filterMode === "MEUS" && currentUser?.role === "PSICO") {
-     filteredAppointments = filteredAppointments.filter(a => a.psicoId === currentUser.id);
+  if (scopeFilter === "MEUS" && currentUser?.role === "PSICO") {
+    filteredAppointments = filteredAppointments.filter(a => a.psicoId === currentUser.id);
+  }
+  if (viewMode === "geral" && roomFilter) {
+    filteredAppointments = filteredAppointments.filter(a => a.roomId === roomFilter);
   }
 
-  // To show dots on the calendar
-  const roomAppointments = selectedRoom ? filteredAppointments.filter(a => a.roomId === selectedRoom) : [];
-  
-  const daysWithAppointments = useMemo(() => {
-    const days: Date[] = [];
-    roomAppointments.forEach(a => {
-       days.push(parse(a.date, 'yyyy-MM-dd', new Date()));
+  const events: CalEvent[] = useMemo(() => filteredAppointments.map(a => {
+    const client = a.clientId ? clients.find(c => c.id === a.clientId) : null;
+    const group = a.groupId ? groups.find(g => g.id === a.groupId) : null;
+    const title = client ? client.fullName : group ? `Grupo: ${group.name}` : "Reservado";
+    const start = new Date(`${a.date}T${a.time}:00`);
+    const end = a.endTime ? new Date(`${a.date}T${a.endTime}:00`) : addHours(start, 1);
+    return { id: a.id, title, start, end, resourceId: a.roomId, appt: a };
+  }), [filteredAppointments, clients, groups]);
+
+  const resources = useMemo(
+    () => (viewMode === "porSala" ? activeRooms.map(r => ({ resourceId: r, resourceTitle: r })) : undefined),
+    [viewMode, activeRooms]
+  );
+
+  const canEdit = useCallback((appt: Appointment) => {
+    if (!currentUser) return false;
+    if (currentUser.role === "PSICO") return appt.psicoId === currentUser.id;
+    return true;
+  }, [currentUser]);
+
+  const eventPropGetter = useCallback((event: CalEvent) => {
+    const psico = users.find(u => u.id === event.appt.psicoId);
+    const isGroup = !!event.appt.groupId;
+    const color = psico?.color || (isGroup ? "#8b5cf6" : "#3b82f6");
+    const noShow = event.appt.attendance === "FALTA_INJUSTIFICADA" || event.appt.attendance === "FALTA_JUSTIFICADA";
+    return {
+      style: {
+        backgroundColor: `${color}22`,
+        borderLeft: `4px solid ${color}`,
+        color: "#1f2937",
+        opacity: noShow ? 0.55 : 1,
+        borderRadius: 8,
+      },
+    };
+  }, [users]);
+
+  const handleSelectSlot = useCallback((slotInfo: { start: Date; end: Date; resourceId?: string }) => {
+    const roomId = slotInfo.resourceId || roomFilter || activeRooms[0];
+    if (!roomId) {
+      alert("Cadastre pelo menos uma sala ativa em Configurações antes de agendar.");
+      return;
+    }
+    setModalData({
+      date: format(slotInfo.start, "yyyy-MM-dd"),
+      time: format(slotInfo.start, "HH:mm"),
+      endTime: format(slotInfo.end, "HH:mm"),
+      roomId,
     });
-    return days;
-  }, [roomAppointments]);
+  }, [roomFilter, activeRooms]);
 
-  const dayAppointments = roomAppointments.filter(a => a.date === dateStr).sort((a, b) => a.time.localeCompare(b.time));
+  const handleSelectEvent = useCallback((event: CalEvent) => {
+    setEditAppt(event.appt);
+  }, []);
 
-  // Generate 30 min intervals from 08:00 to 20:00
-  const hours = Array.from({ length: 25 }, (_, i) => {
-    const h = Math.floor(i / 2) + 8;
-    const m = i % 2 === 0 ? "00" : "30";
-    return `${h.toString().padStart(2, "0")}:${m}`;
-  });
+  const handleEventDrop = useCallback(({ event, start, end, resourceId }: { event: CalEvent; start: Date; end: Date; resourceId?: string }) => {
+    if (!canEdit(event.appt)) {
+      alert("Você só pode mover os seus próprios atendimentos.");
+      return;
+    }
+    updateAppointment(event.appt.id, {
+      date: format(start, "yyyy-MM-dd"),
+      time: format(start, "HH:mm"),
+      endTime: format(end, "HH:mm"),
+      ...(resourceId ? { roomId: resourceId } : {}),
+    });
+  }, [canEdit, updateAppointment]);
 
-  const handleCreateAppointment = (timeStr: string) => {
-    if (!selectedRoom) return;
-    const [h, m] = timeStr.split(":").map(Number);
-    const endH = (h + 1).toString().padStart(2, "0");
-    const endM = m.toString().padStart(2, "0");
-    setModalData({ time: timeStr, endTime: `${endH}:${endM}`, roomId: selectedRoom, date: dateStr });
+  const handleEventResize = useCallback(({ event, start, end }: { event: CalEvent; start: Date; end: Date }) => {
+    if (!canEdit(event.appt)) {
+      alert("Você só pode redimensionar os seus próprios atendimentos.");
+      return;
+    }
+    updateAppointment(event.appt.id, { time: format(start, "HH:mm"), endTime: format(end, "HH:mm") });
+  }, [canEdit, updateAppointment]);
+
+  const handleNovo = () => {
+    const now = new Date();
+    const roundedMinutes = now.getMinutes() < 30 ? 30 : 0;
+    const startHour = roundedMinutes === 0 ? now.getHours() + 1 : now.getHours();
+    const start = new Date(now);
+    start.setHours(startHour, roundedMinutes, 0, 0);
+    const end = addHours(start, 1);
+    const roomId = roomFilter || activeRooms[0];
+    if (!roomId) {
+      alert("Cadastre pelo menos uma sala ativa em Configurações antes de agendar.");
+      return;
+    }
+    setModalData({ date: format(start, "yyyy-MM-dd"), time: format(start, "HH:mm"), endTime: format(end, "HH:mm"), roomId });
   };
 
   return (
     <div className="h-full flex flex-col animate-in fade-in slide-in-from-bottom-4 duration-500">
-      <header className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
+      <header className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 mb-6">
         <div>
-          <h1 className="text-3xl font-bold text-gray-900 mb-1">
-             {selectedRoom ? "Agenda da Sala" : "Agenda & Salas"}
-          </h1>
-          <p className="text-gray-500">
-             {selectedRoom ? selectedRoom : "Grade de ambientes disponíveis e ocupados."}
-          </p>
+          <h1 className="text-3xl font-bold text-gray-900 mb-1">Agenda</h1>
+          <p className="text-gray-500">Arraste para reagendar, redimensione para ajustar a duração, clique para editar.</p>
         </div>
-        
-        <div className="flex flex-col sm:flex-row items-center gap-4">
-           {currentUser?.role === "PSICO" && (
-             <div className="flex items-center bg-gray-100 p-1 rounded-2xl">
-                <button 
-                   onClick={() => setFilterMode("GERAL")}
-                   className={cn("px-4 py-2 rounded-xl text-sm font-bold transition-all", filterMode === "GERAL" ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-700")}
-                >
-                   Visão Geral
-                </button>
-                <button 
-                   onClick={() => setFilterMode("MEUS")}
-                   className={cn("px-4 py-2 rounded-xl text-sm font-bold transition-all", filterMode === "MEUS" ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-700")}
-                >
-                   Meus Atendimentos
-                </button>
-             </div>
-           )}
+
+        <div className="flex flex-wrap items-center gap-3">
+          {currentUser?.role === "PSICO" && (
+            <div className="flex items-center bg-gray-100 p-1 rounded-2xl">
+              <button onClick={() => setScopeFilter("GERAL")} className={cn("px-4 py-2 rounded-xl text-sm font-bold transition-all", scopeFilter === "GERAL" ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-700")}>Visão Geral</button>
+              <button onClick={() => setScopeFilter("MEUS")} className={cn("px-4 py-2 rounded-xl text-sm font-bold transition-all", scopeFilter === "MEUS" ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-700")}>Meus Atendimentos</button>
+            </div>
+          )}
+
+          <div className="flex items-center bg-gray-100 p-1 rounded-2xl">
+            <button onClick={() => setViewMode("geral")} className={cn("px-3 py-2 rounded-xl text-sm font-bold transition-all flex items-center gap-1.5", viewMode === "geral" ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-700")}>
+              <LayoutGrid size={16} /> Geral
+            </button>
+            <button onClick={() => { setViewMode("porSala"); setView(Views.DAY); }} className={cn("px-3 py-2 rounded-xl text-sm font-bold transition-all flex items-center gap-1.5", viewMode === "porSala" ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-700")}>
+              <Columns3 size={16} /> Por Sala
+            </button>
+          </div>
+
+          {viewMode === "geral" && (
+            <select value={roomFilter} onChange={e => setRoomFilter(e.target.value)} className="bg-gray-100 border-2 border-transparent focus:bg-white focus:border-blue-500 rounded-xl px-3 py-2.5 outline-none transition-all font-semibold text-sm text-gray-700">
+              <option value="">Todas as salas</option>
+              {activeRooms.map(r => <option key={r} value={r}>{r}</option>)}
+            </select>
+          )}
+
+          <button onClick={handleNovo} className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2.5 rounded-xl text-sm font-bold transition-colors shadow-sm flex items-center gap-1.5">
+            <Plus size={16} /> Novo
+          </button>
         </div>
       </header>
 
-      {!selectedRoom ? (
-         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 pb-12">
-            {rooms.map(room => {
-               // Contagem de ocupação hoje
-               const apptsHoje = filteredAppointments.filter(a => a.date === dateStr && a.roomId === room);
-               
-               return (
-                  <button 
-                     key={room}
-                     onClick={() => setSelectedRoom(room)}
-                     className="bg-white border border-gray-100 p-6 rounded-3xl shadow-sm hover:shadow-md hover:border-blue-200 transition-all text-left flex flex-col h-full group"
-                  >
-                     <div className="w-12 h-12 bg-blue-50 text-blue-600 rounded-2xl flex items-center justify-center mb-4 group-hover:scale-110 transition-transform">
-                        <MapPin size={24} />
-                     </div>
-                     <h3 className="text-xl font-bold text-gray-900 mb-2">{room}</h3>
-                     <p className="text-gray-500 text-sm mb-6 flex-1">
-                        Gerencie a agenda, bloqueios e agendamentos deste ambiente.
-                     </p>
-                     <div className="mt-auto w-full">
-                        <div className="flex items-center justify-between text-xs font-bold uppercase tracking-wider text-gray-400 mb-2">
-                           <span>Ocupação Hoje</span>
-                           <span className={apptsHoje.length > 0 ? "text-blue-600" : ""}>{apptsHoje.length} agendamentos</span>
-                        </div>
-                        <div className="w-full bg-gray-100 rounded-full h-2 overflow-hidden">
-                           <div className="bg-blue-600 h-full rounded-full transition-all" style={{ width: `${Math.min(100, (apptsHoje.length / 10) * 100)}%` }} />
-                        </div>
-                     </div>
-                  </button>
-               )
-            })}
-         </div>
-      ) : (
-         <div className="flex flex-col md:flex-row h-full bg-white rounded-3xl shadow-sm border border-gray-100 overflow-hidden relative">
-            {/* Sidebar Calendar */}
-            <div className="w-full md:w-80 lg:w-96 border-b md:border-b-0 md:border-r border-gray-100 bg-gray-50/50 flex flex-col h-full shrink-0">
-               <div className="p-4 border-b border-gray-100 bg-white sticky top-0 z-10 flex items-center">
-                  <button onClick={() => setSelectedRoom(null)} className="font-bold text-gray-500 hover:text-gray-900 flex items-center gap-1 px-4 py-2 hover:bg-gray-100 rounded-xl transition-colors shrink-0">
-                     <ChevronLeft size={20} /> Voltar
-                  </button>
-                  <h3 className="font-bold text-gray-900 border-l border-gray-200 pl-4">{selectedRoom}</h3>
-               </div>
-               
-               <div className="p-4 flex-1 overflow-y-auto w-full flex justify-center">
-                  <div className="bg-white p-2 rounded-3xl shadow-sm border border-gray-100 w-max shrink-0">
-                    <DayPicker 
-                       mode="single"
-                       selected={selectedDate}
-                       onSelect={(d) => d && setSelectedDate(d)}
-                       locale={ptBR}
-                       modifiers={{ hasAppt: daysWithAppointments }}
-                       modifiersClassNames={{
-                          hasAppt: "font-bold underline decoration-blue-500 decoration-2 underline-offset-4"
-                       }}
-                       classNames={{
-                          head_cell: "text-gray-500 font-bold uppercase text-[10px] pb-2",
-                          cell: "p-0 text-center text-sm p-1",
-                          day: "h-10 w-10 mx-auto rounded-full hover:bg-gray-100 transition-colors text-gray-900 font-medium font-sans flex items-center justify-center",
-                          day_selected: "bg-blue-600 text-white hover:bg-blue-700 font-bold",
-                          day_today: "bg-blue-50 text-blue-600 font-bold",
-                          nav_button: "h-8 w-8 hover:bg-gray-100 rounded-full flex items-center justify-center text-gray-500 transition-colors"
-                       }}
-                    />
-                  </div>
-               </div>
-            </div>
-
-            {/* Timeline */}
-            <div className="flex-1 overflow-y-auto p-4 sm:p-6 lg:p-8 bg-white relative">
-               <div className="max-w-2xl mx-auto flex flex-col gap-8 pb-12">
-                 <div className="flex items-center justify-between sticky top-0 bg-white/80 backdrop-blur-md py-4 z-30 border-b border-gray-100 -mt-8 mb-4">
-                    <h2 className="text-xl font-bold text-gray-900 flex items-center gap-2 capitalize">
-                      {format(selectedDate, "EEEE, dd 'de' MMMM", { locale: ptBR })}
-                    </h2>
-                    <button 
-                      onClick={() => handleCreateAppointment("12:00")}
-                      className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-full text-sm font-bold transition-colors shadow-sm flex items-center gap-1"
-                    >
-                      <Plus size={16} /> Novo
-                    </button>
-                 </div>
-
-                 {/* Custom Timeline rendering */}
-                 <div className="relative">
-                   <div className="absolute top-0 bottom-0 left-[3rem] w-px bg-gray-100 -z-10" />
-                   
-                   {/* Grid Background */}
-                   {hours.map(h => {
-                      return (
-                        <div key={h} className="group flex gap-4 h-[5rem] relative">
-                          <div className="w-[3rem] shrink-0 text-right pr-2 text-xs font-bold text-gray-400 -mt-2">
-                             {h}
-                          </div>
-                          
-                          <div className="flex-1 relative border-b border-gray-100 border-dashed">
-                             <div className="absolute inset-0 top-1 bottom-1 opacity-0 group-hover:opacity-100 transition-opacity z-10">
-                               <button 
-                                 onClick={() => handleCreateAppointment(h)}
-                                 className="w-full h-full border-2 border-dashed border-gray-200 hover:border-blue-300 rounded-2xl flex items-center justify-center text-blue-500 font-bold text-sm bg-gray-50/50 hover:bg-blue-50/50 transition-colors"
-                               >
-                                  <Plus size={16} className="mr-1" /> Agendar {h}
-                               </button>
-                             </div>
-                          </div>
-                        </div>
-                      )
-                   })}
-
-                   {/* Absolute Appointments Overlay */}
-                   {dayAppointments.map(appt => {
-                     const client = appt.clientId ? clients.find(c => c.id === appt.clientId) : null;
-                     const group = appt.groupId ? groups.find(g => g.id === appt.groupId) : null;
-                     const isGroup = !!group;
-                     
-                     const [startH, startM] = appt.time.split(":").map(Number);
-                     const startOffsetMinutes = (startH * 60 + startM) - (8 * 60);
-                     const topRem = (startOffsetMinutes / 60) * 5;
-                     
-                     let heightStr = "4.5rem"; // default
-                     if (appt.endTime) {
-                        const [endH, endM] = appt.endTime.split(":").map(Number);
-                        const durationMinutes = (endH * 60 + endM) - (startH * 60 + startM);
-                        const durationRem = (durationMinutes / 60) * 5;
-                        heightStr = `calc(${durationRem}rem - 0.5rem)`;
-                     }
-
-                     return (
-                       <button 
-                         key={appt.id} 
-                         onClick={() => setEditAppt(appt)}
-                         className={cn("absolute left-[4rem] right-4 z-30 p-2 sm:px-3 sm:py-2 rounded-xl border shadow-sm flex flex-col text-left backdrop-blur-md overflow-hidden hover:brightness-95 transition-all text-left", isGroup ? "bg-purple-100/90 border-purple-200 text-purple-900" : "bg-blue-100/90 border-blue-200 text-blue-900")} 
-                         style={{ top: `${topRem}rem`, height: heightStr }}
-                       >
-                          <div className="flex justify-between w-full items-start gap-2 h-full overflow-hidden">
-                             <div className="flex flex-col min-w-0 flex-1 h-full">
-                                <h4 className="font-bold text-sm leading-tight whitespace-normal break-words line-clamp-2">
-                                   {client ? client.fullName : group ? `Grupo: ${group.name}` : "Reservado"}
-                                </h4>
-                                <div className="flex items-center gap-1 mt-0.5 text-xs font-semibold opacity-75 truncate w-full">
-                                   <UserIcon size={12} className="shrink-0" />
-                                   <span className="truncate">{users.find(u => u.id === appt.psicoId)?.name || "Psicólogo"}</span>
-                                   {group && <span className="shrink-0 ml-1">({group.memberIds.length} pac.)</span>}
-                                </div>
-                             </div>
-                             
-                             <div className="flex flex-col items-end shrink-0 gap-1">
-                               <span className={cn("text-[10px] font-bold px-1.5 py-0.5 rounded-md whitespace-nowrap", isGroup ? "bg-purple-200" : "bg-blue-200")}>
-                                  {appt.time} - {appt.endTime || "..."}
-                               </span>
-                               {appt.attendance && appt.attendance !== "PENDENTE" && (
-                                  <span className={cn("text-[9px] uppercase font-bold px-1 py-0.5 rounded", 
-                                     appt.attendance === "COMPARECEU" ? "bg-green-100 text-green-700" : 
-                                     appt.attendance === "FALTA_JUSTIFICADA" ? "bg-orange-100 text-orange-700" : "bg-red-100 text-red-700"
-                                  )}>
-                                     {appt.attendance === "COMPARECEU" ? "Presente" : appt.attendance === "FALTA_JUSTIFICADA" ? "F. Just." : "Falta"}
-                                  </span>
-                               )}
-                             </div>
-                          </div>
-                       </button>
-                     );
-                   })}
-                 </div>
-               </div>
-            </div>
-         </div>
-      )}
+      <div className="flex-1 bg-white rounded-3xl shadow-sm border border-gray-100 p-4 sm:p-6 min-h-[650px]">
+        <DnDCalendar
+          localizer={localizer}
+          culture="pt-BR"
+          messages={messages}
+          events={events}
+          view={viewMode === "porSala" ? Views.DAY : view}
+          onView={(v: View) => setView(v)}
+          date={date}
+          onNavigate={(d: Date) => setDate(d)}
+          views={viewMode === "porSala" ? [Views.DAY] : [Views.MONTH, Views.WEEK, Views.DAY]}
+          resources={resources}
+          resourceIdAccessor="resourceId"
+          resourceTitleAccessor="resourceTitle"
+          step={30}
+          timeslots={2}
+          min={new Date(1970, 1, 1, 7, 0)}
+          max={new Date(1970, 1, 1, 20, 30)}
+          selectable
+          resizable
+          popup
+          style={{ height: "100%" }}
+          eventPropGetter={eventPropGetter}
+          onSelectSlot={handleSelectSlot}
+          onSelectEvent={handleSelectEvent}
+          onEventDrop={handleEventDrop}
+          onEventResize={handleEventResize}
+          draggableAccessor={(e: CalEvent) => canEdit(e.appt)}
+          resizableAccessor={(e: CalEvent) => canEdit(e.appt)}
+        />
+      </div>
 
       {(modalData || editAppt) && (
-        <AgendaModal 
-           open={!!(modalData || editAppt)} 
-           onClose={() => {
-              setModalData(null);
-              setEditAppt(null);
-           }} 
-           initialData={modalData || { 
-             date: editAppt!.date, 
-             time: editAppt!.time, 
-             endTime: editAppt!.endTime, 
-             roomId: editAppt!.roomId 
-           }}
-           existingAppointment={editAppt || undefined}
+        <AgendaModal
+          open={!!(modalData || editAppt)}
+          onClose={() => { setModalData(null); setEditAppt(null); }}
+          initialData={modalData || {
+            date: editAppt!.date,
+            time: editAppt!.time,
+            endTime: editAppt!.endTime,
+            roomId: editAppt!.roomId,
+          }}
+          existingAppointment={editAppt || undefined}
         />
       )}
     </div>

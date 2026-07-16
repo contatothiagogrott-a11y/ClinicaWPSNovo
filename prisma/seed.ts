@@ -11,7 +11,7 @@
  */
 import { PrismaClient } from "@prisma/client";
 import bcrypt from "bcryptjs";
-import { encryptField } from "../api/_lib/crypto";
+import { encryptField } from "../api/_lib/crypto.js";
 
 const prisma = new PrismaClient();
 

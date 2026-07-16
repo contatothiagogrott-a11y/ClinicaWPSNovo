@@ -97,6 +97,7 @@ export interface SessionRecord {
   createdAt: string;
   updatedAt: string;
   attendance?: AttendanceStatus;
+  sessionNumber?: number;
   versions?: RecordVersion[];
 }
 

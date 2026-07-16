@@ -112,25 +112,25 @@ app.get(
     // PSICO só vê os próprios pacientes/sessões/grupos/agenda — Supervisor e Admin veem tudo.
     const clients = isSupervisorOrAdmin
       ? clientsRaw
-      : clientsRaw.filter((c) => c.assignedPsicoId === session.userId);
-    const clientIds = new Set(clients.map((c) => c.id));
+      : clientsRaw.filter((c: any) => c.assignedPsicoId === session.userId);
+    const clientIds = new Set(clients.map((c: any) => c.id));
 
     const sessions = isSupervisorOrAdmin
       ? sessionsRaw
-      : sessionsRaw.filter((s) => s.psicoId === session.userId || clientIds.has(s.clientId));
+      : sessionsRaw.filter((s: any) => s.psicoId === session.userId || clientIds.has(s.clientId));
 
     const appointments = isSupervisorOrAdmin
       ? appointmentsRaw
-      : appointmentsRaw.filter((a) => a.psicoId === session.userId);
+      : appointmentsRaw.filter((a: any) => a.psicoId === session.userId);
 
     const groups = isSupervisorOrAdmin
       ? groupsRaw
-      : groupsRaw.filter((g) => g.psychologistId === session.userId);
-    const groupIds = new Set(groups.map((g) => g.id));
+      : groupsRaw.filter((g: any) => g.psychologistId === session.userId);
+    const groupIds = new Set(groups.map((g: any) => g.id));
 
     const groupRecords = isSupervisorOrAdmin
       ? groupRecordsRaw
-      : groupRecordsRaw.filter((r) => groupIds.has(r.groupId));
+      : groupRecordsRaw.filter((r: any) => groupIds.has(r.groupId));
 
     const instrumentLogs = instrumentLogsRaw; // consumo de material é visível a todos (não é dado clínico)
 
@@ -142,10 +142,10 @@ app.get(
       groups: groups.map(mapGroup),
       groupRecords: groupRecords.map(mapGroupRecord),
       config: {
-        affiliations: configItems.filter((c) => c.type === "AFFILIATION").map(mapConfigItem),
-        allocations: configItems.filter((c) => c.type === "ALLOCATION").map(mapConfigItem),
-        rooms: configItems.filter((c) => c.type === "ROOM").map(mapConfigItem),
-        tags: configItems.filter((c) => c.type === "TAG").map(mapConfigItem),
+        affiliations: configItems.filter((c: any) => c.type === "AFFILIATION").map(mapConfigItem),
+        allocations: configItems.filter((c: any) => c.type === "ALLOCATION").map(mapConfigItem),
+        rooms: configItems.filter((c: any) => c.type === "ROOM").map(mapConfigItem),
+        tags: configItems.filter((c: any) => c.type === "TAG").map(mapConfigItem),
       },
       instruments: instruments.map(mapInstrument),
       instrumentLogs: instrumentLogs.map(mapInstrumentLog),
@@ -421,6 +421,15 @@ app.patch(
   asyncHandler(async (req, res) => {
     const session = requireSession(req, res);
     if (!session) return;
+    const existing = await prisma.appointment.findUnique({ where: { id: req.params.id } });
+    if (!existing) {
+      res.status(404).json({ error: "Agendamento não encontrado." });
+      return;
+    }
+    if (session.role === "PSICO" && existing.psicoId !== session.userId) {
+      res.status(403).json({ error: "Você só pode editar os seus próprios agendamentos." });
+      return;
+    }
     const b = req.body ?? {};
     const data: any = {};
     for (const key of ["roomId", "time", "endTime", "recurrence", "sessionNumber", "attendance", "psicoId", "seriesId"]) {
@@ -443,6 +452,10 @@ app.delete(
     const appt = await prisma.appointment.findUnique({ where: { id: req.params.id } });
     if (!appt) {
       res.status(404).json({ error: "Agendamento não encontrado." });
+      return;
+    }
+    if (session.role === "PSICO" && appt.psicoId !== session.userId) {
+      res.status(403).json({ error: "Você só pode remover os seus próprios agendamentos." });
       return;
     }
     if (deleteFuture && appt.seriesId) {

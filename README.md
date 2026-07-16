@@ -100,10 +100,26 @@ Guarde as duas em um lugar seguro:
    acabou de criar.
 2. A Vercel detecta sozinha que é um projeto **Vite** — não precisa mudar
    Build Command nem Output Directory.
-3. Antes de clicar em "Deploy", abra **Environment Variables** e adicione:
+3. Antes de clicar em "Deploy", abra **Environment Variables** e adicione, uma
+   por uma. Para cada uma, clique para expandir as opções e **ative o toggle
+   "Sensitive"** antes de salvar — isso faz o valor virar ilegível na tela do
+   painel depois de salvo (só dá pra trocar o valor depois, nunca mais
+   visualizar o que já foi salvo), mesmo para quem tiver acesso ao seu projeto
+   na Vercel:
    - `DATABASE_URL` → a string do Neon (Passo 1)
    - `JWT_SECRET` → a primeira senha longa gerada (Passo 2)
    - `ENCRYPTION_KEY` → a segunda senha longa gerada (Passo 2)
+
+   > Sem marcar "Sensitive", qualquer pessoa com acesso ao painel deste projeto
+   > na Vercel consegue ver essas 3 chaves em texto puro. Com "Sensitive"
+   > ativado, elas ficam protegidas mesmo de quem acessa o painel — só o
+   > processo de build/execução consegue usá-las. Uma limitação que nenhuma
+   > ferramenta resolve sozinha: quem tem permissão para **fazer deploy do
+   > código** sempre poderia, em teoria, escrever um trecho de código que exiba
+   > essas chaves de propósito (isso vale para qualquer sistema, não é uma
+   > falha específica daqui). Por isso, mantenha o número de pessoas com acesso
+   > de administrador ao GitHub e à Vercel deste projeto o menor possível — são
+   > elas que, na prática, têm acesso de confiança máxima aos dados da clínica.
 4. Clique em **Deploy**.
 
 Durante o build, a Vercel automaticamente:
@@ -169,6 +185,14 @@ de novo, alguns minutos depois — sem precisar reinstalar nada.
 Nenhuma dessas medidas constitui uma "garantia absoluta" — isso é tecnicamente
 impossível para qualquer sistema. Elas reduzem significativamente o risco e
 seguem práticas reconhecidas de mercado para dados sensíveis de saúde.
+
+**Um ponto que vale reforçar com a equipe**: o cookie de sessão é protegido contra
+scripts maliciosos na página (`httpOnly`), mas se alguém tiver acesso físico (ou
+remoto) a um computador com a sessão de outra pessoa ainda aberta, essa pessoa
+consegue ver esse cookie pelo F12 e, em teoria, usá-lo enquanto ele for válido
+(expira em 12h, ou antes disso ao clicar em "Sair"). Isso vale para praticamente
+qualquer site com login do mundo — o hábito simples que neutraliza isso é sempre
+clicar em **Sair** ao terminar de usar, especialmente em computador compartilhado.
 
 ---
 

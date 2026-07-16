@@ -1,14 +1,17 @@
 import React, { useState } from "react";
 import { useStore } from "../contexts/StoreContext";
-import { X, Calendar as CalendarIcon, Clock, Trash2, Repeat, ExternalLink } from "lucide-react";
+import { X, Clock, Trash2, Repeat, ExternalLink } from "lucide-react";
 import { format } from "date-fns";
 import { ptBR } from "date-fns/locale";
 import { Appointment } from "../types";
 import { Link } from "react-router-dom";
 
 export default function AgendaModal({ open, onClose, initialData, existingAppointment }: { open: boolean, onClose: () => void, initialData: { date: string, time: string, endTime?: string, roomId: string }, existingAppointment?: Appointment }) {
-  const { clients, users, groups, currentUser, addAppointment, updateAppointment, deleteAppointment, appointments, markAttendance } = useStore();
-  
+  const { clients, users, groups, currentUser, addAppointment, updateAppointment, deleteAppointment, appointments, markAttendance, config } = useStore();
+
+  const activeRooms = config.rooms.filter(r => r.isActive).map(r => r.name);
+  const [roomId, setRoomId] = useState(initialData.roomId || activeRooms[0] || "");
+
   let activeClients = clients.filter(c => c.status === "EM_ATENDIMENTO");
   if(currentUser?.role === "PSICO") {
     activeClients = activeClients.filter(c => c.assignedPsicoId === currentUser.id);
@@ -49,7 +52,7 @@ export default function AgendaModal({ open, onClose, initialData, existingAppoin
 
     const conflict = appointments.find(a => {
       if (existingAppointment && a.id === existingAppointment.id) return false;
-      if (a.date !== initialData.date || a.roomId !== initialData.roomId) return false;
+      if (a.date !== initialData.date || a.roomId !== roomId) return false;
 
       const tStart = new Date(`1970-01-01T${a.time}:00`).getTime();
       const tEnd = new Date(`1970-01-01T${a.endTime || a.time}:00`).getTime() || (tStart + 60 * 60 * 1000); 
@@ -71,7 +74,7 @@ export default function AgendaModal({ open, onClose, initialData, existingAppoin
     const baseAppt = {
       time: startTime,
       endTime: endTime,
-      roomId: initialData.roomId,
+      roomId: roomId,
       clientId: bookingType === "client" ? selectedId : undefined,
       groupId: bookingType === "group" ? selectedId : undefined,
       psicoId: existingAppointment?.psicoId || currentUser?.id || "",
@@ -119,7 +122,7 @@ export default function AgendaModal({ open, onClose, initialData, existingAppoin
         <div className="px-6 py-6 flex items-center justify-between border-b border-gray-100">
           <div>
             <h2 className="text-2xl font-bold text-gray-900">{existingAppointment ? "Editar Agendamento" : "Novo Agendamento"}</h2>
-            <p className="text-gray-500 text-sm mt-1">Sala: {initialData.roomId}</p>
+            <p className="text-gray-500 text-sm mt-1 capitalize">{format(parsedDate, "EEEE, dd 'de' MMMM", { locale: ptBR })}</p>
           </div>
           <button onClick={onClose} className="p-2 bg-gray-100 hover:bg-gray-200 rounded-full text-gray-500 transition-colors">
             <X size={20} />
@@ -129,10 +132,12 @@ export default function AgendaModal({ open, onClose, initialData, existingAppoin
         <form onSubmit={handleSubmit} className="p-6 space-y-6 flex-1 flex flex-col">
           <div className="p-4 bg-gray-50 rounded-2xl border border-gray-100 space-y-4">
              <div>
-               <p className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-1">Data</p>
-               <p className="font-bold text-gray-900 flex items-center gap-2"><CalendarIcon size={18} className="text-blue-500"/> {format(parsedDate, "EEEE, dd 'de' MMMM", { locale: ptBR })}</p>
+               <label className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-1 block">Sala</label>
+               <select value={roomId} onChange={e => setRoomId(e.target.value)} required className="w-full bg-white border border-gray-200 focus:border-blue-500 rounded-xl px-3 py-2 outline-none font-bold text-gray-900 transition-colors">
+                 {activeRooms.map(r => <option key={r} value={r}>{r}</option>)}
+               </select>
              </div>
-             
+
              <div className="flex gap-4 pt-4 border-t border-gray-200">
                <div className="flex-1">
                  <label className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-1 block">Início</label>
