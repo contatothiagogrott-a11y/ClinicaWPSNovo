@@ -19,6 +19,7 @@ import {
   mapConfigItem,
   mapInstrument,
   mapInstrumentLog,
+  mapClinicalDocument,
 } from "./mappers.js";
 
 const app = express();
@@ -93,7 +94,7 @@ app.get(
 
     const isSupervisorOrAdmin = session.role === "SUPERVISOR" || session.role === "ADMIN";
 
-    const [users, clientsRaw, sessionsRaw, appointmentsRaw, groupsRaw, groupRecordsRaw, configItems, instruments, instrumentLogsRaw] =
+    const [users, clientsRaw, sessionsRaw, appointmentsRaw, groupsRaw, groupRecordsRaw, configItems, instruments, instrumentLogsRaw, clinicalDocumentsRaw] =
       await Promise.all([
         prisma.user.findMany({ orderBy: { name: "asc" } }),
         prisma.client.findMany({
@@ -107,6 +108,7 @@ app.get(
         prisma.configItem.findMany(),
         prisma.instrument.findMany(),
         prisma.instrumentLog.findMany({ orderBy: { date: "desc" } }),
+        prisma.clinicalDocument.findMany({ include: { author: true }, orderBy: { createdAt: "desc" } }),
       ]);
 
     // PSICO só vê os próprios pacientes/sessões/grupos/agenda — Supervisor e Admin veem tudo.
@@ -132,6 +134,10 @@ app.get(
       ? groupRecordsRaw
       : groupRecordsRaw.filter((r: any) => groupIds.has(r.groupId));
 
+    const clinicalDocuments = isSupervisorOrAdmin
+      ? clinicalDocumentsRaw
+      : clinicalDocumentsRaw.filter((d: any) => clientIds.has(d.clientId));
+
     const instrumentLogs = instrumentLogsRaw; // consumo de material é visível a todos (não é dado clínico)
 
     res.json({
@@ -149,6 +155,7 @@ app.get(
       },
       instruments: instruments.map(mapInstrument),
       instrumentLogs: instrumentLogs.map(mapInstrumentLog),
+      clinicalDocuments: clinicalDocuments.map(mapClinicalDocument),
     });
   })
 );
@@ -181,18 +188,31 @@ app.post(
         birthDateEnc: encryptField(b.birthDate),
         emergencyContactNameEnc: encryptField(b.emergencyContactName),
         emergencyContactPhoneEnc: encryptField(b.emergencyContactPhone),
+        emergencyContactRelationshipEnc: encryptField(b.emergencyContactRelationship),
+        residenceCityNeighborhoodEnc: encryptField(b.residenceCityNeighborhood),
+        helpRequestEnc: encryptField(b.helpRequest),
+        medicationsEnc: encryptField(b.medications),
+        contactObservationsEnc: encryptField(b.contactObservations),
         registrationCode: b.registrationCode,
         affiliation: b.affiliation,
         allocation: b.allocation,
         dependencyType: b.dependencyType,
         dependencySponsor: b.dependencySponsor,
         tags: b.tags ?? [],
+        dateIncluded: b.dateIncluded ? new Date(b.dateIncluded) : undefined,
         status: b.status ?? "FILA_ESPERA",
         priority: b.priority,
         assignedPsicoId: b.assignedPsicoId || null,
         maxSessions: b.maxSessions ?? 0,
         defaultRoom: b.defaultRoom,
         defaultTime: b.defaultTime,
+        sector: b.sector,
+        workShift: b.workShift,
+        whatsappAuthorized: b.whatsappAuthorized,
+        previouslyAttended: b.previouslyAttended,
+        contactMadeByName: b.contactMadeByName,
+        contactDate: b.contactDate ? new Date(b.contactDate) : undefined,
+        contactStatus: b.contactStatus,
         history: {
           create: [
             {
@@ -205,6 +225,78 @@ app.post(
       include: { history: { include: { actor: true } }, assignedPsico: true, instrumentApps: true },
     });
     res.status(201).json({ client: mapClient(client) });
+  })
+);
+
+app.post(
+  "/api/clients/import",
+  asyncHandler(async (req, res) => {
+    const session = requireSession(req, res, ["SUPERVISOR", "ADMIN"]);
+    if (!session) return;
+    const rows: any[] = Array.isArray(req.body?.rows) ? req.body.rows : [];
+    if (rows.length === 0) {
+      res.status(400).json({ error: "Nenhuma linha para importar." });
+      return;
+    }
+    if (rows.length > 500) {
+      res.status(400).json({ error: "Máximo de 500 linhas por importação." });
+      return;
+    }
+
+    const existingAffiliations = await prisma.configItem.findMany({ where: { type: "AFFILIATION" } });
+    const affiliationNames = new Set(existingAffiliations.map((a: any) => a.name.toLowerCase()));
+
+    let created = 0;
+    const errors: Array<{ row: number; error: string }> = [];
+
+    for (let i = 0; i < rows.length; i++) {
+      const b = rows[i];
+      try {
+        if (!b.fullName) {
+          errors.push({ row: i + 1, error: "Nome é obrigatório." });
+          continue;
+        }
+        // Cria a afiliação ("Você é") automaticamente se ainda não existir na lista de configuração.
+        if (b.affiliation && !affiliationNames.has(String(b.affiliation).toLowerCase())) {
+          await prisma.configItem.create({ data: { type: "AFFILIATION", name: b.affiliation, isActive: true } });
+          affiliationNames.add(String(b.affiliation).toLowerCase());
+        }
+
+        await prisma.client.create({
+          data: {
+            protocolNumber: b.protocolNumber || "Pendente",
+            registrationCode: b.registrationCode || "",
+            fullNameEnc: encryptField(b.fullName),
+            whatsappEnc: encryptField(b.whatsapp),
+            birthDateEnc: encryptField(b.birthDate),
+            emergencyContactNameEnc: encryptField(b.emergencyContactName),
+            emergencyContactPhoneEnc: encryptField(b.emergencyContactPhone),
+            emergencyContactRelationshipEnc: encryptField(b.emergencyContactRelationship),
+            residenceCityNeighborhoodEnc: encryptField(b.residenceCityNeighborhood),
+            helpRequestEnc: encryptField(b.helpRequest),
+            medicationsEnc: encryptField(b.medications),
+            contactObservationsEnc: encryptField(b.contactObservations),
+            affiliation: b.affiliation || "",
+            allocation: b.allocation || "",
+            dateIncluded: b.dateIncluded ? new Date(b.dateIncluded) : new Date(),
+            status: "FILA_ESPERA",
+            sector: b.sector,
+            workShift: b.workShift,
+            whatsappAuthorized: b.whatsappAuthorized,
+            previouslyAttended: b.previouslyAttended,
+            contactMadeByName: b.contactMadeByName,
+            contactDate: b.contactDate ? new Date(b.contactDate) : undefined,
+            contactStatus: b.contactStatus,
+            history: { create: [{ actorId: session.userId, action: "Caso criado via importação de planilha" }] },
+          },
+        });
+        created++;
+      } catch (err: any) {
+        errors.push({ row: i + 1, error: err?.message || "Erro desconhecido." });
+      }
+    }
+
+    res.json({ created, errors });
   })
 );
 
@@ -235,15 +327,28 @@ app.patch(
       signedAgreement: "signedAgreement",
       assignedPsicoId: "assignedPsicoId",
       tags: "tags",
+      sector: "sector",
+      workShift: "workShift",
+      whatsappAuthorized: "whatsappAuthorized",
+      previouslyAttended: "previouslyAttended",
+      contactMadeByName: "contactMadeByName",
+      contactStatus: "contactStatus",
     };
     for (const key of Object.keys(plain)) {
       if (key in b) data[key] = b[key];
     }
+    if ("dateIncluded" in b) data.dateIncluded = b.dateIncluded ? new Date(b.dateIncluded) : undefined;
+    if ("contactDate" in b) data.contactDate = b.contactDate ? new Date(b.contactDate) : null;
     if ("fullName" in b) data.fullNameEnc = encryptField(b.fullName);
     if ("whatsapp" in b) data.whatsappEnc = encryptField(b.whatsapp);
     if ("birthDate" in b) data.birthDateEnc = encryptField(b.birthDate);
     if ("emergencyContactName" in b) data.emergencyContactNameEnc = encryptField(b.emergencyContactName);
     if ("emergencyContactPhone" in b) data.emergencyContactPhoneEnc = encryptField(b.emergencyContactPhone);
+    if ("emergencyContactRelationship" in b) data.emergencyContactRelationshipEnc = encryptField(b.emergencyContactRelationship);
+    if ("residenceCityNeighborhood" in b) data.residenceCityNeighborhoodEnc = encryptField(b.residenceCityNeighborhood);
+    if ("helpRequest" in b) data.helpRequestEnc = encryptField(b.helpRequest);
+    if ("medications" in b) data.medicationsEnc = encryptField(b.medications);
+    if ("contactObservations" in b) data.contactObservationsEnc = encryptField(b.contactObservations);
 
     if (b.logAction) {
       data.history = { create: [{ actorId: session.userId, action: b.logAction, detailsEnc: b.logDetails ? encryptField(b.logDetails) : null }] };
@@ -816,6 +921,61 @@ app.post(
       include: { history: { include: { actor: true }, orderBy: { date: "desc" } }, assignedPsico: true, instrumentApps: true },
     });
     res.json({ client: mapClient(updatedClient) });
+  })
+);
+
+// ---------------------------------------------------------------------------
+// CLINICAL DOCUMENTS (Anamnese + Avaliação de Risco / Atendimento de Urgência)
+// ---------------------------------------------------------------------------
+
+app.post(
+  "/api/clinical-documents",
+  asyncHandler(async (req, res) => {
+    const session = requireSession(req, res);
+    if (!session) return;
+    const b = req.body ?? {};
+    if (!b.clientId || !b.type) {
+      res.status(400).json({ error: "clientId e type são obrigatórios." });
+      return;
+    }
+    if (!(await assertClientAccess(session, b.clientId))) {
+      res.status(403).json({ error: "Sem permissão para este paciente." });
+      return;
+    }
+    const created = await prisma.clinicalDocument.create({
+      data: {
+        clientId: b.clientId,
+        type: b.type,
+        authorId: session.userId,
+        dataEnc: encryptField(JSON.stringify(b.data ?? {})),
+      },
+      include: { author: true },
+    });
+    res.status(201).json({ clinicalDocument: mapClinicalDocument(created) });
+  })
+);
+
+app.patch(
+  "/api/clinical-documents/:id",
+  asyncHandler(async (req, res) => {
+    const session = requireSession(req, res);
+    if (!session) return;
+    const existing = await prisma.clinicalDocument.findUnique({ where: { id: req.params.id } });
+    if (!existing) {
+      res.status(404).json({ error: "Documento não encontrado." });
+      return;
+    }
+    if (!(await assertClientAccess(session, existing.clientId))) {
+      res.status(403).json({ error: "Sem permissão para este paciente." });
+      return;
+    }
+    const b = req.body ?? {};
+    const updated = await prisma.clinicalDocument.update({
+      where: { id: req.params.id },
+      data: { dataEnc: encryptField(JSON.stringify(b.data ?? {})) },
+      include: { author: true },
+    });
+    res.json({ clinicalDocument: mapClinicalDocument(updated) });
   })
 );
 

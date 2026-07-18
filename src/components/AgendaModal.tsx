@@ -5,17 +5,50 @@ import { format } from "date-fns";
 import { ptBR } from "date-fns/locale";
 import { Appointment } from "../types";
 import { Link } from "react-router-dom";
+import { cn } from "../lib/utils";
+
+const STATUS_LABELS: Record<string, string> = {
+  FILA_ESPERA: "Fila de Espera",
+  TRIAGEM: "Triagem",
+  TRIADOS: "Triados",
+  EM_ATENDIMENTO: "Em Atendimento",
+  FINALIZADO: "Finalizado",
+};
 
 export default function AgendaModal({ open, onClose, initialData, existingAppointment }: { open: boolean, onClose: () => void, initialData: { date: string, time: string, endTime?: string, roomId: string }, existingAppointment?: Appointment }) {
-  const { clients, users, groups, currentUser, addAppointment, updateAppointment, deleteAppointment, appointments, markAttendance, config } = useStore();
+  const { clients, users, groups, currentUser, addAppointment, updateAppointment, deleteAppointment, appointments, markAttendance, config, updateClient } = useStore();
 
   const activeRooms = config.rooms.filter(r => r.isActive).map(r => r.name);
   const [roomId, setRoomId] = useState(initialData.roomId || activeRooms[0] || "");
 
-  let activeClients = clients.filter(c => c.status === "EM_ATENDIMENTO");
-  if(currentUser?.role === "PSICO") {
-    activeClients = activeClients.filter(c => c.assignedPsicoId === currentUser.id);
+  // Antes só listava pacientes "Em Atendimento" — por isso quem estava em
+  // Fila de Espera/Triagem nunca aparecia para ser agendado. Agora mostra
+  // qualquer paciente ainda ativo (não finalizado), com filtro de status e
+  // busca por nome/matrícula para facilitar achar quem se procura.
+  let bookableClients = clients.filter(c => c.status !== "FINALIZADO");
+  if (currentUser?.role === "PSICO") {
+    bookableClients = bookableClients.filter(c => c.assignedPsicoId === currentUser.id || (!c.assignedPsicoId && (c.status === "FILA_ESPERA" || c.status === "TRIAGEM")));
   }
+
+  const [clientStatusFilter, setClientStatusFilter] = useState<"TODOS" | "FILA_ESPERA" | "TRIAGEM" | "TRIADOS" | "EM_ATENDIMENTO">("TODOS");
+  const [clientSearch, setClientSearch] = useState("");
+
+  const activeClients = bookableClients.filter(c => {
+    if (clientStatusFilter !== "TODOS" && c.status !== clientStatusFilter) return false;
+    if (clientSearch.trim()) {
+      const q = clientSearch.trim().toLowerCase();
+      if (!c.fullName.toLowerCase().includes(q) && !c.registrationCode?.toLowerCase().includes(q) && !c.protocolNumber?.toLowerCase().includes(q)) return false;
+    }
+    return true;
+  });
+
+  const NEXT_STATUS: Record<string, { value: string; label: string } | null> = {
+    FILA_ESPERA: { value: "TRIAGEM", label: "Mover para Triagem" },
+    TRIAGEM: { value: "TRIADOS", label: "Mover para Triados (classificação de risco definida)" },
+    TRIADOS: { value: "EM_ATENDIMENTO", label: "Mover para Em Atendimento" },
+    EM_ATENDIMENTO: null,
+  };
+  const [statusTransition, setStatusTransition] = useState<string>("");
   
   const activeGroups = groups.filter(g => g.isActive && (currentUser?.role !== "PSICO" || g.psychologistId === currentUser.id));
 
@@ -95,7 +128,19 @@ export default function AgendaModal({ open, onClose, initialData, existingAppoin
           addAppointment({ ...baseAppt, date: dateStr });
        }
     }
-    
+
+    // Se o usuário escolheu avançar o status do paciente (ex: Fila de Espera -> Triagem)
+    // junto com o agendamento, aplica isso também — e assume o paciente como seu, se
+    // ainda não tinha psicólogo responsável (comum em quem está na fila de espera).
+    if (bookingType === "client" && statusTransition) {
+      const selectedClient = clients.find(c => c.id === selectedId);
+      const updates: any = { status: statusTransition };
+      if (selectedClient && !selectedClient.assignedPsicoId && currentUser) {
+        updates.assignedPsicoId = currentUser.id;
+      }
+      updateClient(selectedId, updates, `Status alterado para ${statusTransition} ao agendar atendimento.`);
+    }
+
     onClose();
   };
 
@@ -162,15 +207,60 @@ export default function AgendaModal({ open, onClose, initialData, existingAppoin
           </div>
 
           {bookingType === "client" ? (
-             <div>
-               <label className="block text-sm font-semibold text-gray-700 mb-2">Selecione o Paciente</label>
-               <select required value={selectedId} onChange={e => setSelectedId(e.target.value)} className="w-full bg-gray-100 border-2 border-transparent focus:bg-white focus:border-blue-500 rounded-xl px-4 py-3 outline-none transition-all font-medium text-gray-900">
-                 <option value="" disabled>-- Escolher Paciente --</option>
-                 {activeClients.map(c => (
-                    <option key={c.id} value={c.id}>{c.fullName}</option>
+             <div className="space-y-3">
+               <div>
+                 <label className="block text-sm font-semibold text-gray-700 mb-2">Buscar paciente (nome, matrícula ou protocolo)</label>
+                 <input
+                   type="text"
+                   value={clientSearch}
+                   onChange={e => setClientSearch(e.target.value)}
+                   placeholder="Digite para buscar..."
+                   className="w-full bg-gray-100 border-2 border-transparent focus:bg-white focus:border-blue-500 rounded-xl px-4 py-2.5 outline-none transition-all text-sm"
+                 />
+               </div>
+
+               <div className="flex gap-1.5 flex-wrap">
+                 {([
+                   { v: "TODOS", l: "Todos" },
+                   { v: "FILA_ESPERA", l: "Fila de Espera" },
+                   { v: "TRIAGEM", l: "Triagem" },
+                   { v: "TRIADOS", l: "Triados" },
+                   { v: "EM_ATENDIMENTO", l: "Em Atendimento" },
+                 ] as const).map(opt => (
+                   <button
+                     key={opt.v}
+                     type="button"
+                     onClick={() => setClientStatusFilter(opt.v)}
+                     className={cn("px-3 py-1.5 rounded-lg text-xs font-bold transition-colors", clientStatusFilter === opt.v ? "bg-blue-600 text-white" : "bg-gray-100 text-gray-600 hover:bg-gray-200")}
+                   >
+                     {opt.l}
+                   </button>
                  ))}
-               </select>
-               {activeClients.length === 0 && <p className="text-xs text-red-500 mt-2">Você não possui pacientes em atendimento.</p>}
+               </div>
+
+               <div>
+                 <label className="block text-sm font-semibold text-gray-700 mb-2">Selecione o Paciente</label>
+                 <select required value={selectedId} onChange={e => { setSelectedId(e.target.value); setStatusTransition(""); }} className="w-full bg-gray-100 border-2 border-transparent focus:bg-white focus:border-blue-500 rounded-xl px-4 py-3 outline-none transition-all font-medium text-gray-900">
+                   <option value="" disabled>-- Escolher Paciente --</option>
+                   {activeClients.map(c => (
+                      <option key={c.id} value={c.id}>{c.fullName} — {STATUS_LABELS[c.status] || c.status}</option>
+                   ))}
+                 </select>
+                 {activeClients.length === 0 && <p className="text-xs text-red-500 mt-2">Nenhum paciente encontrado com esse filtro/busca.</p>}
+               </div>
+
+               {selectedId && NEXT_STATUS[clients.find(c => c.id === selectedId)?.status || ""] && (
+                 <div className="bg-blue-50 border border-blue-100 rounded-xl p-3">
+                   <label className="flex items-center gap-2 text-sm font-semibold text-blue-900">
+                     <input
+                       type="checkbox"
+                       checked={!!statusTransition}
+                       onChange={e => setStatusTransition(e.target.checked ? NEXT_STATUS[clients.find(c => c.id === selectedId)!.status]!.value : "")}
+                     />
+                     {NEXT_STATUS[clients.find(c => c.id === selectedId)!.status]!.label} ao salvar este agendamento
+                   </label>
+                 </div>
+               )}
              </div>
           ) : (
              <div>

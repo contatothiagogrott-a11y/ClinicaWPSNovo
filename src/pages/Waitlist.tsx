@@ -3,7 +3,7 @@ import { Link } from "react-router-dom";
 import { useStore } from "../contexts/StoreContext";
 import { ClientStatus, Client } from "../types";
 import { cn } from "../lib/utils";
-import { Plus, ChevronRight, Clock, AlertTriangle } from "lucide-react";
+import { Plus, ChevronRight, Clock, AlertTriangle, Upload } from "lucide-react";
 import CreateClientModal from "../components/CreateClientModal";
 import { useClientFilters, FilterBar, FilterPanel, filterClients } from "../components/FilterPanel";
 import { format } from "date-fns";
@@ -12,16 +12,15 @@ export default function Waitlist() {
   const { clients, currentUser } = useStore();
   const [isModalOpen, setModalOpen] = useState(false);
   const { filters, setFilters, isPanelOpen, setIsPanelOpen } = useClientFilters();
-  const [activeTab, setActiveTab] = useState<"ESTAGIARIO" | "DEPENDENTE" | "GERAL">("GERAL");
+  const [activeTab, setActiveTab] = useState<"FILA_ESPERA" | "TRIAGEM" | "TRIADOS" | "TODOS">("TODOS");
 
   // Clients that are not yet "EM_ATENDIMENTO"
   let waitlistClients = clients.filter(c => ["FILA_ESPERA", "TRIAGEM", "TRIADOS"].includes(c.status));
   waitlistClients = filterClients(waitlistClients, filters);
 
   const displayedClients = waitlistClients.filter(c => {
-     if (activeTab === "ESTAGIARIO") return c.affiliation === "Estagiário";
-     if (activeTab === "DEPENDENTE") return c.affiliation === "Dependente";
-     return c.affiliation !== "Estagiário" && c.affiliation !== "Dependente";
+     if (activeTab === "TODOS") return true;
+     return c.status === activeTab;
   });
 
   const groupedByYear = displayedClients.reduce((acc, client) => {
@@ -41,37 +40,45 @@ export default function Waitlist() {
           <p className="text-gray-500">Pacientes aguardando triagem e alocação final.</p>
         </div>
         {(currentUser?.role === "ADMIN" || currentUser?.role === "SUPERVISOR") && (
-          <button
-            onClick={() => setModalOpen(true)}
-            className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-3 rounded-full font-semibold flex items-center justify-center gap-2 transition-colors shadow-sm shrink-0"
-          >
-            <Plus size={20} />
-            Novo Paciente
-          </button>
+          <div className="flex gap-2">
+            <Link
+              to="/waitlist/import"
+              className="bg-white border border-gray-200 hover:bg-gray-50 text-gray-700 px-5 py-3 rounded-full font-semibold flex items-center justify-center gap-2 transition-colors shadow-sm shrink-0"
+            >
+              <Upload size={20} />
+              Importar Planilha
+            </Link>
+            <button
+              onClick={() => setModalOpen(true)}
+              className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-3 rounded-full font-semibold flex items-center justify-center gap-2 transition-colors shadow-sm shrink-0"
+            >
+              <Plus size={20} />
+              Novo Paciente
+            </button>
+          </div>
         )}
       </header>
 
-      {/* TABS */}
+      {/* TABS por status — facilita achar quem está em cada etapa do fluxo */}
       <div className="flex gap-2 border-b border-gray-200 pb-2 overflow-x-auto">
-         {(["ESTAGIARIO", "DEPENDENTE", "GERAL"] as const).map(tab => {
-            const count = waitlistClients.filter(c => {
-               if (tab === "ESTAGIARIO") return c.affiliation === "Estagiário";
-               if (tab === "DEPENDENTE") return c.affiliation === "Dependente";
-               return c.affiliation !== "Estagiário" && c.affiliation !== "Dependente";
-            }).length;
-            
-            const tabName = tab === "ESTAGIARIO" ? "Estagiários" : tab === "DEPENDENTE" ? "Dependente" : "Espera Geral";
+         {([
+            { v: "TODOS", l: "Todos" },
+            { v: "FILA_ESPERA", l: "Fila de Espera" },
+            { v: "TRIAGEM", l: "Triagem" },
+            { v: "TRIADOS", l: "Triados" },
+         ] as const).map(tab => {
+            const count = waitlistClients.filter(c => tab.v === "TODOS" || c.status === tab.v).length;
 
             return (
                <button
-                 key={tab}
-                 onClick={() => setActiveTab(tab)}
+                 key={tab.v}
+                 onClick={() => setActiveTab(tab.v)}
                  className={cn(
                     "px-4 py-2 rounded-xl text-sm font-bold whitespace-nowrap transition-colors",
-                    activeTab === tab ? "bg-blue-600 text-white shadow-sm" : "text-gray-500 hover:bg-gray-100"
+                    activeTab === tab.v ? "bg-blue-600 text-white shadow-sm" : "text-gray-500 hover:bg-gray-100"
                  )}
                >
-                 {tabName} <span className={cn("ml-1 px-2 py-0.5 rounded-full text-xs", activeTab === tab ? "bg-blue-500 text-white" : "bg-gray-200 text-gray-600")}>{count}</span>
+                 {tab.l} <span className={cn("ml-1 px-2 py-0.5 rounded-full text-xs", activeTab === tab.v ? "bg-blue-500 text-white" : "bg-gray-200 text-gray-600")}>{count}</span>
                </button>
             )
          })}

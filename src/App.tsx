@@ -12,6 +12,7 @@ import Metrics from "./pages/Metrics";
 import Inventory from "./pages/Inventory";
 import Agenda from "./pages/Agenda";
 import Waitlist from "./pages/Waitlist";
+import WaitlistImport from "./pages/WaitlistImport";
 import ActiveClients from "./pages/ActiveClients";
 import ClientProfile from "./pages/ClientProfile";
 import Settings from "./pages/Settings";
@@ -36,6 +37,7 @@ export default function App() {
             <Route path="inventory" element={<Inventory />} />
             <Route path="agenda" element={<Agenda />} />
             <Route path="waitlist" element={<Waitlist />} />
+            <Route path="waitlist/import" element={<WaitlistImport />} />
             <Route path="active" element={<ActiveClients />} />
             <Route path="finished" element={<FinishedCases />} />
             <Route path="groups" element={<GroupsList />} />

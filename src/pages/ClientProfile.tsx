@@ -1,27 +1,43 @@
 import React, { useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { useStore } from "../contexts/StoreContext";
-import { ChevronLeft, Edit2, Clock, FileText, UserCircle, Save, Phone, X } from "lucide-react";
+import { ChevronLeft, Edit2, Clock, FileText, UserCircle, Save, Phone, X, FileDown, ShieldAlert, Siren, Download } from "lucide-react";
 import { cn } from "../lib/utils";
 import { format } from "date-fns";
 import { ptBR } from "date-fns/locale";
+import ClinicalDocumentForm from "../components/ClinicalDocumentForm";
+import { ANAMNESE_RISCO_SECTIONS, URGENCIA_SECTIONS } from "../lib/clinicalFormSchemas";
+import { buildAnamneseRiscoDocDefinition } from "../lib/pdfAnamneseRisco";
+import { buildUrgenciaDocDefinition } from "../lib/pdfUrgencia";
+import { buildProntuarioDocDefinition } from "../lib/pdfProntuario";
+import { openPdfInNewTab, downloadPdf } from "../lib/pdfGenerator";
 
 import { TagInput } from "../components/TagInput";
 
 export default function ClientProfile() {
   const { id } = useParams();
   const navigate = useNavigate();
-  const { clients, users, currentUser, updateClient, reactivateClient, config, addConfigItem } = useStore();
+  const { clients, users, sessions, currentUser, updateClient, reactivateClient, config, addConfigItem, clinicalDocuments, addClinicalDocument, updateClinicalDocument } = useStore();
   const client = clients.find(c => c.id === id);
 
-  const [activeTab, setActiveTab] = useState<"INFO" | "PRONTUARIO" | "HISTORICO" | "INSTRUMENTOS">("INFO");
+  const [activeTab, setActiveTab] = useState<"INFO" | "PRONTUARIO" | "HISTORICO" | "INSTRUMENTOS" | "DOCUMENTOS">("INFO");
   const [isEditingInfo, setIsEditingInfo] = useState(false);
   const [isReactivating, setIsReactivating] = useState(false);
   const [editData, setEditData] = useState(client);
+  const [openAnamneseForm, setOpenAnamneseForm] = useState<{ id?: string; data?: any } | null>(null);
+  const [openUrgenciaForm, setOpenUrgenciaForm] = useState<{ id?: string; data?: any } | null>(null);
 
   if (!client || !editData) return <div className="p-8 text-center">Paciente não encontrado.</div>;
 
   const formatPhone = (phone: string) => phone.replace(/\D/g, "");
+  const clientDocs = clinicalDocuments.filter(d => d.clientId === client.id).sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+  const assignedPsico = users.find(u => u.id === client.assignedPsicoId);
+
+  const handleExportProntuario = () => {
+    const docDef = buildProntuarioDocDefinition(client, sessions, assignedPsico);
+    openPdfInNewTab(docDef);
+  };
+
 
   const handleSaveInfo = () => {
     updateClient(client.id, editData, "Informações do paciente atualizadas.");
@@ -108,6 +124,12 @@ export default function ClientProfile() {
         >
           <Clock size={18} /> Histórico
         </button>
+        <button 
+          onClick={() => setActiveTab("DOCUMENTOS")}
+          className={cn("flex items-center gap-2 px-6 py-2.5 rounded-xl font-medium transition-all whitespace-nowrap", activeTab === "DOCUMENTOS" ? "bg-white text-blue-600 shadow-sm" : "text-gray-500 hover:text-gray-700")}
+        >
+          <FileDown size={18} /> Documentos
+        </button>
       </div>
 
       {/* Tab Content */}
@@ -185,6 +207,33 @@ export default function ClientProfile() {
                      ) : (
                         <div className="bg-white px-4 py-3 rounded-xl border border-gray-100 font-medium text-gray-900">{client.protocolNumber || "Pendente"}</div>
                      )}
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                  <div>
+                    <label className="block text-xs font-semibold text-gray-500 mb-1 tracking-wider uppercase">Entrou na fila em</label>
+                    {isEditingInfo ? (
+                      <input type="date" value={editData.dateIncluded ? editData.dateIncluded.split("T")[0] : ""} onChange={e => setEditData({...editData, dateIncluded: e.target.value})} className="w-full bg-white border border-gray-200 rounded-xl px-4 py-3 outline-none font-medium" />
+                    ) : (
+                      <div className="bg-white px-4 py-3 rounded-xl border border-gray-100 font-medium">{client.dateIncluded ? format(new Date(client.dateIncluded), "dd/MM/yyyy") : "—"}</div>
+                    )}
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-gray-500 mb-1 tracking-wider uppercase">Setor</label>
+                    {isEditingInfo ? (
+                      <input type="text" value={editData.sector || ""} onChange={e => setEditData({...editData, sector: e.target.value})} className="w-full bg-white border border-gray-200 rounded-xl px-4 py-3 outline-none font-medium" />
+                    ) : (
+                      <div className="bg-white px-4 py-3 rounded-xl border border-gray-100 font-medium">{client.sector || "—"}</div>
+                    )}
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-gray-500 mb-1 tracking-wider uppercase">Turno de Trabalho</label>
+                    {isEditingInfo ? (
+                      <input type="text" value={editData.workShift || ""} onChange={e => setEditData({...editData, workShift: e.target.value})} className="w-full bg-white border border-gray-200 rounded-xl px-4 py-3 outline-none font-medium" placeholder="Ex: Matutino" />
+                    ) : (
+                      <div className="bg-white px-4 py-3 rounded-xl border border-gray-100 font-medium">{client.workShift || "—"}</div>
+                    )}
                   </div>
                 </div>
 
@@ -322,14 +371,98 @@ export default function ClientProfile() {
                  </div>
                  <div className="pt-4">
                     <label className="block text-xs font-semibold text-gray-500 mb-1 tracking-wider uppercase">Contato de Emergência</label>
-                    <div className="bg-red-50 px-4 py-3 rounded-xl font-medium text-red-900 border border-red-100 flex justify-between items-center">
-                      <div>{client.emergencyContactName} • {client.emergencyContactPhone}</div>
-                      {client.emergencyContactPhone && (
-                         <a href={`https://wa.me/55${formatPhone(client.emergencyContactPhone)}`} target="_blank" rel="noreferrer" className="text-red-700 bg-red-100 hover:bg-red-200 px-3 py-1.5 rounded-lg flex items-center gap-2 text-xs font-bold transition-colors">
-                            <Phone size={14} /> WhatsApp
-                         </a>
-                      )}
-                    </div>
+                    {isEditingInfo ? (
+                      <div className="bg-red-50 p-4 rounded-xl border border-red-100 space-y-3">
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                          <div>
+                            <label className="block text-xs font-semibold text-red-800 mb-1">Nome</label>
+                            <input type="text" value={editData.emergencyContactName || ""} onChange={e => setEditData({...editData, emergencyContactName: e.target.value})} className="w-full bg-white border border-red-200 rounded-lg px-3 py-2 outline-none text-sm font-medium" placeholder="Nome do contato" />
+                          </div>
+                          <div>
+                            <label className="block text-xs font-semibold text-red-800 mb-1">Parentesco/Vínculo</label>
+                            <input type="text" value={editData.emergencyContactRelationship || ""} onChange={e => setEditData({...editData, emergencyContactRelationship: e.target.value})} className="w-full bg-white border border-red-200 rounded-lg px-3 py-2 outline-none text-sm font-medium" placeholder="Ex: mãe, cônjuge, amigo(a)..." />
+                          </div>
+                        </div>
+                        <div>
+                          <label className="block text-xs font-semibold text-red-800 mb-1">Telefone</label>
+                          <input type="text" value={editData.emergencyContactPhone || ""} onChange={e => setEditData({...editData, emergencyContactPhone: e.target.value})} className="w-full bg-white border border-red-200 rounded-lg px-3 py-2 outline-none text-sm font-medium" placeholder="(11) 99999-9999" />
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="bg-red-50 px-4 py-3 rounded-xl font-medium text-red-900 border border-red-100 flex justify-between items-center">
+                        <div>
+                          {client.emergencyContactName} {client.emergencyContactRelationship && `(${client.emergencyContactRelationship})`} • {client.emergencyContactPhone}
+                        </div>
+                        {client.emergencyContactPhone && (
+                           <a href={`https://wa.me/55${formatPhone(client.emergencyContactPhone)}`} target="_blank" rel="noreferrer" className="text-red-700 bg-red-100 hover:bg-red-200 px-3 py-1.5 rounded-lg flex items-center gap-2 text-xs font-bold transition-colors">
+                              <Phone size={14} /> WhatsApp
+                           </a>
+                        )}
+                      </div>
+                    )}
+                 </div>
+
+                 <div className="pt-4">
+                    <label className="block text-xs font-semibold text-gray-500 mb-1 tracking-wider uppercase">Dados de Admissão (fila de espera)</label>
+                    {isEditingInfo ? (
+                      <div className="bg-gray-50 p-4 rounded-xl border border-gray-100 space-y-3">
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                          <label className="flex items-center gap-2 text-sm font-semibold text-gray-700 bg-white border border-gray-200 rounded-lg px-3 py-2">
+                            <input type="checkbox" checked={!!editData.whatsappAuthorized} onChange={e => setEditData({...editData, whatsappAuthorized: e.target.checked})} />
+                            Autoriza contato via WhatsApp
+                          </label>
+                          <label className="flex items-center gap-2 text-sm font-semibold text-gray-700 bg-white border border-gray-200 rounded-lg px-3 py-2">
+                            <input type="checkbox" checked={!!editData.previouslyAttended} onChange={e => setEditData({...editData, previouslyAttended: e.target.checked})} />
+                            Já foi atendido anteriormente
+                          </label>
+                        </div>
+                        <div>
+                          <label className="block text-xs font-semibold text-gray-600 mb-1">Cidade e bairro de residência</label>
+                          <input type="text" value={editData.residenceCityNeighborhood || ""} onChange={e => setEditData({...editData, residenceCityNeighborhood: e.target.value})} className="w-full bg-white border border-gray-200 rounded-lg px-3 py-2 outline-none text-sm" />
+                        </div>
+                        <div>
+                          <label className="block text-xs font-semibold text-gray-600 mb-1">Como acha que o setor pode ajudar</label>
+                          <textarea value={editData.helpRequest || ""} onChange={e => setEditData({...editData, helpRequest: e.target.value})} rows={2} className="w-full bg-white border border-gray-200 rounded-lg px-3 py-2 outline-none text-sm" />
+                        </div>
+                        <div>
+                          <label className="block text-xs font-semibold text-gray-600 mb-1">Medicamentos em uso</label>
+                          <input type="text" value={editData.medications || ""} onChange={e => setEditData({...editData, medications: e.target.value})} className="w-full bg-white border border-gray-200 rounded-lg px-3 py-2 outline-none text-sm" />
+                        </div>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2 border-t border-gray-200">
+                          <div>
+                            <label className="block text-xs font-semibold text-gray-600 mb-1">Contato feito por</label>
+                            <input type="text" value={editData.contactMadeByName || ""} onChange={e => setEditData({...editData, contactMadeByName: e.target.value})} className="w-full bg-white border border-gray-200 rounded-lg px-3 py-2 outline-none text-sm" placeholder="Seu nome" />
+                          </div>
+                          <div>
+                            <label className="block text-xs font-semibold text-gray-600 mb-1">Data do contato</label>
+                            <input type="date" value={editData.contactDate ? editData.contactDate.split("T")[0] : ""} onChange={e => setEditData({...editData, contactDate: e.target.value})} className="w-full bg-white border border-gray-200 rounded-lg px-3 py-2 outline-none text-sm" />
+                          </div>
+                        </div>
+                        <div>
+                          <label className="block text-xs font-semibold text-gray-600 mb-1">Observações do contato</label>
+                          <div className="flex flex-wrap gap-1.5 mb-1.5">
+                            {["Não retornou resposta", "Respondeu", "Desistiu", "Desligou-se", "Outro"].map(tag => (
+                              <button key={tag} type="button" onClick={() => setEditData({...editData, contactStatus: tag})}
+                                className={cn("text-[11px] px-2 py-1 rounded-full font-bold transition-colors", editData.contactStatus === tag ? "bg-blue-600 text-white" : "bg-gray-100 text-gray-600 hover:bg-gray-200")}>
+                                {tag}
+                              </button>
+                            ))}
+                          </div>
+                          <textarea value={editData.contactObservations || ""} onChange={e => setEditData({...editData, contactObservations: e.target.value})} rows={2} className="w-full bg-white border border-gray-200 rounded-lg px-3 py-2 outline-none text-sm" placeholder="Preenchimento livre..." />
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="bg-gray-50 px-4 py-3 rounded-xl border border-gray-100 text-sm text-gray-700 space-y-1.5">
+                        <p><strong>WhatsApp autorizado:</strong> {client.whatsappAuthorized === true ? "Sim" : client.whatsappAuthorized === false ? "Não" : "—"} <span className="mx-2">•</span> <strong>Já atendido antes:</strong> {client.previouslyAttended === true ? "Sim" : client.previouslyAttended === false ? "Não" : "—"}</p>
+                        {client.residenceCityNeighborhood && <p><strong>Cidade/bairro:</strong> {client.residenceCityNeighborhood}</p>}
+                        {client.helpRequest && <p><strong>Como o setor pode ajudar:</strong> {client.helpRequest}</p>}
+                        {client.medications && <p><strong>Medicamentos:</strong> {client.medications}</p>}
+                        {(client.contactMadeByName || client.contactDate) && (
+                          <p><strong>Contato feito por:</strong> {client.contactMadeByName || "—"} {client.contactDate && `em ${format(new Date(client.contactDate), "dd/MM/yyyy")}`} {client.contactStatus && `— ${client.contactStatus}`}</p>
+                        )}
+                        {client.contactObservations && <p><strong>Obs.:</strong> {client.contactObservations}</p>}
+                      </div>
+                    )}
                  </div>
               </div>
             </div>
@@ -387,7 +520,111 @@ export default function ClientProfile() {
            </div>
         )}
 
+        {activeTab === "DOCUMENTOS" && (
+          <div className="animate-in fade-in duration-300 space-y-6">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+              <button onClick={() => setOpenAnamneseForm({})} className="bg-blue-50 hover:bg-blue-100 border border-blue-100 rounded-2xl p-5 text-left transition-colors">
+                <ShieldAlert className="text-blue-600 mb-2" size={22} />
+                <h4 className="font-bold text-blue-900">Nova Anamnese + Avaliação de Risco</h4>
+                <p className="text-xs text-blue-700 mt-1">Formulário unificado de triagem e classificação de risco.</p>
+              </button>
+              <button onClick={() => setOpenUrgenciaForm({})} className="bg-red-50 hover:bg-red-100 border border-red-100 rounded-2xl p-5 text-left transition-colors">
+                <Siren className="text-red-600 mb-2" size={22} />
+                <h4 className="font-bold text-red-900">Novo Atendimento de Urgência</h4>
+                <p className="text-xs text-red-700 mt-1">Para atendimentos pontuais de crise (não é anamnese nem atendimento contínuo).</p>
+              </button>
+              <button onClick={handleExportProntuario} className="bg-emerald-50 hover:bg-emerald-100 border border-emerald-100 rounded-2xl p-5 text-left transition-colors">
+                <FileDown className="text-emerald-600 mb-2" size={22} />
+                <h4 className="font-bold text-emerald-900">Exportar Prontuário (PDF)</h4>
+                <p className="text-xs text-emerald-700 mt-1">Compila as evoluções registradas, pronto para assinar.</p>
+              </button>
+            </div>
+
+            <div>
+              <h3 className="font-bold text-gray-800 mb-3">Documentos Gerados</h3>
+              {clientDocs.length === 0 ? (
+                <div className="p-8 text-center bg-gray-50 rounded-2xl border border-dashed border-gray-200 text-gray-400 text-sm">
+                  Nenhum documento gerado ainda para este paciente.
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  {clientDocs.map(doc => (
+                    <div key={doc.id} className="flex items-center justify-between bg-gray-50 border border-gray-100 rounded-xl px-4 py-3">
+                      <div>
+                        <p className="font-bold text-gray-800 text-sm">
+                          {doc.type === "ANAMNESE_RISCO" ? "Anamnese + Avaliação de Risco" : "Atendimento de Urgência"}
+                        </p>
+                        <p className="text-xs text-gray-500">
+                          {new Date(doc.createdAt).toLocaleDateString("pt-BR")} às {new Date(doc.createdAt).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })} — por {doc.authorName}
+                        </p>
+                      </div>
+                      <div className="flex gap-2 shrink-0">
+                        <button
+                          onClick={() => doc.type === "ANAMNESE_RISCO" ? setOpenAnamneseForm({ id: doc.id, data: doc.data }) : setOpenUrgenciaForm({ id: doc.id, data: doc.data })}
+                          className="p-2 bg-white border border-gray-200 rounded-lg text-gray-600 hover:bg-gray-100 transition-colors"
+                          title="Editar"
+                        >
+                          <Edit2 size={16} />
+                        </button>
+                        <button
+                          onClick={() => {
+                            const author = users.find(u => u.id === doc.authorId);
+                            const docDef = doc.type === "ANAMNESE_RISCO"
+                              ? buildAnamneseRiscoDocDefinition(client, doc, author)
+                              : buildUrgenciaDocDefinition(client, doc, author);
+                            openPdfInNewTab(docDef);
+                          }}
+                          className="p-2 bg-white border border-gray-200 rounded-lg text-gray-600 hover:bg-gray-100 transition-colors"
+                          title="Ver / Baixar PDF"
+                        >
+                          <Download size={16} />
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
       </div>
+
+      {openAnamneseForm && (
+        <ClinicalDocumentForm
+          open
+          onClose={() => setOpenAnamneseForm(null)}
+          title="Anamnese + Avaliação de Risco"
+          subtitle={client.fullName}
+          sections={ANAMNESE_RISCO_SECTIONS}
+          initialData={openAnamneseForm.data}
+          onSave={async (data) => {
+            if (openAnamneseForm.id) {
+              await updateClinicalDocument(openAnamneseForm.id, data);
+            } else {
+              await addClinicalDocument(client.id, "ANAMNESE_RISCO", data);
+            }
+          }}
+        />
+      )}
+
+      {openUrgenciaForm && (
+        <ClinicalDocumentForm
+          open
+          onClose={() => setOpenUrgenciaForm(null)}
+          title="Atendimento de Urgência"
+          subtitle={client.fullName}
+          sections={URGENCIA_SECTIONS}
+          initialData={openUrgenciaForm.data}
+          onSave={async (data) => {
+            if (openUrgenciaForm.id) {
+              await updateClinicalDocument(openUrgenciaForm.id, data);
+            } else {
+              await addClinicalDocument(client.id, "URGENCIA", data);
+            }
+          }}
+        />
+      )}
     </div>
   );
 }

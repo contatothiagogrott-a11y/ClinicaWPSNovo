@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useEffect, useState, useCallback } from "react";
-import { User, Client, SessionRecord, AppConfig, ClientStatus, ConfigItem, Appointment, Group, GroupRecord, Instrument, InstrumentLog } from "../types";
+import { User, Client, SessionRecord, AppConfig, ClientStatus, ConfigItem, Appointment, Group, GroupRecord, Instrument, InstrumentLog, ClinicalDocument, ClinicalDocumentType } from "../types";
 import { api, ApiError } from "../lib/api";
 
 export interface StoreState {
@@ -12,6 +12,7 @@ export interface StoreState {
   config: AppConfig;
   instruments: Instrument[];
   instrumentLogs: InstrumentLog[];
+  clinicalDocuments: ClinicalDocument[];
   currentUser: User | null;
 }
 
@@ -43,6 +44,9 @@ interface StoreContextType extends StoreState {
   addInstrument: (name: string, initialCount: number) => Promise<void>;
   adjustInstrumentStock: (id: string, newCount: number, reason: string) => Promise<void>;
   applyInstrument: (clientId: string, instrumentId: string, results: string) => Promise<void>;
+  addClinicalDocument: (clientId: string, type: ClinicalDocumentType, data: Record<string, any>) => Promise<ClinicalDocument>;
+  updateClinicalDocument: (id: string, data: Record<string, any>) => Promise<void>;
+  importClients: (rows: Record<string, any>[]) => Promise<{ created: number; errors: { row: number; error: string }[] }>;
 }
 
 const StoreContext = createContext<StoreContextType | null>(null);
@@ -57,6 +61,7 @@ interface BootstrapResponse {
   config: AppConfig;
   instruments: Instrument[];
   instrumentLogs: InstrumentLog[];
+  clinicalDocuments: ClinicalDocument[];
 }
 
 export function StoreProvider({ children }: { children: React.ReactNode }) {
@@ -71,6 +76,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
   const [config, setConfig] = useState<AppConfig>(EMPTY_CONFIG);
   const [instruments, setInstruments] = useState<Instrument[]>([]);
   const [instrumentLogs, setInstrumentLogs] = useState<InstrumentLog[]>([]);
+  const [clinicalDocuments, setClinicalDocuments] = useState<ClinicalDocument[]>([]);
 
   const applyBootstrap = (data: BootstrapResponse) => {
     setUsers(data.users);
@@ -82,6 +88,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     setConfig(data.config);
     setInstruments(data.instruments);
     setInstrumentLogs(data.instrumentLogs);
+    setClinicalDocuments(data.clinicalDocuments);
   };
 
   // Recarrega todos os dados do servidor. Chamado depois de toda operação de
@@ -137,6 +144,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
       setConfig(EMPTY_CONFIG);
       setInstruments([]);
       setInstrumentLogs([]);
+      setClinicalDocuments([]);
       return;
     }
     // Por segurança, trocar de usuário sem senha não é permitido: só é possível
@@ -255,6 +263,23 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     await refreshAll();
   };
 
+  const addClinicalDocument: StoreContextType["addClinicalDocument"] = async (clientId, type, data) => {
+    const { clinicalDocument } = await api.post<{ clinicalDocument: ClinicalDocument }>("/api/clinical-documents", { clientId, type, data });
+    await refreshAll();
+    return clinicalDocument;
+  };
+
+  const updateClinicalDocument: StoreContextType["updateClinicalDocument"] = async (id, data) => {
+    await api.patch(`/api/clinical-documents/${id}`, { data });
+    await refreshAll();
+  };
+
+  const importClients: StoreContextType["importClients"] = async (rows) => {
+    const result = await api.post<{ created: number; errors: { row: number; error: string }[] }>("/api/clients/import", { rows });
+    await refreshAll();
+    return result;
+  };
+
   if (isLoading) return null;
 
   return (
@@ -269,6 +294,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
         config,
         instruments,
         instrumentLogs,
+        clinicalDocuments,
         currentUser,
         isLoading,
         login,
@@ -295,6 +321,9 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
         addInstrument,
         adjustInstrumentStock,
         applyInstrument,
+        addClinicalDocument,
+        updateClinicalDocument,
+        importClients,
       }}
     >
       {children}

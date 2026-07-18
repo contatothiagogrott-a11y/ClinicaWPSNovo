@@ -40,6 +40,11 @@ enum ConfigType {
   TAG
 }
 
+enum ClinicalDocumentType {
+  ANAMNESE_RISCO
+  URGENCIA
+}
+
 enum InstrumentLogType {
   CONSUMPTION
   ADJUSTMENT
@@ -72,6 +77,7 @@ model User {
   instrumentLogs    InstrumentLog[]
   instrumentApps    InstrumentApplication[]
   historyLogs       HistoryLog[]
+  clinicalDocuments ClinicalDocument[]
 }
 
 model Client {
@@ -85,6 +91,11 @@ model Client {
   birthDateEnc             String
   emergencyContactNameEnc  String
   emergencyContactPhoneEnc String
+  emergencyContactRelationshipEnc String @default("")
+  residenceCityNeighborhoodEnc    String @default("")
+  helpRequestEnc                  String @default("")
+  medicationsEnc                  String @default("")
+  contactObservationsEnc          String @default("")
 
   registrationCode       String
   affiliation            String
@@ -102,6 +113,15 @@ model Client {
   defaultRoom            String?
   defaultTime            String?
 
+  // Dados de admissão/fila de espera (planilha de inscrição)
+  sector                 String?
+  workShift              String?
+  whatsappAuthorized     Boolean?
+  previouslyAttended     Boolean?
+  contactMadeByName      String?
+  contactDate            DateTime?
+  contactStatus          String?
+
   createdAt              DateTime      @default(now())
   updatedAt              DateTime      @updatedAt
 
@@ -110,6 +130,7 @@ model Client {
   appointments           Appointment[]
   instrumentApps         InstrumentApplication[]
   groupMemberships       GroupMember[]
+  clinicalDocuments      ClinicalDocument[]
 
   @@index([status])
   @@index([assignedPsicoId])
@@ -258,4 +279,23 @@ model InstrumentApplication {
   psychoId     String
   psycho       User       @relation(fields: [psychoId], references: [id])
   resultsEnc   String
+}
+
+// Documentos clínicos formais e imprimíveis: Anamnese + Avaliação de
+// Fatores de Risco e Proteção (unificados, pois se referenciam), e
+// Atendimento de Urgência. Todo o conteúdo do formulário fica em um único
+// campo JSON criptografado (dataEnc) — flexível o bastante para os muitos
+// campos de cada formulário sem precisar de uma coluna por campo.
+model ClinicalDocument {
+  id          String               @id @default(uuid())
+  clientId    String
+  client      Client               @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  type        ClinicalDocumentType
+  dataEnc     String
+  authorId    String
+  author      User                 @relation(fields: [authorId], references: [id])
+  createdAt   DateTime             @default(now())
+  updatedAt   DateTime             @updatedAt
+
+  @@index([clientId])
 }

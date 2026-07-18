@@ -22,8 +22,10 @@ export default function CreateClientModal({ open, onClose }: { open: boolean; on
     tags: string[];
     emergencyContactName: string;
     emergencyContactPhone: string;
+    emergencyContactRelationship: string;
     dependencyType: string;
     dependencySponsor: string;
+    dateIncluded: string;
   }>({
     protocolNumber: "",
     signedAgreement: false,
@@ -35,8 +37,10 @@ export default function CreateClientModal({ open, onClose }: { open: boolean; on
     tags: [],
     emergencyContactName: "",
     emergencyContactPhone: "",
+    emergencyContactRelationship: "",
     dependencyType: "",
     dependencySponsor: "",
+    dateIncluded: new Date().toISOString().split("T")[0],
   });
 
   const toggleTag = (tag: string) => {
@@ -66,18 +70,19 @@ export default function CreateClientModal({ open, onClose }: { open: boolean; on
       tags: formData.tags,
       dependencyType: formData.affiliation === "Dependente" ? formData.dependencyType : undefined,
       dependencySponsor: formData.affiliation === "Dependente" ? formData.dependencySponsor : undefined,
-      dateIncluded: new Date().toISOString(),
+      dateIncluded: formData.dateIncluded ? new Date(formData.dateIncluded).toISOString() : new Date().toISOString(),
       status: "FILA_ESPERA",
       maxSessions: 10, // default
       emergencyContactName: formData.emergencyContactName,
       emergencyContactPhone: formData.emergencyContactPhone,
+      emergencyContactRelationship: formData.emergencyContactRelationship,
     });
     setFormData({
-      protocolNumber: "", signedAgreement: false,
+      protocolNumber: "", signedAgreement: false, dateIncluded: new Date().toISOString().split("T")[0],
       fullName: "", whatsapp: "", birthDate: "",
       affiliation: activeAffiliations[0] || "", allocation: activeAllocations[0] || "",
       tags: [],
-      emergencyContactName: "", emergencyContactPhone: "",
+      emergencyContactName: "", emergencyContactPhone: "", emergencyContactRelationship: "",
       dependencyType: "", dependencySponsor: ""
     });
     onClose();
@@ -101,7 +106,13 @@ export default function CreateClientModal({ open, onClose }: { open: boolean; on
                <label className="block text-sm font-semibold text-gray-700 mb-1">Nº Prontuário</label>
                <input type="text" value={formData.protocolNumber} onChange={e => setFormData({...formData, protocolNumber: e.target.value})} className="w-full bg-gray-100 border-2 border-transparent focus:bg-white focus:border-blue-500 rounded-xl px-4 py-3 outline-none transition-all font-mono" placeholder="Ex: 4" />
             </div>
-            <div className="flex flex-col justify-end pb-0">
+            <div>
+               <label className="block text-sm font-semibold text-gray-700 mb-1">Entrou na fila em</label>
+               <input type="date" value={formData.dateIncluded} onChange={e => setFormData({...formData, dateIncluded: e.target.value})} className="w-full bg-gray-100 border-2 border-transparent focus:bg-white focus:border-blue-500 rounded-xl px-4 py-3 outline-none transition-all" />
+            </div>
+          </div>
+          <div className="grid grid-cols-2 gap-4">
+            <div className="col-span-2 flex flex-col justify-end pb-0">
                <button 
                  type="button" 
                  onClick={() => setFormData({...formData, signedAgreement: !formData.signedAgreement})}
@@ -181,6 +192,10 @@ export default function CreateClientModal({ open, onClose }: { open: boolean; on
                   <input type="text" value={formData.emergencyContactName} onChange={e => setFormData({...formData, emergencyContactName: e.target.value})} className="w-full bg-gray-100 border-2 border-transparent focus:bg-white focus:border-blue-500 rounded-xl px-4 py-3 outline-none transition-all" placeholder="Nome do contato" />
                </div>
                <div>
+                  <label className="block text-sm font-semibold text-gray-700 mb-1">Parentesco/Vínculo</label>
+                  <input type="text" value={formData.emergencyContactRelationship} onChange={e => setFormData({...formData, emergencyContactRelationship: e.target.value})} className="w-full bg-gray-100 border-2 border-transparent focus:bg-white focus:border-blue-500 rounded-xl px-4 py-3 outline-none transition-all" placeholder="Ex: mãe, cônjuge, amigo(a)..." />
+               </div>
+               <div className="sm:col-span-2">
                   <label className="block text-sm font-semibold text-gray-700 mb-1">Telefone</label>
                   <input type="text" value={formData.emergencyContactPhone} onChange={e => setFormData({...formData, emergencyContactPhone: e.target.value})} className="w-full bg-gray-100 border-2 border-transparent focus:bg-white focus:border-blue-500 rounded-xl px-4 py-3 outline-none transition-all" placeholder="(11) 99999-9999" />
                </div>

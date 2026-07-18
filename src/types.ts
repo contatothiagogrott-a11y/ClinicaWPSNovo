@@ -71,6 +71,18 @@ export interface Client {
   completedSessions: number;
   emergencyContactName: string;
   emergencyContactPhone: string;
+  emergencyContactRelationship?: string;
+  residenceCityNeighborhood?: string;
+  helpRequest?: string;
+  medications?: string;
+  sector?: string;
+  workShift?: string;
+  whatsappAuthorized?: boolean;
+  previouslyAttended?: boolean;
+  contactMadeByName?: string;
+  contactDate?: string;
+  contactStatus?: string;
+  contactObservations?: string;
   defaultRoom?: string;
   defaultTime?: string;
   instruments?: InstrumentApplication[];
@@ -168,4 +180,17 @@ export interface InstrumentLog {
   userId: string;
   protocolNumber?: string;
   reason?: string;
+}
+
+export type ClinicalDocumentType = "ANAMNESE_RISCO" | "URGENCIA";
+
+export interface ClinicalDocument {
+  id: string;
+  clientId: string;
+  type: ClinicalDocumentType;
+  data: Record<string, any>;
+  authorId: string;
+  authorName: string;
+  createdAt: string;
+  updatedAt: string;
 }

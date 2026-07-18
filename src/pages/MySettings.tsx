@@ -49,9 +49,9 @@ export default function MySettings() {
             <div>
                <label className="block text-xs font-semibold text-gray-500 mb-1 uppercase tracking-wider">Vínculo Institucional</label>
                <div className="bg-gray-50 inline-block px-3 py-1 rounded-lg border border-gray-200 text-gray-700 font-bold text-sm">
-                  {currentUser.role === "SUPERVISOR" || currentUser.role === "ADMIN" ? "Comissionado" : "Efetivo"}
+                  {currentUser.institutionalLink || "Não informado"}
                </div>
-               <p className="text-xs text-gray-400 mt-1">Este Vínculo é definido pela administração.</p>
+               <p className="text-xs text-gray-400 mt-1">Este vínculo é definido pela administração em "Gerenciar Usuários".</p>
             </div>
          </div>
       </div>

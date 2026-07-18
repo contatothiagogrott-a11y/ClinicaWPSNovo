@@ -66,6 +66,18 @@ export function mapClient(c: any) {
     completedSessions: c.completedSessions,
     emergencyContactName: decryptField(c.emergencyContactNameEnc),
     emergencyContactPhone: decryptField(c.emergencyContactPhoneEnc),
+    emergencyContactRelationship: decryptField(c.emergencyContactRelationshipEnc),
+    residenceCityNeighborhood: decryptField(c.residenceCityNeighborhoodEnc),
+    helpRequest: decryptField(c.helpRequestEnc),
+    medications: decryptField(c.medicationsEnc),
+    contactObservations: decryptField(c.contactObservationsEnc),
+    sector: c.sector ?? undefined,
+    workShift: c.workShift ?? undefined,
+    whatsappAuthorized: c.whatsappAuthorized ?? undefined,
+    previouslyAttended: c.previouslyAttended ?? undefined,
+    contactMadeByName: c.contactMadeByName ?? undefined,
+    contactDate: c.contactDate ? isoDate(c.contactDate) : undefined,
+    contactStatus: c.contactStatus ?? undefined,
     defaultRoom: c.defaultRoom ?? undefined,
     defaultTime: c.defaultTime ?? undefined,
     instruments: (c.instrumentApps ?? []).map(mapInstrumentApplication),
@@ -161,5 +173,24 @@ export function mapInstrumentLog(l: any) {
     userId: l.userId,
     protocolNumber: l.protocolNumber ?? undefined,
     reason: l.reason ?? undefined,
+  };
+}
+
+export function mapClinicalDocument(d: any) {
+  let data: any = {};
+  try {
+    data = JSON.parse(decryptField(d.dataEnc) || "{}");
+  } catch {
+    data = {};
+  }
+  return {
+    id: d.id,
+    clientId: d.clientId,
+    type: d.type,
+    data,
+    authorId: d.authorId,
+    authorName: d.author?.name ?? "",
+    createdAt: isoDate(d.createdAt),
+    updatedAt: isoDate(d.updatedAt),
   };
 }
