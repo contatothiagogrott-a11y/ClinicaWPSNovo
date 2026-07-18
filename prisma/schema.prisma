@@ -131,6 +131,7 @@ model Client {
   instrumentApps         InstrumentApplication[]
   groupMemberships       GroupMember[]
   clinicalDocuments      ClinicalDocument[]
+  groupAttendances       GroupAttendance[]
 
   @@index([status])
   @@index([assignedPsicoId])
@@ -215,6 +216,21 @@ model GroupRecord {
   author      User     @relation(fields: [authorId], references: [id])
   createdAt   DateTime @default(now())
   isDraft     Boolean  @default(true)
+
+  attendances GroupAttendance[]
+}
+
+// Presença de cada integrante na sessão de grupo (independente do prontuário
+// individual que é gerado automaticamente a partir dela).
+model GroupAttendance {
+  id            String      @id @default(uuid())
+  groupRecordId String
+  groupRecord   GroupRecord @relation(fields: [groupRecordId], references: [id], onDelete: Cascade)
+  clientId      String
+  client        Client      @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  status        String // COMPARECEU | FALTA_JUSTIFICADA | FALTA_INJUSTIFICADA | PENDENTE
+
+  @@unique([groupRecordId, clientId])
 }
 
 model ConfigItem {

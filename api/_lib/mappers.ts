@@ -134,6 +134,7 @@ export function mapGroupRecord(r: any) {
     authorId: r.authorId,
     createdAt: isoDate(r.createdAt),
     isDraft: r.isDraft,
+    attendance: (r.attendances ?? []).map((a: any) => ({ clientId: a.clientId, status: a.status })),
   };
 }
 

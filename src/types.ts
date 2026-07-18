@@ -126,6 +126,11 @@ export interface Group {
   memberIds: string[];
 }
 
+export interface GroupAttendanceEntry {
+  clientId: string;
+  status: "COMPARECEU" | "FALTA_JUSTIFICADA" | "FALTA_INJUSTIFICADA" | "PENDENTE";
+}
+
 export interface GroupRecord {
   id: string;
   content: string;
@@ -134,6 +139,7 @@ export interface GroupRecord {
   authorId: string;
   createdAt: string;
   isDraft?: boolean;
+  attendance?: GroupAttendanceEntry[];
 }
 
 export interface ConfigItem {

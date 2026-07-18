@@ -23,6 +23,7 @@ export default function GroupProfile() {
   const [editingRecordId, setEditingRecordId] = useState<string | null>(null);
   const [recordContent, setRecordContent] = useState("");
   const [recordDate, setRecordDate] = useState(format(new Date(), "yyyy-MM-dd"));
+  const [attendanceDraft, setAttendanceDraft] = useState<Record<string, string>>({});
 
   if (!group || !editData) return <div className="p-8 text-center">Grupo não encontrado.</div>;
 
@@ -55,11 +56,31 @@ export default function GroupProfile() {
         content: recordContent,
         sessionDate: recordDate,
         groupId: group.id,
-        authorId: currentUser!.id
+        authorId: currentUser!.id,
+        attendance: group.memberIds.map(clientId => ({ clientId, status: (attendanceDraft[clientId] || "PENDENTE") as any })),
      });
      setRecordContent("");
      setEditingRecordId(null);
      setIsWritingRecord(false);
+     setAttendanceDraft({});
+  };
+
+  const openNewRecord = () => {
+     setRecordDate(format(new Date(), "yyyy-MM-dd"));
+     setRecordContent("");
+     setEditingRecordId(null);
+     setAttendanceDraft({});
+     setIsWritingRecord(true);
+  };
+
+  const openExistingRecord = (rec: typeof groupRecords[number]) => {
+     setRecordDate(rec.sessionDate);
+     setRecordContent(rec.content || "");
+     setEditingRecordId(rec.id);
+     const draft: Record<string, string> = {};
+     (rec.attendance || []).forEach(a => { draft[a.clientId] = a.status; });
+     setAttendanceDraft(draft);
+     setIsWritingRecord(true);
   };
 
   // Eligibile clients: Not already in group
@@ -67,7 +88,8 @@ export default function GroupProfile() {
   const groupMembers = clients.filter(c => group.memberIds.includes(c.id));
   const groupRecs = groupRecords.filter(r => r.groupId === group.id).sort((a,b) => new Date(b.sessionDate).getTime() - new Date(a.sessionDate).getTime());
 
-  const canEdit = currentUser?.role === "SUPERVISOR" || currentUser?.role === "ADMIN" || currentUser?.id === group.psychologistId;
+  const canManageGroup = currentUser?.role === "SUPERVISOR" || currentUser?.role === "ADMIN" || currentUser?.id === group.psychologistId;
+  const canViewProntuario = currentUser?.role === "SUPERVISOR" || currentUser?.id === group.psychologistId; // prontuário de grupo é conteúdo clínico restrito
 
   return (
     <div className="flex flex-col h-full animate-in fade-in slide-in-from-bottom-4 duration-500 max-w-5xl mx-auto space-y-6">
@@ -99,7 +121,7 @@ export default function GroupProfile() {
           <div className="space-y-6">
              <div className="flex items-center justify-between">
                <h2 className="text-xl font-bold text-gray-900">Configurações do Grupo</h2>
-               {!isEditingInfo && canEdit && (
+               {!isEditingInfo && canManageGroup && (
                  <button onClick={() => setIsEditingInfo(true)} className="text-blue-600 hover:bg-blue-50 px-4 py-2 rounded-xl text-sm font-bold flex items-center gap-2 transition-colors"><Edit2 size={16} /> Editar</button>
                )}
                {isEditingInfo && (
@@ -154,7 +176,7 @@ export default function GroupProfile() {
            <div className="space-y-6">
               <div className="flex items-center justify-between">
                  <h2 className="text-xl font-bold text-gray-900">Membros do Grupo</h2>
-                 {canEdit && !showAddMember && (
+                 {canManageGroup && !showAddMember && (
                     <button onClick={() => setShowAddMember(true)} className="bg-white border-2 border-dashed border-gray-300 hover:border-blue-400 hover:bg-blue-50 text-gray-600 hover:text-blue-600 px-4 py-2 rounded-xl text-sm font-bold flex items-center gap-2 transition-all">
                        <UserPlus size={16} /> Adicionar Paciente
                     </button>
@@ -187,7 +209,7 @@ export default function GroupProfile() {
                              <p className="text-xs text-gray-500">{member.status}</p>
                           </div>
                        </div>
-                       {canEdit && (
+                       {canManageGroup && (
                           <button onClick={() => handleRemoveMember(member.id)} className="p-2 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-xl transition-colors">
                              <X size={18} />
                           </button>
@@ -200,14 +222,20 @@ export default function GroupProfile() {
         )}
 
         {activeTab === "PRONTUARIO" && (
+           !canViewProntuario ? (
+             <div className="p-12 text-center bg-gray-50 rounded-3xl border border-dashed border-gray-200">
+               <h3 className="text-lg font-bold text-gray-900 mb-2">Acesso Restrito</h3>
+               <p className="text-gray-500 text-sm">O prontuário de grupo é conteúdo clínico e só pode ser acessado pelo psicólogo responsável pelo grupo ou pelo Supervisor.</p>
+             </div>
+           ) : (
            <div className="space-y-6">
               <div className="flex items-center justify-between">
                  <div>
                    <h2 className="text-xl font-bold text-gray-900">Registros do Grupo</h2>
                    <p className="text-sm text-gray-500">Apontamentos gerais de cada sessão coletiva.</p>
                  </div>
-                 {canEdit && !isWritingRecord && (
-                   <button onClick={() => setIsWritingRecord(true)} className="bg-blue-600 hover:bg-blue-700 text-white px-5 py-2.5 rounded-xl font-bold transition-colors">Registrar Sessão</button>
+                 {canViewProntuario && !isWritingRecord && (
+                   <button onClick={openNewRecord} className="bg-blue-600 hover:bg-blue-700 text-white px-5 py-2.5 rounded-xl font-bold transition-colors">Registrar Sessão</button>
                  )}
               </div>
 
@@ -222,6 +250,28 @@ export default function GroupProfile() {
                        <div>
                           <label className="block text-xs font-semibold text-blue-800 mb-1 tracking-wider uppercase">Descrição da Dinâmica</label>
                           <textarea autoFocus value={recordContent} onChange={e => setRecordContent(e.target.value)} className="w-full bg-white border border-blue-200 rounded-xl p-4 min-h-[150px] outline-none font-medium text-gray-700" placeholder="Como foi a sessão coletiva? Quais temas foram abordados?"></textarea>
+                       </div>
+                       <div>
+                          <label className="block text-xs font-semibold text-blue-800 mb-2 tracking-wider uppercase">Presença dos Membros</label>
+                          <div className="space-y-2">
+                            {groupMembers.map(member => (
+                              <div key={member.id} className="flex items-center justify-between bg-white border border-blue-100 rounded-xl px-4 py-2.5">
+                                <span className="font-medium text-gray-800 text-sm">{member.fullName}</span>
+                                <div className="flex gap-1.5">
+                                  {[
+                                    { v: "COMPARECEU", l: "Compareceu" },
+                                    { v: "FALTA_JUSTIFICADA", l: "Falta Just." },
+                                    { v: "FALTA_INJUSTIFICADA", l: "Falta Injust." },
+                                  ].map(opt => (
+                                    <button key={opt.v} type="button" onClick={() => setAttendanceDraft({...attendanceDraft, [member.id]: opt.v})}
+                                      className={cn("px-2.5 py-1 rounded-lg text-[11px] font-bold border transition-colors", attendanceDraft[member.id] === opt.v ? "bg-blue-600 border-blue-600 text-white" : "bg-gray-50 border-gray-200 text-gray-500 hover:bg-gray-100")}>
+                                      {opt.l}
+                                    </button>
+                                  ))}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
                        </div>
                     </div>
                     <div className="flex justify-between items-center mt-4">
@@ -250,18 +300,27 @@ export default function GroupProfile() {
                              <div className="flex justify-between items-center">
                                 <p className="text-amber-700/60 text-sm italic">Prontuário agendado. Aguardando preenchimento após a sessão.</p>
                                 {!isWritingRecord && (
-                                   <button onClick={() => {
-                                      setRecordDate(rec.sessionDate);
-                                      setRecordContent(rec.content || "");
-                                      setEditingRecordId(rec.id);
-                                      setIsWritingRecord(true);
-                                   }} className="text-amber-700 bg-amber-100/50 hover:bg-amber-100 px-4 py-2 rounded-xl text-sm font-bold transition-colors">
+                                   <button onClick={() => openExistingRecord(rec)} className="text-amber-700 bg-amber-100/50 hover:bg-amber-100 px-4 py-2 rounded-xl text-sm font-bold transition-colors">
                                      Preencher Agora
                                    </button>
                                 )}
                              </div>
                           ) : (
-                             <p className="text-gray-700 whitespace-pre-wrap">{rec.content}</p>
+                             <div className="space-y-3">
+                               <p className="text-gray-700 whitespace-pre-wrap">{rec.content}</p>
+                               {(rec.attendance && rec.attendance.length > 0) && (
+                                 <div className="flex flex-wrap gap-1.5 pt-2 border-t border-gray-200 border-dashed">
+                                   {rec.attendance.map(a => {
+                                      const m = clients.find(c => c.id === a.clientId);
+                                      const color = a.status === "COMPARECEU" ? "bg-emerald-100 text-emerald-700" : a.status === "FALTA_JUSTIFICADA" ? "bg-amber-100 text-amber-700" : a.status === "FALTA_INJUSTIFICADA" ? "bg-red-100 text-red-700" : "bg-gray-100 text-gray-500";
+                                      return <span key={a.clientId} className={cn("text-[11px] px-2 py-0.5 rounded-full font-bold", color)}>{m?.fullName || "?"}</span>;
+                                   })}
+                                 </div>
+                               )}
+                               {canViewProntuario && !isWritingRecord && (
+                                 <button onClick={() => openExistingRecord(rec)} className="text-blue-600 hover:bg-blue-50 px-3 py-1.5 rounded-lg text-xs font-bold transition-colors">Editar</button>
+                               )}
+                             </div>
                           )}
                        </div>
                     )
@@ -269,6 +328,7 @@ export default function GroupProfile() {
                  {groupRecs.length === 0 && !isWritingRecord && <p className="text-center text-gray-500 py-8">Nenhum prontuário coletivo registrado.</p>}
               </div>
            </div>
+           )
         )}
 
       </div>

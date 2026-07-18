@@ -104,7 +104,7 @@ app.get(
         prisma.sessionRecord.findMany({ include: { versions: true }, orderBy: { date: "desc" } }),
         prisma.appointment.findMany({ orderBy: { date: "asc" } }),
         prisma.group.findMany({ include: { members: true }, orderBy: { createdAt: "desc" } }),
-        prisma.groupRecord.findMany({ orderBy: { createdAt: "desc" } }),
+        prisma.groupRecord.findMany({ include: { attendances: true }, orderBy: { createdAt: "desc" } }),
         prisma.configItem.findMany(),
         prisma.instrument.findMany(),
         prisma.instrumentLog.findMany({ orderBy: { date: "desc" } }),
@@ -128,11 +128,13 @@ app.get(
     const groups = isSupervisorOrAdmin
       ? groupsRaw
       : groupsRaw.filter((g: any) => g.psychologistId === session.userId);
-    const groupIds = new Set(groups.map((g: any) => g.id));
 
-    const groupRecords = isSupervisorOrAdmin
+    const groupRecords = session.role === "SUPERVISOR"
       ? groupRecordsRaw
-      : groupRecordsRaw.filter((r: any) => groupIds.has(r.groupId));
+      : groupRecordsRaw.filter((r: any) => {
+          const g = groupsRaw.find((gr: any) => gr.id === r.groupId);
+          return !!g && g.psychologistId === session.userId;
+        });
 
     const clinicalDocuments = isSupervisorOrAdmin
       ? clinicalDocumentsRaw
@@ -167,6 +169,15 @@ async function assertClientAccess(session: { userId: string; role: string }, cli
   if (session.role === "SUPERVISOR" || session.role === "ADMIN") return true;
   const client = await prisma.client.findUnique({ where: { id: clientId } });
   return !!client && client.assignedPsicoId === session.userId;
+}
+
+// Prontuário de grupo é conteúdo clínico: só o psicólogo responsável pelo
+// grupo e o Supervisor (supervisão clínica) podem ver/editar — diferente de
+// clientes/agenda, aqui o Administrativo NÃO tem acesso.
+async function assertGroupAccess(session: { userId: string; role: string }, groupId: string) {
+  if (session.role === "SUPERVISOR") return true;
+  const group = await prisma.group.findUnique({ where: { id: groupId } });
+  return !!group && group.psychologistId === session.userId;
 }
 
 // ---------------------------------------------------------------------------
@@ -629,14 +640,37 @@ app.post(
     if (!session) return;
     const b = req.body ?? {};
 
+    if (!(await assertGroupAccess(session, b.groupId))) {
+      res.status(403).json({ error: "Somente o psicólogo responsável pelo grupo (ou o Supervisor) pode registrar esta sessão." });
+      return;
+    }
+
+    const attendanceList: Array<{ clientId: string; status: string }> = Array.isArray(b.attendance) ? b.attendance : [];
+
+    async function saveAttendance(groupRecordId: string) {
+      for (const a of attendanceList) {
+        await prisma.groupAttendance.upsert({
+          where: { groupRecordId_clientId: { groupRecordId, clientId: a.clientId } },
+          update: { status: a.status },
+          create: { groupRecordId, clientId: a.clientId, status: a.status },
+        });
+      }
+    }
+
     if (b.id) {
       const existing = await prisma.groupRecord.findUnique({ where: { id: b.id } });
       if (existing) {
+        if (!(await assertGroupAccess(session, existing.groupId))) {
+          res.status(403).json({ error: "Somente o psicólogo responsável pelo grupo (ou o Supervisor) pode editar esta sessão." });
+          return;
+        }
         const updated = await prisma.groupRecord.update({
           where: { id: b.id },
           data: { contentEnc: encryptField(b.content), isDraft: false },
         });
-        res.status(200).json({ groupRecord: mapGroupRecord(updated) });
+        await saveAttendance(updated.id);
+        const withAttendance = await prisma.groupRecord.findUnique({ where: { id: updated.id }, include: { attendances: true } });
+        res.status(200).json({ groupRecord: mapGroupRecord(withAttendance) });
         return;
       }
     }
@@ -690,7 +724,9 @@ app.post(
         }
       }
     }
-    res.status(201).json({ groupRecord: mapGroupRecord(record) });
+    await saveAttendance(record.id);
+    const recordWithAttendance = await prisma.groupRecord.findUnique({ where: { id: record.id }, include: { attendances: true } });
+    res.status(201).json({ groupRecord: mapGroupRecord(recordWithAttendance) });
   })
 );
 
