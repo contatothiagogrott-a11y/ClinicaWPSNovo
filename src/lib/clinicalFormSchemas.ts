@@ -192,7 +192,7 @@ export const URGENCIA_SECTIONS: SectionSchema[] = [
     fields: [
       { key: "data_hora", label: "Data e hora do acionamento", type: "date" },
       { key: "local", label: "Local do atendimento", type: "text" },
-      { key: "acionado_por", label: "Acionado por (nome/setor)", type: "text" },
+      { key: "via_chegada", label: "Como chegou até o Setor de Psicologia", type: "select", options: ["Procura espontânea", "Encaminhamento da chefia/setor", "Encaminhamento médico/ambulatório", "Acionado por terceiros (colega, familiar)", "Encaminhado pela Segurança/Brigada", "Outro"] },
     ],
   },
   {

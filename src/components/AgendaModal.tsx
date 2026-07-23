@@ -49,6 +49,8 @@ export default function AgendaModal({ open, onClose, initialData, existingAppoin
     EM_ATENDIMENTO: null,
   };
   const [statusTransition, setStatusTransition] = useState<string>("");
+  const [responsiblePsicoId, setResponsiblePsicoId] = useState<string>("");
+  const psicos = users.filter(u => u.role === "PSICO");
   
   const activeGroups = groups.filter(g => g.isActive && (currentUser?.role !== "PSICO" || g.psychologistId === currentUser.id));
 
@@ -77,6 +79,10 @@ export default function AgendaModal({ open, onClose, initialData, existingAppoin
     if (!selectedId) return;
     if (startTime >= endTime) {
        setErrorMsg("O horário de término deve ser maior que o início.");
+       return;
+    }
+    if (statusTransition === "EM_ATENDIMENTO" && !responsiblePsicoId) {
+       setErrorMsg("Escolha o psicólogo responsável pelo atendimento antes de continuar.");
        return;
     }
 
@@ -135,7 +141,9 @@ export default function AgendaModal({ open, onClose, initialData, existingAppoin
     if (bookingType === "client" && statusTransition) {
       const selectedClient = clients.find(c => c.id === selectedId);
       const updates: any = { status: statusTransition };
-      if (selectedClient && !selectedClient.assignedPsicoId && currentUser) {
+      if (statusTransition === "EM_ATENDIMENTO" && responsiblePsicoId) {
+        updates.assignedPsicoId = responsiblePsicoId;
+      } else if (selectedClient && !selectedClient.assignedPsicoId && currentUser) {
         updates.assignedPsicoId = currentUser.id;
       }
       updateClient(selectedId, updates, `Status alterado para ${statusTransition} ao agendar atendimento.`);
@@ -250,15 +258,25 @@ export default function AgendaModal({ open, onClose, initialData, existingAppoin
                </div>
 
                {selectedId && NEXT_STATUS[clients.find(c => c.id === selectedId)?.status || ""] && (
-                 <div className="bg-blue-50 border border-blue-100 rounded-xl p-3">
+                 <div className="bg-blue-50 border border-blue-100 rounded-xl p-3 space-y-3">
                    <label className="flex items-center gap-2 text-sm font-semibold text-blue-900">
                      <input
                        type="checkbox"
                        checked={!!statusTransition}
-                       onChange={e => setStatusTransition(e.target.checked ? NEXT_STATUS[clients.find(c => c.id === selectedId)!.status]!.value : "")}
+                       onChange={e => { setStatusTransition(e.target.checked ? NEXT_STATUS[clients.find(c => c.id === selectedId)!.status]!.value : ""); setResponsiblePsicoId(""); }}
                      />
                      {NEXT_STATUS[clients.find(c => c.id === selectedId)!.status]!.label} ao salvar este agendamento
                    </label>
+                   {statusTransition === "EM_ATENDIMENTO" && (
+                     <div>
+                       <label className="block text-xs font-semibold text-blue-800 mb-1">Psicólogo responsável pelo atendimento</label>
+                       <select required value={responsiblePsicoId} onChange={e => setResponsiblePsicoId(e.target.value)} className="w-full bg-white border border-blue-200 rounded-lg px-3 py-2 outline-none font-medium text-sm">
+                         <option value="">-- Escolher psicólogo --</option>
+                         {psicos.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+                       </select>
+                       <p className="text-[11px] text-blue-700 mt-1">Isso também atualiza o psicólogo responsável no perfil do paciente.</p>
+                     </div>
+                   )}
                  </div>
                )}
              </div>

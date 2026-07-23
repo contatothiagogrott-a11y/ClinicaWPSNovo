@@ -1,11 +1,17 @@
-import { Client, SessionRecord, User } from "../types";
-import { letterheadHeader, letterheadFooter, documentStyles } from "./pdfGenerator";
+import { Client, SessionRecord, User, InstrumentApplication, Instrument } from "../types";
+import { letterheadHeader, letterheadFooter, letterheadBackground, PAGE_MARGINS, documentStyles } from "./pdfGenerator";
 
 const SUPERVISOR_NAME = "Rafael da Costa Faria";
 const SUPERVISOR_ROLE = "Psicólogo Supervisor";
 const SUPERVISOR_CRP = "CRP-SC 25613";
 
-export function buildProntuarioDocDefinition(client: Client, sessions: SessionRecord[], psico?: User) {
+export function buildProntuarioDocDefinition(
+  client: Client,
+  sessions: SessionRecord[],
+  psico?: User,
+  includedInstrumentApps?: InstrumentApplication[],
+  instruments?: Instrument[]
+) {
   const nonDraftSessions = sessions
     .filter(s => s.clientId === client.id && !s.isDraft)
     .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
@@ -28,13 +34,43 @@ export function buildProntuarioDocDefinition(client: Client, sessions: SessionRe
     });
   });
 
+  const testBlocks: any[] = [];
+  if (includedInstrumentApps && includedInstrumentApps.length > 0) {
+    testBlocks.push({ text: "TESTES E INSTRUMENTOS APLICADOS", style: "sectionTitle", margin: [0, 20, 0, 8] });
+    includedInstrumentApps.forEach(app => {
+      const inst = instruments?.find(i => i.id === app.instrumentId);
+      testBlocks.push({
+        margin: [0, 6, 0, 0],
+        table: {
+          widths: ["*"],
+          body: [
+            [{ text: inst?.name || "Instrumento", bold: true, fillColor: "#f1f5f9" }],
+            [{
+              margin: [4, 6, 4, 6],
+              stack: [
+                ...(app.purpose ? [{ text: [{ text: "Finalidade: ", bold: true }, app.purpose], fontSize: 9, margin: [0, 0, 0, 6] }] : []),
+                ...app.entries.map(entry => ({
+                  text: [{ text: `${new Date(entry.date).toLocaleDateString("pt-BR")}: `, bold: true }, entry.description || "(sem descrição)"],
+                  fontSize: 9,
+                  margin: [0, 2, 0, 2],
+                })),
+              ],
+            }],
+          ],
+        },
+        layout: "lightHorizontalLines",
+      });
+    });
+  }
+
   const today = new Date();
 
   return {
     pageSize: "A4",
-    pageMargins: [30, 70, 30, 60],
+    pageMargins: PAGE_MARGINS,
     header: letterheadHeader,
     footer: letterheadFooter,
+    background: letterheadBackground,
     styles: documentStyles,
     content: [
       { text: "PRONTUÁRIO PSICOLÓGICO", style: "title" },
@@ -57,6 +93,7 @@ export function buildProntuarioDocDefinition(client: Client, sessions: SessionRe
       },
 
       ...sessionBlocks,
+      ...testBlocks,
 
       { text: `Prontuário impresso e arquivado no dia ${today.getDate()} de ${today.toLocaleDateString("pt-BR", { month: "long" })} de ${today.getFullYear()}.`, margin: [0, 20, 0, 0], fontSize: 9 },
       { text: "Florianópolis, SC.", fontSize: 9 },

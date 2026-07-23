@@ -1,6 +1,6 @@
 import { Client, ClinicalDocument, User } from "../types";
 import { ANAMNESE_RISCO_SECTIONS } from "./clinicalFormSchemas";
-import { letterheadHeader, letterheadFooter, signatureBlock, renderSectionsToPdfContent, documentStyles } from "./pdfGenerator";
+import { letterheadHeader, letterheadFooter, letterheadBackground, PAGE_MARGINS, signatureBlock, renderSectionsToPdfContent, documentStyles } from "./pdfGenerator";
 
 const SUPERVISOR_NAME = "Rafael da Costa Faria";
 const SUPERVISOR_ROLE = "Psicólogo Supervisor";
@@ -11,9 +11,10 @@ export function buildAnamneseRiscoDocDefinition(client: Client, doc: ClinicalDoc
 
   return {
     pageSize: "A4",
-    pageMargins: [30, 70, 30, 40],
+    pageMargins: PAGE_MARGINS,
     header: letterheadHeader,
     footer: letterheadFooter,
+    background: letterheadBackground,
     styles: documentStyles,
     content: [
       { text: "ANAMNESE DE CLASSIFICAÇÃO DE RISCO", style: "title" },

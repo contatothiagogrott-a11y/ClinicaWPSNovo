@@ -26,6 +26,7 @@ interface StoreContextType extends StoreState {
   updateClient: (id: string, updates: Partial<Client>, logAction?: string) => Promise<void>;
   addSession: (session: Omit<SessionRecord, "id" | "createdAt" | "updatedAt"> & { id?: string }) => Promise<void>;
   updateSession: (id: string, newContent: string) => Promise<void>;
+  updatePrivateSessionNotes: (id: string, text: string) => Promise<void>;
   addGroup: (group: Omit<Group, "id" | "createdAt" | "memberIds">) => Promise<void>;
   updateGroup: (id: string, updates: Partial<Group>) => Promise<void>;
   addGroupRecord: (record: Omit<GroupRecord, "id" | "createdAt"> & { id?: string }) => Promise<void>;
@@ -43,7 +44,9 @@ interface StoreContextType extends StoreState {
   logClientHistory: (clientId: string, action: string, details?: string) => Promise<void>;
   addInstrument: (name: string, initialCount: number) => Promise<void>;
   adjustInstrumentStock: (id: string, newCount: number, reason: string) => Promise<void>;
-  applyInstrument: (clientId: string, instrumentId: string, results: string) => Promise<void>;
+  applyInstrument: (clientId: string, instrumentId: string, purpose: string, date: string, description: string) => Promise<void>;
+  addInstrumentApplicationEntry: (applicationId: string, date: string, description: string) => Promise<void>;
+  updateInstrumentApplication: (applicationId: string, updates: { purpose?: string; entry?: { id: string; date?: string; description?: string } }) => Promise<void>;
   addClinicalDocument: (clientId: string, type: ClinicalDocumentType, data: Record<string, any>) => Promise<ClinicalDocument>;
   updateClinicalDocument: (id: string, data: Record<string, any>) => Promise<void>;
   importClients: (rows: Record<string, any>[]) => Promise<{ created: number; errors: { row: number; error: string }[] }>;
@@ -172,6 +175,11 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     await refreshAll();
   };
 
+  const updatePrivateSessionNotes: StoreContextType["updatePrivateSessionNotes"] = async (id, text) => {
+    await api.patch(`/api/sessions/${id}`, { privateNotes: text });
+    await refreshAll();
+  };
+
   const addGroup: StoreContextType["addGroup"] = async (group) => {
     await api.post("/api/groups", group);
     await refreshAll();
@@ -258,8 +266,18 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     await refreshAll();
   };
 
-  const applyInstrument: StoreContextType["applyInstrument"] = async (clientId, instrumentId, results) => {
-    await api.post(`/api/instruments/${instrumentId}/apply`, { clientId, results });
+  const applyInstrument: StoreContextType["applyInstrument"] = async (clientId, instrumentId, purpose, date, description) => {
+    await api.post(`/api/instruments/${instrumentId}/apply`, { clientId, purpose, date, description });
+    await refreshAll();
+  };
+
+  const addInstrumentApplicationEntry: StoreContextType["addInstrumentApplicationEntry"] = async (applicationId, date, description) => {
+    await api.post(`/api/instrument-applications/${applicationId}/entries`, { date, description });
+    await refreshAll();
+  };
+
+  const updateInstrumentApplication: StoreContextType["updateInstrumentApplication"] = async (applicationId, updates) => {
+    await api.patch(`/api/instrument-applications/${applicationId}`, updates);
     await refreshAll();
   };
 
@@ -303,6 +321,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
         updateClient,
         addSession,
         updateSession,
+        updatePrivateSessionNotes,
         addGroup,
         updateGroup,
         addGroupRecord,
@@ -321,6 +340,8 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
         addInstrument,
         adjustInstrumentStock,
         applyInstrument,
+        addInstrumentApplicationEntry,
+        updateInstrumentApplication,
         addClinicalDocument,
         updateClinicalDocument,
         importClients,

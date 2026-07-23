@@ -1,15 +1,16 @@
 import { Client, ClinicalDocument, User } from "../types";
 import { URGENCIA_SECTIONS } from "./clinicalFormSchemas";
-import { letterheadHeader, letterheadFooter, signatureBlock, renderSectionsToPdfContent, documentStyles } from "./pdfGenerator";
+import { letterheadHeader, letterheadFooter, letterheadBackground, PAGE_MARGINS, signatureBlock, renderSectionsToPdfContent, documentStyles } from "./pdfGenerator";
 
 export function buildUrgenciaDocDefinition(client: Client, doc: ClinicalDocument, author?: User) {
   const data = doc.data || {};
 
   return {
     pageSize: "A4",
-    pageMargins: [30, 70, 30, 40],
+    pageMargins: PAGE_MARGINS,
     header: letterheadHeader,
     footer: letterheadFooter,
+    background: letterheadBackground,
     styles: documentStyles,
     content: [
       { text: "REGISTRO DE ATENDIMENTO DE URGÊNCIA", style: "title" },

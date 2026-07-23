@@ -4,6 +4,11 @@ import { Users, Trash2, KeyRound, Edit2, X, Check } from "lucide-react";
 import { User, Role } from "../types";
 import { cn } from "../lib/utils";
 
+// Paleta de cores distintas para sugerir automaticamente a cada novo usuário
+// (evita que todo mundo fique com a mesma cor padrão na agenda até alguém
+// lembrar de trocar manualmente).
+const COLOR_PALETTE = ["#3b82f6", "#f97316", "#10b981", "#8b5cf6", "#ec4899", "#eab308", "#14b8a6", "#ef4444", "#6366f1", "#84cc16"];
+
 export default function UsersManagement() {
   const { currentUser, users, deleteUser, updateUser, addUser } = useStore();
   
@@ -93,8 +98,9 @@ export default function UsersManagement() {
   };
 
   const resetForm = () => {
+     const nextColor = COLOR_PALETTE[users.length % COLOR_PALETTE.length];
      setFormData({
-        name: "", email: "", role: "PSICO", title: "", institutionalLink: "", birthDate: "", matricula: "", crp: "", color: "#3b82f6"
+        name: "", email: "", role: "PSICO", title: "", institutionalLink: "", birthDate: "", matricula: "", crp: "", color: nextColor
      });
   };
 
@@ -111,7 +117,7 @@ export default function UsersManagement() {
             <Users className="text-blue-600" /> Gerenciamento de Equipe
          </h2>
          {!isAdding && (
-            <button onClick={() => setIsAdding(true)} className="bg-blue-600 text-white px-5 py-2.5 rounded-xl font-bold hover:bg-blue-700 transition-colors">
+            <button onClick={() => { resetForm(); setIsAdding(true); }} className="bg-blue-600 text-white px-5 py-2.5 rounded-xl font-bold hover:bg-blue-700 transition-colors">
                Novo Usuário
             </button>
          )}

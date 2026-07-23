@@ -1,4 +1,4 @@
-import { letterheadHeader, letterheadFooter, documentStyles } from "./pdfGenerator";
+import { letterheadHeader, letterheadFooter, letterheadBackground, PAGE_MARGINS, documentStyles } from "./pdfGenerator";
 
 export interface ReportTableSection {
   title: string;
@@ -32,9 +32,10 @@ export function buildRelatorioDocDefinition(periodLabel: string, sections: Repor
 
   return {
     pageSize: "A4",
-    pageMargins: [30, 70, 30, 40],
+    pageMargins: PAGE_MARGINS,
     header: letterheadHeader,
     footer: letterheadFooter,
+    background: letterheadBackground,
     styles: documentStyles,
     content,
   };

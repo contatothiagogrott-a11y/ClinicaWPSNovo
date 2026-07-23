@@ -1,6 +1,7 @@
 import pdfMakeImport from "pdfmake/build/pdfmake";
 import vfsFontsImport from "pdfmake/build/vfs_fonts";
 import { LETTERHEAD_PNG_BASE64 } from "./letterheadData";
+import { WATERMARK_PNG_BASE64 } from "./watermarkData";
 import { SectionSchema, FieldSchema } from "./clinicalFormSchemas";
 
 // A forma exata de importar isso varia conforme a versão/empacotador (Vite
@@ -23,25 +24,59 @@ export function openPdfInNewTab(docDefinition: any) {
 }
 
 // ---------------------------------------------------------------------------
-// Cabeçalho/rodapé padrão (timbre institucional em todas as páginas)
+// Medidas do timbre institucional — extraídas diretamente do modelo Word
+// oficial (ATESTADO_MODELO.docx) para bater exatamente com o padrão usado
+// pela clínica: logo de cabeçalho, marca d'água central e margens de página.
+// ---------------------------------------------------------------------------
+
+// Margens de página em pt: 3cm esquerda/topo, 2cm direita, e espaço extra no
+// topo/rodapé para caber a logo do cabeçalho e o texto do rodapé.
+export const PAGE_MARGINS: [number, number, number, number] = [85, 108, 57, 78];
+
+const HEADER_LOGO_WIDTH = 380; // pt — proporcional aos ~431pt do modelo original, ajustado à margem
+const WATERMARK_WIDTH = 226.77; // pt — medida exata do modelo (WordPictureWatermark)
+const WATERMARK_HEIGHT = 257.10; // pt — medida exata do modelo
+
+// ---------------------------------------------------------------------------
+// Cabeçalho/rodapé/marca d'água padrão — se repetem em todas as páginas
 // ---------------------------------------------------------------------------
 
 export function letterheadHeader() {
   return {
-    margin: [30, 18, 30, 0],
+    margin: [85, 28, 57, 0] as [number, number, number, number],
     columns: [
-      { image: LETTERHEAD_PNG_BASE64, width: 220 },
+      { image: LETTERHEAD_PNG_BASE64, width: HEADER_LOGO_WIDTH },
     ],
   };
 }
 
 export function letterheadFooter(current: number, total: number) {
   return {
-    margin: [30, 0, 30, 10],
-    columns: [
-      { text: "Documento gerado pelo sistema — confidencial, uso restrito à equipe autorizada.", fontSize: 7, color: "#888888" },
-      { text: `${current} / ${total}`, fontSize: 7, color: "#888888", alignment: "right" },
+    margin: [85, 0, 57, 20] as [number, number, number, number],
+    stack: [
+      { canvas: [{ type: "line", x1: 0, y1: 0, x2: 453, y2: 0, lineWidth: 0.5, lineColor: "#cccccc" }], margin: [0, 0, 0, 4] },
+      {
+        columns: [
+          { text: "Assembleia Legislativa do Estado de Santa Catarina — Setor de Psicologia — Documento gerado pelo sistema, uso restrito à equipe autorizada.", fontSize: 6.5, color: "#888888" },
+          { text: `${current} / ${total}`, fontSize: 6.5, color: "#888888", alignment: "right", width: 40 },
+        ],
+      },
     ],
+  };
+}
+
+// Marca d'água central em todas as páginas (usa o mecanismo `background` do
+// pdfmake, que fica atrás do conteúdo normal — equivalente ao "watermark"
+// do Word). Opacidade baixa para não atrapalhar a leitura, como no modelo.
+export function letterheadBackground(_currentPage: number, pageSize: { width: number; height: number }) {
+  const x = (pageSize.width - WATERMARK_WIDTH) / 2;
+  const y = (pageSize.height - WATERMARK_HEIGHT) / 2;
+  return {
+    image: WATERMARK_PNG_BASE64,
+    width: WATERMARK_WIDTH,
+    height: WATERMARK_HEIGHT,
+    absolutePosition: { x, y },
+    opacity: 0.13,
   };
 }
 

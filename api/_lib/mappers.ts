@@ -32,13 +32,22 @@ export function mapHistoryLog(h: any) {
   };
 }
 
+export function mapInstrumentApplicationEntry(e: any) {
+  return {
+    id: e.id,
+    date: isoDate(e.date),
+    description: decryptField(e.descriptionEnc),
+  };
+}
+
 export function mapInstrumentApplication(a: any) {
   return {
     id: a.id,
     instrumentId: a.instrumentId,
-    date: isoDate(a.date),
     psychoId: a.psychoId,
-    results: decryptField(a.resultsEnc),
+    purpose: decryptField(a.purposeEnc),
+    createdAt: isoDate(a.createdAt),
+    entries: (a.entries ?? []).map(mapInstrumentApplicationEntry).sort((x: any, y: any) => new Date(x.date).getTime() - new Date(y.date).getTime()),
   };
 }
 
@@ -92,7 +101,7 @@ export function mapRecordVersion(v: any) {
   };
 }
 
-export function mapSession(s: any) {
+export function mapSession(s: any, viewerId?: string) {
   return {
     id: s.id,
     clientId: s.clientId,
@@ -107,6 +116,10 @@ export function mapSession(s: any) {
     createdAt: isoDate(s.createdAt),
     updatedAt: isoDate(s.updatedAt),
     versions: (s.versions ?? []).map(mapRecordVersion),
+    // Anotação privada: só é decriptada/enviada se quem está pedindo for o
+    // próprio profissional responsável pela sessão — nem Supervisor, nem
+    // Admin recebem esse campo para outra pessoa.
+    privateNotes: viewerId && viewerId === s.psicoId ? decryptField(s.privateNotesEnc) : undefined,
   };
 }
 

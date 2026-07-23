@@ -43,6 +43,7 @@ enum ConfigType {
 enum ClinicalDocumentType {
   ANAMNESE_RISCO
   URGENCIA
+  ATESTADO
 }
 
 enum InstrumentLogType {
@@ -158,6 +159,7 @@ model SessionRecord {
   psico         User      @relation(fields: [psicoId], references: [id])
   date          DateTime
   notesEnc      String    @default("")
+  privateNotesEnc String  @default("") // rascunho visível SÓ para o profissional que atendeu (nunca sai da API para outros papéis)
   isDraft       Boolean   @default(true)
   status        String?
   groupId       String?
@@ -291,10 +293,23 @@ model InstrumentApplication {
   client       Client     @relation(fields: [clientId], references: [id], onDelete: Cascade)
   instrumentId String
   instrument   Instrument @relation(fields: [instrumentId], references: [id])
-  date         DateTime   @default(now())
   psychoId     String
   psycho       User       @relation(fields: [psychoId], references: [id])
-  resultsEnc   String
+  purposeEnc   String     @default("")
+  createdAt    DateTime   @default(now())
+
+  entries      InstrumentApplicationEntry[]
+}
+
+// Cada aplicação pode ter várias datas/descrições (ex: o mesmo teste aplicado
+// em dias diferentes) sem consumir outra unidade do estoque — só a criação
+// da InstrumentApplication em si consome 1 unidade.
+model InstrumentApplicationEntry {
+  id             String                @id @default(uuid())
+  applicationId  String
+  application    InstrumentApplication @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+  date           DateTime
+  descriptionEnc String
 }
 
 // Documentos clínicos formais e imprimíveis: Anamnese + Avaliação de

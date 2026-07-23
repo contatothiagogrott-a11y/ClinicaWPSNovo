@@ -1,7 +1,7 @@
 import React, { useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { useStore } from "../contexts/StoreContext";
-import { ChevronLeft, Edit2, Clock, FileText, UserCircle, Save, Phone, X, FileDown, ShieldAlert, Siren, Download } from "lucide-react";
+import { ChevronLeft, Edit2, Clock, FileText, UserCircle, Save, Phone, X, FileDown, ShieldAlert, Siren, Download, Lock } from "lucide-react";
 import { cn } from "../lib/utils";
 import { format } from "date-fns";
 import { ptBR } from "date-fns/locale";
@@ -10,6 +10,8 @@ import { ANAMNESE_RISCO_SECTIONS, URGENCIA_SECTIONS } from "../lib/clinicalFormS
 import { buildAnamneseRiscoDocDefinition } from "../lib/pdfAnamneseRisco";
 import { buildUrgenciaDocDefinition } from "../lib/pdfUrgencia";
 import { buildProntuarioDocDefinition } from "../lib/pdfProntuario";
+import { buildAtestadoDocDefinition } from "../lib/pdfAtestado";
+import AtestadoModal from "../components/AtestadoModal";
 import { openPdfInNewTab, downloadPdf } from "../lib/pdfGenerator";
 
 import { TagInput } from "../components/TagInput";
@@ -17,7 +19,7 @@ import { TagInput } from "../components/TagInput";
 export default function ClientProfile() {
   const { id } = useParams();
   const navigate = useNavigate();
-  const { clients, users, sessions, currentUser, updateClient, reactivateClient, config, addConfigItem, clinicalDocuments, addClinicalDocument, updateClinicalDocument } = useStore();
+  const { clients, users, sessions, currentUser, updateClient, reactivateClient, config, addConfigItem, clinicalDocuments, addClinicalDocument, updateClinicalDocument, instruments } = useStore();
   const client = clients.find(c => c.id === id);
 
   const [activeTab, setActiveTab] = useState<"INFO" | "PRONTUARIO" | "HISTORICO" | "INSTRUMENTOS" | "DOCUMENTOS">("INFO");
@@ -26,6 +28,7 @@ export default function ClientProfile() {
   const [editData, setEditData] = useState(client);
   const [openAnamneseForm, setOpenAnamneseForm] = useState<{ id?: string; data?: any } | null>(null);
   const [openUrgenciaForm, setOpenUrgenciaForm] = useState<{ id?: string; data?: any } | null>(null);
+  const [openAtestado, setOpenAtestado] = useState<{ id?: string } | null>(null);
 
   if (!client || !editData) return <div className="p-8 text-center">Paciente não encontrado.</div>;
 
@@ -33,11 +36,25 @@ export default function ClientProfile() {
   const clientDocs = clinicalDocuments.filter(d => d.clientId === client.id).sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
   const assignedPsico = users.find(u => u.id === client.assignedPsicoId);
 
+  const [showExportPrompt, setShowExportPrompt] = useState(false);
+  const [selectedTestIds, setSelectedTestIds] = useState<Set<string>>(new Set());
+
   const handleExportProntuario = () => {
-    const docDef = buildProntuarioDocDefinition(client, sessions, assignedPsico);
-    openPdfInNewTab(docDef);
+    if (!client.instruments || client.instruments.length === 0) {
+      const docDef = buildProntuarioDocDefinition(client, sessions, assignedPsico);
+      openPdfInNewTab(docDef);
+      return;
+    }
+    setSelectedTestIds(new Set(client.instruments.map(a => a.id)));
+    setShowExportPrompt(true);
   };
 
+  const finalizeExportProntuario = (includeTests: boolean) => {
+    const includedApps = includeTests ? (client.instruments || []).filter(a => selectedTestIds.has(a.id)) : undefined;
+    const docDef = buildProntuarioDocDefinition(client, sessions, assignedPsico, includedApps, instruments);
+    openPdfInNewTab(docDef);
+    setShowExportPrompt(false);
+  };
 
   const handleSaveInfo = () => {
     updateClient(client.id, editData, "Informações do paciente atualizadas.");
@@ -89,7 +106,7 @@ export default function ClientProfile() {
           <p className="text-gray-500 text-sm font-medium mt-1">Matrícula: {client.registrationCode} <span className="mx-2">•</span> Prontuário n.º: <strong className="text-gray-800">{client.protocolNumber}</strong> <span className="mx-2">•</span> Entrou em: {format(new Date(client.dateIncluded), "dd/MM/yyyy")}</p>
           <div className="flex flex-wrap gap-2 mt-3">
             <span className={cn("text-xs px-2.5 py-1 rounded-md font-bold uppercase tracking-wider", client.signedAgreement ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-700")}>
-              {client.signedAgreement ? "Regimento Assinado ✓" : "Regimento Pendente !"}
+              {client.signedAgreement ? "Termo de Compromisso Assinado ✓" : "Termo de Compromisso Pendente !"}
             </span>
             {client.tags && client.tags.map(t => <span key={t} className="bg-gray-100 text-gray-600 text-xs px-2.5 py-1 rounded-md font-bold uppercase tracking-wider">{t}</span>)}
           </div>
@@ -174,7 +191,7 @@ export default function ClientProfile() {
 
                 {isEditingInfo && (
                    <div className="mb-2">
-                      <label className="block text-xs font-semibold text-gray-500 mb-1 tracking-wider uppercase">Termos e Regimentos</label>
+                      <label className="block text-xs font-semibold text-gray-500 mb-1 tracking-wider uppercase">Termos de Compromisso</label>
                       <button 
                          type="button" 
                          onClick={() => setEditData({...editData, signedAgreement: !editData.signedAgreement})}
@@ -184,7 +201,7 @@ export default function ClientProfile() {
                            <div className={cn("w-10 h-6 rounded-full flex items-center p-1 transition-colors duration-200", editData.signedAgreement ? "bg-emerald-500" : "bg-gray-300")}>
                              <div className={cn("bg-white w-4 h-4 rounded-full shadow-md transform transition-transform duration-200", editData.signedAgreement ? "translate-x-4" : "translate-x-0")} />
                            </div>
-                           Regimento Assinado
+                           Termo de Compromisso Assinado
                          </span>
                          <span className="text-sm">{editData.signedAgreement ? "✓ Sim" : "Pendente"}</span>
                       </button>
@@ -522,7 +539,7 @@ export default function ClientProfile() {
 
         {activeTab === "DOCUMENTOS" && (
           <div className="animate-in fade-in duration-300 space-y-6">
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
               <button onClick={() => setOpenAnamneseForm({})} className="bg-blue-50 hover:bg-blue-100 border border-blue-100 rounded-2xl p-5 text-left transition-colors">
                 <ShieldAlert className="text-blue-600 mb-2" size={22} />
                 <h4 className="font-bold text-blue-900">Nova Anamnese + Avaliação de Risco</h4>
@@ -532,6 +549,11 @@ export default function ClientProfile() {
                 <Siren className="text-red-600 mb-2" size={22} />
                 <h4 className="font-bold text-red-900">Novo Atendimento de Urgência</h4>
                 <p className="text-xs text-red-700 mt-1">Para atendimentos pontuais de crise (não é anamnese nem atendimento contínuo).</p>
+              </button>
+              <button onClick={() => setOpenAtestado({})} className="bg-amber-50 hover:bg-amber-100 border border-amber-100 rounded-2xl p-5 text-left transition-colors">
+                <FileText className="text-amber-600 mb-2" size={22} />
+                <h4 className="font-bold text-amber-900">Emissão de Atestado</h4>
+                <p className="text-xs text-amber-700 mt-1">Gera o texto-base a partir dos dados do paciente, editável antes de emitir.</p>
               </button>
               <button onClick={handleExportProntuario} className="bg-emerald-50 hover:bg-emerald-100 border border-emerald-100 rounded-2xl p-5 text-left transition-colors">
                 <FileDown className="text-emerald-600 mb-2" size={22} />
@@ -552,7 +574,7 @@ export default function ClientProfile() {
                     <div key={doc.id} className="flex items-center justify-between bg-gray-50 border border-gray-100 rounded-xl px-4 py-3">
                       <div>
                         <p className="font-bold text-gray-800 text-sm">
-                          {doc.type === "ANAMNESE_RISCO" ? "Anamnese + Avaliação de Risco" : "Atendimento de Urgência"}
+                          {doc.type === "ANAMNESE_RISCO" ? "Anamnese + Avaliação de Risco" : doc.type === "URGENCIA" ? "Atendimento de Urgência" : "Atestado"}
                         </p>
                         <p className="text-xs text-gray-500">
                           {new Date(doc.createdAt).toLocaleDateString("pt-BR")} às {new Date(doc.createdAt).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })} — por {doc.authorName}
@@ -560,7 +582,11 @@ export default function ClientProfile() {
                       </div>
                       <div className="flex gap-2 shrink-0">
                         <button
-                          onClick={() => doc.type === "ANAMNESE_RISCO" ? setOpenAnamneseForm({ id: doc.id, data: doc.data }) : setOpenUrgenciaForm({ id: doc.id, data: doc.data })}
+                          onClick={() => {
+                            if (doc.type === "ANAMNESE_RISCO") setOpenAnamneseForm({ id: doc.id, data: doc.data });
+                            else if (doc.type === "URGENCIA") setOpenUrgenciaForm({ id: doc.id, data: doc.data });
+                            else setOpenAtestado({ id: doc.id });
+                          }}
                           className="p-2 bg-white border border-gray-200 rounded-lg text-gray-600 hover:bg-gray-100 transition-colors"
                           title="Editar"
                         >
@@ -571,7 +597,9 @@ export default function ClientProfile() {
                             const author = users.find(u => u.id === doc.authorId);
                             const docDef = doc.type === "ANAMNESE_RISCO"
                               ? buildAnamneseRiscoDocDefinition(client, doc, author)
-                              : buildUrgenciaDocDefinition(client, doc, author);
+                              : doc.type === "URGENCIA"
+                              ? buildUrgenciaDocDefinition(client, doc, author)
+                              : buildAtestadoDocDefinition(client, doc, author);
                             openPdfInNewTab(docDef);
                           }}
                           className="p-2 bg-white border border-gray-200 rounded-lg text-gray-600 hover:bg-gray-100 transition-colors"
@@ -589,6 +617,55 @@ export default function ClientProfile() {
         )}
 
       </div>
+
+      {showExportPrompt && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/40 backdrop-blur-sm p-4 animate-in fade-in duration-200">
+          <div className="w-full max-w-md bg-white rounded-[2rem] shadow-2xl p-6 animate-in zoom-in-95 duration-300">
+            <h2 className="text-lg font-bold text-gray-900 mb-2">Incluir testes na exportação?</h2>
+            <p className="text-sm text-gray-500 mb-4">Este paciente tem {client.instruments?.length} teste(s)/instrumento(s) aplicado(s). Deseja incluí-los no PDF do prontuário?</p>
+
+            {(client.instruments?.length || 0) > 1 && (
+              <div className="space-y-2 mb-4 max-h-48 overflow-y-auto">
+                {client.instruments!.map(app => {
+                  const inst = instruments.find(i => i.id === app.instrumentId);
+                  return (
+                    <label key={app.id} className="flex items-center gap-2 bg-gray-50 border border-gray-100 rounded-lg px-3 py-2 text-sm font-medium text-gray-700">
+                      <input
+                        type="checkbox"
+                        checked={selectedTestIds.has(app.id)}
+                        onChange={e => {
+                          const next = new Set(selectedTestIds);
+                          if (e.target.checked) next.add(app.id); else next.delete(app.id);
+                          setSelectedTestIds(next);
+                        }}
+                      />
+                      {inst?.name || "Instrumento"}
+                    </label>
+                  );
+                })}
+              </div>
+            )}
+
+            <div className="flex gap-3">
+              <button onClick={() => finalizeExportProntuario(false)} className="flex-1 bg-white border border-gray-200 hover:bg-gray-50 text-gray-700 font-bold py-2.5 rounded-xl transition-colors text-sm">
+                Não incluir
+              </button>
+              <button onClick={() => finalizeExportProntuario(true)} disabled={selectedTestIds.size === 0} className="flex-1 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white font-bold py-2.5 rounded-xl transition-colors text-sm">
+                Incluir Selecionados
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {openAtestado && (
+        <AtestadoModal
+          open
+          onClose={() => setOpenAtestado(null)}
+          client={client}
+          existingDoc={openAtestado.id ? clientDocs.find(d => d.id === openAtestado.id) : undefined}
+        />
+      )}
 
       {openAnamneseForm && (
         <ClinicalDocumentForm
@@ -630,15 +707,21 @@ export default function ClientProfile() {
 }
 
 function InstrumentosView({ clientId }: { clientId: string }) {
-  const { clients, instruments, applyInstrument, currentUser, users, updateClient } = useStore();
+  const { clients, instruments, applyInstrument, addInstrumentApplicationEntry, updateInstrumentApplication, currentUser, users } = useStore();
   const client = clients.find(c => c.id === clientId);
-  
+
   const [showApply, setShowApply] = useState(false);
   const [selectedInstId, setSelectedInstId] = useState("");
-  const [resultsText, setResultsText] = useState("");
+  const [purposeText, setPurposeText] = useState("");
+  const [applyDate, setApplyDate] = useState(() => new Date().toISOString().split("T")[0]);
+  const [firstDescription, setFirstDescription] = useState("");
 
-  const [editingInstAppId, setEditingInstAppId] = useState<string | null>(null);
-  const [editAppResultsText, setEditAppResultsText] = useState("");
+  const [addingEntryFor, setAddingEntryFor] = useState<string | null>(null);
+  const [newEntryDate, setNewEntryDate] = useState(() => new Date().toISOString().split("T")[0]);
+  const [newEntryDescription, setNewEntryDescription] = useState("");
+
+  const [editingEntry, setEditingEntry] = useState<{ appId: string; entryId: string } | null>(null);
+  const [editEntryText, setEditEntryText] = useState("");
 
   if (!client) return null;
 
@@ -646,25 +729,31 @@ function InstrumentosView({ clientId }: { clientId: string }) {
 
   const handleApply = (e: React.FormEvent) => {
     e.preventDefault();
-    if(!selectedInstId) return;
-    
-    applyInstrument(clientId, selectedInstId, resultsText);
-    
+    if (!selectedInstId || !applyDate) return;
+    applyInstrument(clientId, selectedInstId, purposeText, applyDate, firstDescription);
     setShowApply(false);
     setSelectedInstId("");
-    setResultsText("");
+    setPurposeText("");
+    setFirstDescription("");
+    setApplyDate(new Date().toISOString().split("T")[0]);
   };
 
-  const handleInlineSaveInst = (appId: string) => {
-    const updatedApps = (client.instruments || []).map(a => 
-       a.id === appId ? { ...a, results: editAppResultsText } : a
-    );
-    updateClient(clientId, { instruments: updatedApps }, `Atualizou resultados do teste`);
-    setEditingInstAppId(null);
-    setEditAppResultsText("");
+  const handleAddEntry = (applicationId: string) => {
+    if (!newEntryDate) return;
+    addInstrumentApplicationEntry(applicationId, newEntryDate, newEntryDescription);
+    setAddingEntryFor(null);
+    setNewEntryDate(new Date().toISOString().split("T")[0]);
+    setNewEntryDescription("");
   };
 
-  const clientInstruments = [...(client.instruments || [])].sort((a,b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+  const handleSaveEntryEdit = () => {
+    if (!editingEntry) return;
+    updateInstrumentApplication(editingEntry.appId, { entry: { id: editingEntry.entryId, description: editEntryText } });
+    setEditingEntry(null);
+    setEditEntryText("");
+  };
+
+  const clientInstruments = [...(client.instruments || [])].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
 
   return (
     <div className="space-y-8">
@@ -696,20 +785,32 @@ function InstrumentosView({ clientId }: { clientId: string }) {
                    )}
                 </div>
                 {selectedInstId && (
-                   <div>
-                      <label className="block text-xs font-bold text-blue-900 uppercase tracking-wider mb-2">Síntese dos Resultados e Interpretação (Opcional)</label>
-                      <textarea
-                         value={resultsText}
-                         onChange={e => setResultsText(e.target.value)}
-                         className="w-full bg-white border border-blue-200 rounded-2xl p-4 min-h-[120px] outline-none focus:ring-2 focus:ring-blue-500 resize-y font-medium text-gray-700"
-                         placeholder="Descreva brevemente os escores, percentis ou interpretação clínica gerada por este instrumento..."
-                      />
-                   </div>
+                   <>
+                     <div>
+                        <label className="block text-xs font-bold text-blue-900 uppercase tracking-wider mb-2">Data da Aplicação</label>
+                        <input type="date" required value={applyDate} onChange={e => setApplyDate(e.target.value)} className="w-full bg-white border border-blue-200 rounded-xl px-4 py-3 outline-none font-medium text-gray-900" />
+                        <p className="text-[11px] text-blue-700 mt-1">Pode ser retroativa — não precisa ser a data de hoje.</p>
+                     </div>
+                     <div>
+                        <label className="block text-xs font-bold text-blue-900 uppercase tracking-wider mb-2">Finalidade da Aplicação</label>
+                        <input type="text" value={purposeText} onChange={e => setPurposeText(e.target.value)} className="w-full bg-white border border-blue-200 rounded-xl px-4 py-3 outline-none font-medium text-gray-900" placeholder="Ex: Triagem inicial, acompanhamento de tratamento, avaliação de retorno..." />
+                     </div>
+                     <div>
+                        <label className="block text-xs font-bold text-blue-900 uppercase tracking-wider mb-2">Síntese dos Resultados e Interpretação (Opcional)</label>
+                        <textarea
+                           value={firstDescription}
+                           onChange={e => setFirstDescription(e.target.value)}
+                           className="w-full bg-white border border-blue-200 rounded-2xl p-4 min-h-[120px] outline-none focus:ring-2 focus:ring-blue-500 resize-y font-medium text-gray-700"
+                           placeholder="Descreva brevemente os escores, percentis ou interpretação clínica gerada por este instrumento nesta data..."
+                        />
+                        <p className="text-[11px] text-blue-700 mt-1">Se o mesmo teste for aplicado em outros dias, você poderá adicionar mais datas/descrições depois, sem consumir outra unidade do estoque.</p>
+                     </div>
+                   </>
                 )}
              </div>
              
              <div className="flex items-center justify-end gap-3 mt-6">
-                <button type="button" onClick={() => { setShowApply(false); setSelectedInstId(""); setResultsText(""); }} className="px-5 py-2.5 text-blue-700 font-bold hover:bg-blue-100 rounded-xl transition-colors">Cancelar</button>
+                <button type="button" onClick={() => { setShowApply(false); setSelectedInstId(""); setPurposeText(""); setFirstDescription(""); }} className="px-5 py-2.5 text-blue-700 font-bold hover:bg-blue-100 rounded-xl transition-colors">Cancelar</button>
                 <button type="submit" disabled={!selectedInstId} className="bg-blue-600 text-white px-6 py-2.5 rounded-xl font-bold hover:bg-blue-700 disabled:opacity-50 transition-colors">Salvar e Consumir do Estoque</button>
              </div>
           </form>
@@ -725,8 +826,8 @@ function InstrumentosView({ clientId }: { clientId: string }) {
              {clientInstruments.map(app => {
                 const inst = instruments.find(i => i.id === app.instrumentId);
                 const psicoName = users.find(u => u.id === app.psychoId)?.name || "Desconhecido";
-                const isEditingThis = editingInstAppId === app.id;
-                
+                const canEditThis = app.psychoId === currentUser?.id;
+
                 return (
                    <div key={app.id} className="bg-white border border-gray-200 p-6 rounded-3xl shadow-sm">
                       <div className="flex items-center justify-between mb-4 border-b border-gray-100 pb-4">
@@ -739,35 +840,66 @@ function InstrumentosView({ clientId }: { clientId: string }) {
                                <p className="text-xs text-gray-400 font-bold mt-0.5 uppercase tracking-wider">Aplicado por {psicoName}</p>
                             </div>
                          </div>
-                         <div className="flex items-center gap-2">
-                            <span className="bg-blue-50 text-blue-700 text-xs font-bold px-3 py-1.5 rounded-full">{format(new Date(app.date), "dd/MM/yyyy HH:mm")}</span>
-                            {(app.psychoId === currentUser?.id && !isEditingThis) && (
-                               <button onClick={() => { setEditingInstAppId(app.id); setEditAppResultsText(app.results || ""); }} className="text-gray-400 hover:text-blue-600 transition-colors p-1" title="Editar Resultados">
-                                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" /></svg>
-                               </button>
-                            )}
-                         </div>
+                         {canEditThis && addingEntryFor !== app.id && (
+                            <button onClick={() => { setAddingEntryFor(app.id); setNewEntryDate(new Date().toISOString().split("T")[0]); setNewEntryDescription(""); }} className="text-xs bg-blue-50 hover:bg-blue-100 text-blue-700 font-bold px-3 py-1.5 rounded-full transition-colors flex items-center gap-1">
+                               <PlusIcon size={14} /> Nova Data
+                            </button>
+                         )}
                       </div>
-                      
-                      {isEditingThis ? (
-                         <div className="space-y-4">
-                            <textarea 
-                               autoFocus
-                               value={editAppResultsText}
-                               onChange={e => setEditAppResultsText(e.target.value)}
-                               className="w-full bg-white border border-gray-300 rounded-xl p-4 min-h-[120px] outline-none focus:ring-2 focus:ring-blue-500 resize-y font-medium text-gray-700"
-                            />
-                            <div className="flex items-center justify-end gap-2 border-t border-gray-100 pt-3">
-                               <button onClick={() => setEditingInstAppId(null)} className="px-4 py-2 text-sm text-gray-500 font-bold hover:bg-gray-100 rounded-lg transition-colors">Cancelar</button>
-                               <button onClick={() => handleInlineSaveInst(app.id)} className="bg-blue-600 text-white px-5 py-2 text-sm font-bold rounded-lg hover:bg-blue-700 transition-colors">Salvar Resultados</button>
+
+                      {app.purpose && (
+                        <p className="text-xs text-gray-500 mb-4"><strong className="text-gray-700">Finalidade:</strong> {app.purpose}</p>
+                      )}
+
+                      <div className="space-y-3">
+                        {app.entries.map(entry => {
+                           const isEditingThis = editingEntry?.appId === app.id && editingEntry?.entryId === entry.id;
+                           return (
+                              <div key={entry.id} className="bg-gray-50 rounded-2xl p-4 border border-gray-100">
+                                 <div className="flex items-center justify-between mb-2">
+                                    <span className="bg-blue-50 text-blue-700 text-xs font-bold px-3 py-1 rounded-full">{format(new Date(entry.date), "dd/MM/yyyy")}</span>
+                                    {canEditThis && !isEditingThis && (
+                                       <button onClick={() => { setEditingEntry({ appId: app.id, entryId: entry.id }); setEditEntryText(entry.description || ""); }} className="text-gray-400 hover:text-blue-600 transition-colors p-1" title="Editar">
+                                          <Edit2 size={14} />
+                                       </button>
+                                    )}
+                                 </div>
+                                 {isEditingThis ? (
+                                    <div className="space-y-2">
+                                       <textarea autoFocus value={editEntryText} onChange={e => setEditEntryText(e.target.value)} className="w-full bg-white border border-gray-300 rounded-xl p-3 min-h-[100px] outline-none focus:ring-2 focus:ring-blue-500 resize-y font-medium text-gray-700 text-sm" />
+                                       <div className="flex justify-end gap-2">
+                                          <button onClick={() => setEditingEntry(null)} className="px-3 py-1.5 text-xs text-gray-500 font-bold hover:bg-gray-100 rounded-lg transition-colors">Cancelar</button>
+                                          <button onClick={handleSaveEntryEdit} className="bg-blue-600 text-white px-4 py-1.5 text-xs font-bold rounded-lg hover:bg-blue-700 transition-colors">Salvar</button>
+                                       </div>
+                                    </div>
+                                 ) : (
+                                    entry.description ? (
+                                       <p className="text-gray-700 font-medium text-sm whitespace-pre-wrap">{entry.description}</p>
+                                    ) : (
+                                       <p className="text-gray-400 text-sm italic">Nenhum resultado textual inserido para esta data.</p>
+                                    )
+                                 )}
+                              </div>
+                           );
+                        })}
+                      </div>
+
+                      {addingEntryFor === app.id && (
+                         <div className="mt-4 bg-emerald-50 border border-emerald-100 rounded-2xl p-4 space-y-3">
+                            <div>
+                               <label className="block text-xs font-bold text-emerald-900 uppercase tracking-wider mb-1">Data desta nova aplicação</label>
+                               <input type="date" value={newEntryDate} onChange={e => setNewEntryDate(e.target.value)} className="w-full bg-white border border-emerald-200 rounded-xl px-3 py-2 outline-none font-medium text-sm" />
+                            </div>
+                            <div>
+                               <label className="block text-xs font-bold text-emerald-900 uppercase tracking-wider mb-1">Descrição / Resultados</label>
+                               <textarea value={newEntryDescription} onChange={e => setNewEntryDescription(e.target.value)} className="w-full bg-white border border-emerald-200 rounded-xl p-3 min-h-[80px] outline-none font-medium text-sm resize-y" />
+                            </div>
+                            <p className="text-[11px] text-emerald-700">Isso não consome outra unidade do estoque — é o mesmo teste, em mais um dia.</p>
+                            <div className="flex justify-end gap-2">
+                               <button onClick={() => setAddingEntryFor(null)} className="px-4 py-2 text-xs text-gray-500 font-bold hover:bg-gray-100 rounded-lg transition-colors">Cancelar</button>
+                               <button onClick={() => handleAddEntry(app.id)} className="bg-emerald-600 text-white px-5 py-2 text-xs font-bold rounded-lg hover:bg-emerald-700 transition-colors">Adicionar Data</button>
                             </div>
                          </div>
-                      ) : (
-                         app.results ? (
-                            <div className="text-gray-700 font-medium text-sm whitespace-pre-wrap">{app.results}</div>
-                         ) : (
-                            <p className="text-gray-400 text-sm italic">Nenhum resultado textual inserido para este teste.</p>
-                         )
                       )}
                    </div>
                 );
@@ -779,14 +911,18 @@ function InstrumentosView({ clientId }: { clientId: string }) {
 }
 
 function ProntuarioView({ clientId }: { clientId: string }) {
-   const { sessions, addSession, updateSession, currentUser, groups } = useStore();
+   const { sessions, addSession, updateSession, updatePrivateSessionNotes, currentUser, groups } = useStore();
    const [writingSessionId, setWritingSessionId] = useState<string | null>(null);
    const [isWritingNew, setIsWritingNew] = useState(false);
    const [notes, setNotes] = useState("");
+   const [privateNotesDraft, setPrivateNotesDraft] = useState("");
    const [attendance, setAttendance] = useState<"PRESENTE" | "FALTA_JUSTIFICADA" | "FALTA_NAO_JUSTIFICADA">("PRESENTE");
    
    const [editingRecordId, setEditingRecordId] = useState<string | null>(null);
    const [editNotes, setEditNotes] = useState("");
+
+   const [editingPrivateId, setEditingPrivateId] = useState<string | null>(null);
+   const [editPrivateNotes, setEditPrivateNotes] = useState("");
 
    const [viewingVersionsId, setViewingVersionsId] = useState<string | null>(null);
 
@@ -800,12 +936,14 @@ function ProntuarioView({ clientId }: { clientId: string }) {
        psicoId: currentUser!.id,
        date: writingSessionId ? sessions.find(s => s.id === writingSessionId)!.date : new Date().toISOString(),
        notes,
+       privateNotes: privateNotesDraft,
        isDraft: false,
        attendance
-     });
+     } as any);
      setIsWritingNew(false);
      setWritingSessionId(null);
      setNotes("");
+     setPrivateNotesDraft("");
      setAttendance("PRESENTE");
    };
 
@@ -813,6 +951,7 @@ function ProntuarioView({ clientId }: { clientId: string }) {
       setWritingSessionId(s.id);
       setIsWritingNew(false);
       setNotes(s.notes || "");
+      setPrivateNotesDraft(s.privateNotes || "");
       setAttendance("PRESENTE");
    };
 
@@ -830,6 +969,13 @@ function ProntuarioView({ clientId }: { clientId: string }) {
      setEditingRecordId(null);
      setEditNotes("");
    };
+
+   const handleSavePrivateNotes = (id: string) => {
+     updatePrivateSessionNotes(id, editPrivateNotes);
+     setEditingPrivateId(null);
+     setEditPrivateNotes("");
+   };
+
 
    return (
      <div className="space-y-8">
@@ -867,8 +1013,19 @@ function ProntuarioView({ clientId }: { clientId: string }) {
              className="w-full bg-white border border-blue-100 rounded-2xl p-4 min-h-[200px] outline-none focus:ring-2 focus:ring-blue-500 resize-y mb-4 font-medium text-gray-700"
              placeholder="Escreva os apontamentos e evolução clínica da sessão..."
            />
+           <div className="mb-4">
+             <label className="flex items-center gap-2 text-xs font-bold text-amber-700 uppercase tracking-wide mb-1.5">
+               <Lock size={12} /> Anotação Privada (só você vê — rascunho antes de formalizar o prontuário conforme o CFP)
+             </label>
+             <textarea
+               value={privateNotesDraft}
+               onChange={e => setPrivateNotesDraft(e.target.value)}
+               className="w-full bg-amber-50 border border-amber-200 rounded-2xl p-4 min-h-[100px] outline-none focus:ring-2 focus:ring-amber-400 resize-y font-medium text-gray-700 text-sm"
+               placeholder="Impressões clínicas pessoais, hipóteses, lembretes... isso nunca aparece para outras pessoas, nem Supervisor ou Administrativo."
+             />
+           </div>
            <div className="flex items-center justify-end gap-3">
-             <button onClick={() => { setIsWritingNew(false); setWritingSessionId(null); setNotes(""); setAttendance("PRESENTE"); }} className="px-5 py-2.5 text-gray-500 font-bold hover:bg-gray-100 rounded-xl transition-colors">Cancelar</button>
+             <button onClick={() => { setIsWritingNew(false); setWritingSessionId(null); setNotes(""); setPrivateNotesDraft(""); setAttendance("PRESENTE"); }} className="px-5 py-2.5 text-gray-500 font-bold hover:bg-gray-100 rounded-xl transition-colors">Cancelar</button>
              <button onClick={handleSave} className="bg-blue-600 text-white px-6 py-2.5 rounded-xl font-bold hover:bg-blue-700 transition-colors">Salvar Registro</button>
            </div>
          </div>
@@ -928,6 +1085,41 @@ function ProntuarioView({ clientId }: { clientId: string }) {
                         </div>
                      ) : (
                         <div className="text-gray-700 whitespace-pre-wrap">{s.notes}</div>
+                     )}
+
+                     {!isEditingThis && s.psicoId === currentUser?.id && (
+                        <div className="mt-4 pt-4 border-t border-amber-200 border-dashed">
+                           <div className="flex items-center justify-between mb-2">
+                              <span className="flex items-center gap-1.5 text-xs font-bold text-amber-700 uppercase tracking-wide">
+                                 <Lock size={12} /> Anotação Privada (só você vê)
+                              </span>
+                              {editingPrivateId !== s.id && (
+                                 <button onClick={() => { setEditingPrivateId(s.id); setEditPrivateNotes(s.privateNotes || ""); }} className="text-xs text-amber-700 hover:bg-amber-100 px-2 py-1 rounded-lg font-bold transition-colors">
+                                    {s.privateNotes ? "Editar" : "Adicionar"}
+                                 </button>
+                              )}
+                           </div>
+                           {editingPrivateId === s.id ? (
+                              <div className="space-y-2">
+                                 <textarea
+                                    autoFocus
+                                    value={editPrivateNotes}
+                                    onChange={e => setEditPrivateNotes(e.target.value)}
+                                    className="w-full bg-amber-50 border border-amber-200 rounded-xl p-3 min-h-[100px] outline-none focus:ring-2 focus:ring-amber-400 resize-y font-medium text-gray-700 text-sm"
+                                 />
+                                 <div className="flex justify-end gap-2">
+                                    <button onClick={() => setEditingPrivateId(null)} className="px-3 py-1.5 text-xs text-gray-500 font-bold hover:bg-gray-100 rounded-lg transition-colors">Cancelar</button>
+                                    <button onClick={() => handleSavePrivateNotes(s.id)} className="bg-amber-600 text-white px-4 py-1.5 text-xs font-bold rounded-lg hover:bg-amber-700 transition-colors">Salvar</button>
+                                 </div>
+                              </div>
+                           ) : (
+                              s.privateNotes ? (
+                                 <p className="text-sm text-gray-600 bg-amber-50 border border-amber-100 rounded-xl p-3 whitespace-pre-wrap">{s.privateNotes}</p>
+                              ) : (
+                                 <p className="text-xs text-gray-400 italic">Nenhuma anotação privada para esta sessão.</p>
+                              )
+                           )}
+                        </div>
                      )}
                      
                      {!isEditingThis && s.updatedAt && s.updatedAt !== s.createdAt && (

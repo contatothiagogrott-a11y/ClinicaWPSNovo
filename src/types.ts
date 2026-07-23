@@ -40,12 +40,19 @@ export interface HistoryLog {
   details?: string;
 }
 
+export interface InstrumentApplicationEntry {
+  id: string;
+  date: string;
+  description: string;
+}
+
 export interface InstrumentApplication {
   id: string;
   instrumentId: string;
-  date: string;
   psychoId: string;
-  results: string;
+  purpose: string;
+  createdAt: string;
+  entries: InstrumentApplicationEntry[];
 }
 
 export interface Client {
@@ -103,6 +110,7 @@ export interface SessionRecord {
   psicoId: string;
   date: string;
   notes: string;
+  privateNotes?: string;
   isDraft: boolean;
   status?: "PENDENTE" | "CONCLUIDO"; // For auto-generated group individual records
   groupId?: string; // If this individual record was generated from a group session
@@ -188,7 +196,7 @@ export interface InstrumentLog {
   reason?: string;
 }
 
-export type ClinicalDocumentType = "ANAMNESE_RISCO" | "URGENCIA";
+export type ClinicalDocumentType = "ANAMNESE_RISCO" | "URGENCIA" | "ATESTADO";
 
 export interface ClinicalDocument {
   id: string;

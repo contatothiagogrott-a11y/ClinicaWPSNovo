@@ -56,6 +56,7 @@ async function main() {
       passwordHash: await hash(demoPassword),
       role: "PSICO",
       crp: "01/11111",
+      color: "#3b82f6",
     },
   });
 
@@ -68,6 +69,7 @@ async function main() {
       passwordHash: await hash(demoPassword),
       role: "PSICO",
       crp: "02/22222",
+      color: "#f97316",
     },
   });
 

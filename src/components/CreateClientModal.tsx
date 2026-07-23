@@ -5,7 +5,7 @@ import { cn } from "../lib/utils";
 import { TagInput } from "./TagInput";
 
 export default function CreateClientModal({ open, onClose }: { open: boolean; onClose: () => void }) {
-  const { config, addClient, addConfigItem } = useStore();
+  const { clients, config, addClient, addConfigItem } = useStore();
 
   const activeAffiliations = config.affiliations.filter(x => x.isActive).map(x => x.name);
   const activeAllocations = config.allocations.filter(x => x.isActive).map(x => x.name);
@@ -27,7 +27,7 @@ export default function CreateClientModal({ open, onClose }: { open: boolean; on
     dependencySponsor: string;
     dateIncluded: string;
   }>({
-    protocolNumber: "",
+    protocolNumber: String(clients.length + 1),
     signedAgreement: false,
     fullName: "",
     whatsapp: "",
@@ -78,7 +78,7 @@ export default function CreateClientModal({ open, onClose }: { open: boolean; on
       emergencyContactRelationship: formData.emergencyContactRelationship,
     });
     setFormData({
-      protocolNumber: "", signedAgreement: false, dateIncluded: new Date().toISOString().split("T")[0],
+      protocolNumber: String(clients.length + 2), signedAgreement: false, dateIncluded: new Date().toISOString().split("T")[0],
       fullName: "", whatsapp: "", birthDate: "",
       affiliation: activeAffiliations[0] || "", allocation: activeAllocations[0] || "",
       tags: [],
@@ -122,7 +122,7 @@ export default function CreateClientModal({ open, onClose }: { open: boolean; on
                    <div className={cn("w-8 h-4 rounded-full flex items-center p-0.5 transition-colors duration-200", formData.signedAgreement ? "bg-emerald-500" : "bg-gray-300")}>
                      <div className={cn("bg-white w-3 h-3 rounded-full shadow-md transform transition-transform duration-200", formData.signedAgreement ? "translate-x-4" : "translate-x-0")} />
                    </div>
-                   Regimento Assinado
+                   Termo de Compromisso Assinado
                  </span>
                </button>
             </div>

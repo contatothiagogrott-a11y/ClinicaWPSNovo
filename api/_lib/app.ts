@@ -98,7 +98,7 @@ app.get(
       await Promise.all([
         prisma.user.findMany({ orderBy: { name: "asc" } }),
         prisma.client.findMany({
-          include: { history: { include: { actor: true }, orderBy: { date: "desc" } }, assignedPsico: true, instrumentApps: true },
+          include: { history: { include: { actor: true }, orderBy: { date: "desc" } }, assignedPsico: true, instrumentApps: { include: { entries: true } } },
           orderBy: { dateIncluded: "desc" },
         }),
         prisma.sessionRecord.findMany({ include: { versions: true }, orderBy: { date: "desc" } }),
@@ -145,7 +145,7 @@ app.get(
     res.json({
       users: users.map(mapUser),
       clients: clients.map(mapClient),
-      sessions: sessions.map(mapSession),
+      sessions: sessions.map((s: any) => mapSession(s, session.userId)),
       appointments: appointments.map(mapAppointment),
       groups: groups.map(mapGroup),
       groupRecords: groupRecords.map(mapGroupRecord),
@@ -169,6 +169,16 @@ async function assertClientAccess(session: { userId: string; role: string }, cli
   if (session.role === "SUPERVISOR" || session.role === "ADMIN") return true;
   const client = await prisma.client.findUnique({ where: { id: clientId } });
   return !!client && client.assignedPsicoId === session.userId;
+}
+
+// Incrementa o contador de sessões concluídas do paciente exatamente uma vez,
+// no momento em que um prontuário sai de rascunho (isDraft=true/inexistente)
+// para finalizado (isDraft=false). Sem isso, "completedSessions" nunca se
+// movia e as métricas/telas que dependem dele ficavam sempre zeradas.
+async function maybeIncrementCompletedSessions(clientId: string, wasDraft: boolean, isNowDraft: boolean) {
+  if (wasDraft && !isNowDraft) {
+    await prisma.client.update({ where: { id: clientId }, data: { completedSessions: { increment: 1 } } });
+  }
 }
 
 // Prontuário de grupo é conteúdo clínico: só o psicólogo responsável pelo
@@ -233,7 +243,7 @@ app.post(
           ],
         },
       },
-      include: { history: { include: { actor: true } }, assignedPsico: true, instrumentApps: true },
+      include: { history: { include: { actor: true } }, assignedPsico: true, instrumentApps: { include: { entries: true } } },
     });
     res.status(201).json({ client: mapClient(client) });
   })
@@ -365,21 +375,10 @@ app.patch(
       data.history = { create: [{ actorId: session.userId, action: b.logAction, detailsEnc: b.logDetails ? encryptField(b.logDetails) : null }] };
     }
 
-    if (Array.isArray(b.instruments)) {
-      for (const app of b.instruments) {
-        if (app?.id && typeof app.results === "string") {
-          await prisma.instrumentApplication.update({
-            where: { id: app.id },
-            data: { resultsEnc: encryptField(app.results) },
-          }).catch(() => {});
-        }
-      }
-    }
-
     const client = await prisma.client.update({
       where: { id: req.params.id },
       data,
-      include: { history: { include: { actor: true }, orderBy: { date: "desc" } }, assignedPsico: true, instrumentApps: true },
+      include: { history: { include: { actor: true }, orderBy: { date: "desc" } }, assignedPsico: true, instrumentApps: { include: { entries: true } } },
     });
     res.json({ client: mapClient(client) });
   })
@@ -410,6 +409,9 @@ app.post(
           isDraft: b.isDraft ?? false,
         };
         if (b.attendance !== undefined) data.attendance = b.attendance;
+        if ("privateNotes" in b && existing.psicoId === session.userId) {
+          data.privateNotesEnc = encryptField(b.privateNotes);
+        }
         if (existing.notesEnc) {
           data.versions = { create: [{ oldContentEnc: existing.notesEnc }] };
         }
@@ -418,7 +420,8 @@ app.post(
           data,
           include: { versions: true },
         });
-        res.status(200).json({ session: mapSession(updated) });
+        await maybeIncrementCompletedSessions(existing.clientId, existing.isDraft, updated.isDraft);
+        res.status(200).json({ session: mapSession(updated, session.userId) });
         return;
       }
     }
@@ -429,6 +432,7 @@ app.post(
         psicoId: b.psicoId || session.userId,
         date: new Date(b.date),
         notesEnc: encryptField(b.notes ?? ""),
+        privateNotesEnc: encryptField(b.privateNotes ?? ""),
         isDraft: b.isDraft ?? false,
         status: b.status,
         groupId: b.groupId,
@@ -437,7 +441,8 @@ app.post(
       },
       include: { versions: true },
     });
-    res.status(201).json({ session: mapSession(created) });
+    await maybeIncrementCompletedSessions(created.clientId, true, created.isDraft);
+    res.status(201).json({ session: mapSession(created, session.userId) });
   })
 );
 
@@ -463,6 +468,9 @@ app.patch(
       data.versions = { create: [{ oldContentEnc: existing.notesEnc }] };
     }
     if ("notes" in b) data.notesEnc = encryptField(b.notes);
+    if ("privateNotes" in b && existing.psicoId === session.userId) {
+      data.privateNotesEnc = encryptField(b.privateNotes);
+    }
     if ("isDraft" in b) data.isDraft = b.isDraft;
     if ("status" in b) data.status = b.status;
     if ("attendance" in b) data.attendance = b.attendance;
@@ -472,7 +480,8 @@ app.patch(
       data,
       include: { versions: true },
     });
-    res.json({ session: mapSession(updated) });
+    await maybeIncrementCompletedSessions(existing.clientId, existing.isDraft, updated.isDraft);
+    res.json({ session: mapSession(updated, session.userId) });
   })
 );
 
@@ -907,7 +916,7 @@ app.post(
   asyncHandler(async (req, res) => {
     const session = requireSession(req, res);
     if (!session) return;
-    const { clientId, results } = req.body ?? {};
+    const { clientId, purpose, date, description } = req.body ?? {};
     if (!(await assertClientAccess(session, clientId))) {
       res.status(403).json({ error: "Sem permissão para este paciente." });
       return;
@@ -924,7 +933,10 @@ app.post(
         clientId,
         instrumentId: instrument.id,
         psychoId: session.userId,
-        resultsEnc: encryptField(results),
+        purposeEnc: encryptField(purpose),
+        entries: {
+          create: [{ date: date ? new Date(date) : new Date(), descriptionEnc: encryptField(description) }],
+        },
       },
     });
 
@@ -954,7 +966,73 @@ app.post(
 
     const updatedClient = await prisma.client.findUnique({
       where: { id: clientId },
-      include: { history: { include: { actor: true }, orderBy: { date: "desc" } }, assignedPsico: true, instrumentApps: true },
+      include: { history: { include: { actor: true }, orderBy: { date: "desc" } }, assignedPsico: true, instrumentApps: { include: { entries: true } } },
+    });
+    res.json({ client: mapClient(updatedClient) });
+  })
+);
+
+// Adiciona mais uma data/descrição a uma aplicação já existente (ex: o mesmo
+// teste aplicado em outro dia) — isso NÃO consome outra unidade do estoque,
+// só a criação da aplicação em si consome.
+app.post(
+  "/api/instrument-applications/:id/entries",
+  asyncHandler(async (req, res) => {
+    const session = requireSession(req, res);
+    if (!session) return;
+    const application = await prisma.instrumentApplication.findUnique({ where: { id: req.params.id } });
+    if (!application) {
+      res.status(404).json({ error: "Aplicação não encontrada." });
+      return;
+    }
+    if (!(await assertClientAccess(session, application.clientId))) {
+      res.status(403).json({ error: "Sem permissão para este paciente." });
+      return;
+    }
+    const { date, description } = req.body ?? {};
+    await prisma.instrumentApplicationEntry.create({
+      data: {
+        applicationId: application.id,
+        date: date ? new Date(date) : new Date(),
+        descriptionEnc: encryptField(description),
+      },
+    });
+    const updatedClient = await prisma.client.findUnique({
+      where: { id: application.clientId },
+      include: { history: { include: { actor: true }, orderBy: { date: "desc" } }, assignedPsico: true, instrumentApps: { include: { entries: true } } },
+    });
+    res.json({ client: mapClient(updatedClient) });
+  })
+);
+
+// Edita uma entrada específica (data/descrição) ou a finalidade da aplicação.
+app.patch(
+  "/api/instrument-applications/:id",
+  asyncHandler(async (req, res) => {
+    const session = requireSession(req, res);
+    if (!session) return;
+    const application = await prisma.instrumentApplication.findUnique({ where: { id: req.params.id } });
+    if (!application) {
+      res.status(404).json({ error: "Aplicação não encontrada." });
+      return;
+    }
+    if (!(await assertClientAccess(session, application.clientId))) {
+      res.status(403).json({ error: "Sem permissão para este paciente." });
+      return;
+    }
+    const b = req.body ?? {};
+    if ("purpose" in b) {
+      await prisma.instrumentApplication.update({ where: { id: application.id }, data: { purposeEnc: encryptField(b.purpose) } });
+    }
+    if (b.entry?.id) {
+      const data: any = {};
+      if ("date" in b.entry) data.date = new Date(b.entry.date);
+      if ("description" in b.entry) data.descriptionEnc = encryptField(b.entry.description);
+      await prisma.instrumentApplicationEntry.update({ where: { id: b.entry.id }, data }).catch(() => {});
+    }
+    const updatedClient = await prisma.client.findUnique({
+      where: { id: application.clientId },
+      include: { history: { include: { actor: true }, orderBy: { date: "desc" } }, assignedPsico: true, instrumentApps: { include: { entries: true } } },
     });
     res.json({ client: mapClient(updatedClient) });
   })
