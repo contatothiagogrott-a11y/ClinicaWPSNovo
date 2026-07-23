@@ -1098,7 +1098,7 @@ function ProntuarioView({ clientId }: { clientId: string }) {
                     <p className={cn("text-sm font-bold", s.isDraft ? "text-amber-600/60" : "text-gray-500")}>
                        {format(new Date(s.date), "dd/MM/yyyy HH:mm")}
                     </p>
-                    {(!s.isDraft && s.psicoId === currentUser?.id && !isEditingThis) && (
+                    {(!s.isDraft && (s.psicoId === currentUser?.id || currentUser?.role === "SUPERVISOR") && !isEditingThis) && (
                        <button onClick={() => { setEditingRecordId(s.id); setEditNotes(s.notes); }} className="text-gray-400 hover:text-blue-600 transition-colors p-1" title="Editar Prontuário">
                           <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" /></svg>
                        </button>

@@ -194,12 +194,23 @@ async function assertClientAccess(session: { userId: string; role: string }, cli
   return !!client && client.assignedPsicoId === session.userId;
 }
 
-// Incrementa o contador de sessões concluídas do paciente exatamente uma vez,
-// no momento em que um prontuário sai de rascunho (isDraft=true/inexistente)
-// para finalizado (isDraft=false). Sem isso, "completedSessions" nunca se
-// movia e as métricas/telas que dependem dele ficavam sempre zeradas.
+// Incrementa o contador de sessões concluídas do paciente exatamente uma vez.
+// Duas fontes possíveis, para não contar duas vezes:
+// 1) Sessão AVULSA (sem agendamento vinculado): conta quando o prontuário
+//    sai de rascunho para finalizado (não tem outro jeito de "confirmar
+//    presença" nesse caso).
+// 2) Sessão vinda de um AGENDAMENTO: conta quando a presença do agendamento
+//    é marcada como COMPARECEU — não espera o prontuário ser escrito, porque
+//    a presença pode ser confirmada na agenda antes de o prontuário ser
+//    preenchido (às vezes dias depois).
 async function maybeIncrementCompletedSessions(clientId: string, wasDraft: boolean, isNowDraft: boolean) {
   if (wasDraft && !isNowDraft) {
+    await prisma.client.update({ where: { id: clientId }, data: { completedSessions: { increment: 1 } } });
+  }
+}
+
+async function maybeIncrementCompletedSessionsOnAttendance(clientId: string, wasAttendance: string | null, isNowAttendance: string | null) {
+  if (isNowAttendance === "COMPARECEU" && wasAttendance !== "COMPARECEU") {
     await prisma.client.update({ where: { id: clientId }, data: { completedSessions: { increment: 1 } } });
   }
 }
@@ -443,7 +454,7 @@ app.post(
           data,
           include: { versions: true },
         });
-        await maybeIncrementCompletedSessions(existing.clientId, existing.isDraft, updated.isDraft);
+        await maybeIncrementCompletedSessions(existing.clientId, existing.isDraft && !existing.appointmentId, updated.isDraft);
         res.status(200).json({ session: mapSession(updated, session.userId) });
         return;
       }
@@ -464,7 +475,7 @@ app.post(
       },
       include: { versions: true },
     });
-    await maybeIncrementCompletedSessions(created.clientId, true, created.isDraft);
+    await maybeIncrementCompletedSessions(created.clientId, !created.appointmentId, created.isDraft);
     res.status(201).json({ session: mapSession(created, session.userId) });
   })
 );
@@ -503,7 +514,7 @@ app.patch(
       data,
       include: { versions: true },
     });
-    await maybeIncrementCompletedSessions(existing.clientId, existing.isDraft, updated.isDraft);
+    await maybeIncrementCompletedSessions(existing.clientId, existing.isDraft && !existing.appointmentId, updated.isDraft);
     res.json({ session: mapSession(updated, session.userId) });
   })
 );
@@ -587,6 +598,9 @@ app.patch(
     if ("groupId" in b) data.groupId = b.groupId || null;
     if ("date" in b) data.date = new Date(b.date);
     const updated = await prisma.appointment.update({ where: { id: req.params.id }, data });
+    if ("attendance" in data && updated.clientId) {
+      await maybeIncrementCompletedSessionsOnAttendance(updated.clientId, existing.attendance, updated.attendance);
+    }
     res.json({ appointment: mapAppointment(updated) });
   })
 );
