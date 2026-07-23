@@ -208,3 +208,14 @@ export function mapClinicalDocument(d: any) {
     updatedAt: isoDate(d.updatedAt),
   };
 }
+
+export function mapGroupClientNote(n: any) {
+  return {
+    id: n.id,
+    clientId: n.clientId,
+    groupId: n.groupId,
+    authorId: n.authorId,
+    content: decryptField(n.contentEnc),
+    updatedAt: isoDate(n.updatedAt),
+  };
+}

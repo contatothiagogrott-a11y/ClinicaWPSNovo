@@ -1,7 +1,7 @@
 import React, { useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { useStore } from "../contexts/StoreContext";
-import { ChevronLeft, Edit2, Clock, FileText, UserCircle, Save, Phone, X, FileDown, ShieldAlert, Siren, Download, Lock } from "lucide-react";
+import { ChevronLeft, Edit2, Clock, FileText, UserCircle, Save, Phone, X, FileDown, ShieldAlert, Siren, Download, Lock, Users2 } from "lucide-react";
 import { cn } from "../lib/utils";
 import { format } from "date-fns";
 import { ptBR } from "date-fns/locale";
@@ -13,16 +13,17 @@ import { buildProntuarioDocDefinition } from "../lib/pdfProntuario";
 import { buildAtestadoDocDefinition } from "../lib/pdfAtestado";
 import AtestadoModal from "../components/AtestadoModal";
 import { openPdfInNewTab, downloadPdf } from "../lib/pdfGenerator";
+import type { Client, Group, GroupClientNote, SessionRecord, User } from "../types";
 
 import { TagInput } from "../components/TagInput";
 
 export default function ClientProfile() {
   const { id } = useParams();
   const navigate = useNavigate();
-  const { clients, users, sessions, currentUser, updateClient, reactivateClient, config, addConfigItem, clinicalDocuments, addClinicalDocument, updateClinicalDocument, instruments } = useStore();
+  const { clients, users, sessions, currentUser, updateClient, reactivateClient, config, addConfigItem, clinicalDocuments, addClinicalDocument, updateClinicalDocument, instruments, groups, groupClientNotes, saveGroupClientNote } = useStore();
   const client = clients.find(c => c.id === id);
 
-  const [activeTab, setActiveTab] = useState<"INFO" | "PRONTUARIO" | "HISTORICO" | "INSTRUMENTOS" | "DOCUMENTOS">("INFO");
+  const [activeTab, setActiveTab] = useState<"INFO" | "PRONTUARIO" | "HISTORICO" | "INSTRUMENTOS" | "DOCUMENTOS" | "GRUPO">("INFO");
   const [isEditingInfo, setIsEditingInfo] = useState(false);
   const [isReactivating, setIsReactivating] = useState(false);
   const [editData, setEditData] = useState(client);
@@ -35,6 +36,11 @@ export default function ClientProfile() {
   const formatPhone = (phone: string) => phone.replace(/\D/g, "");
   const clientDocs = clinicalDocuments.filter(d => d.clientId === client.id).sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
   const assignedPsico = users.find(u => u.id === client.assignedPsicoId);
+
+  // Grupos que o usuário atual lidera e dos quais este paciente participa —
+  // cobre o caso de grupo com um psicólogo e atendimento individual com outro.
+  const myGroupsWithClient = groups.filter(g => g.psychologistId === currentUser?.id && g.memberIds.includes(client.id));
+  const showGroupTab = myGroupsWithClient.length > 0;
 
   const [showExportPrompt, setShowExportPrompt] = useState(false);
   const [selectedTestIds, setSelectedTestIds] = useState<Set<string>>(new Set());
@@ -147,6 +153,14 @@ export default function ClientProfile() {
         >
           <FileDown size={18} /> Documentos
         </button>
+        {showGroupTab && (
+          <button 
+            onClick={() => setActiveTab("GRUPO")}
+            className={cn("flex items-center gap-2 px-6 py-2.5 rounded-xl font-medium transition-all whitespace-nowrap", activeTab === "GRUPO" ? "bg-white text-blue-600 shadow-sm" : "text-gray-500 hover:text-gray-700")}
+          >
+            <Users2 size={18} /> Grupo
+          </button>
+        )}
       </div>
 
       {/* Tab Content */}
@@ -616,6 +630,10 @@ export default function ClientProfile() {
           </div>
         )}
 
+        {activeTab === "GRUPO" && (
+          <GroupTabView client={client} myGroupsWithClient={myGroupsWithClient} groupClientNotes={groupClientNotes} saveGroupClientNote={saveGroupClientNote} sessions={sessions} currentUser={currentUser} />
+        )}
+
       </div>
 
       {showExportPrompt && (
@@ -936,7 +954,6 @@ function ProntuarioView({ clientId }: { clientId: string }) {
        psicoId: currentUser!.id,
        date: writingSessionId ? sessions.find(s => s.id === writingSessionId)!.date : new Date().toISOString(),
        notes,
-       privateNotes: privateNotesDraft,
        isDraft: false,
        attendance
      } as any);
@@ -1013,17 +1030,16 @@ function ProntuarioView({ clientId }: { clientId: string }) {
              className="w-full bg-white border border-blue-100 rounded-2xl p-4 min-h-[200px] outline-none focus:ring-2 focus:ring-blue-500 resize-y mb-4 font-medium text-gray-700"
              placeholder="Escreva os apontamentos e evolução clínica da sessão..."
            />
-           <div className="mb-4">
-             <label className="flex items-center gap-2 text-xs font-bold text-amber-700 uppercase tracking-wide mb-1.5">
-               <Lock size={12} /> Anotação Privada (só você vê — rascunho antes de formalizar o prontuário conforme o CFP)
-             </label>
-             <textarea
-               value={privateNotesDraft}
-               onChange={e => setPrivateNotesDraft(e.target.value)}
-               className="w-full bg-amber-50 border border-amber-200 rounded-2xl p-4 min-h-[100px] outline-none focus:ring-2 focus:ring-amber-400 resize-y font-medium text-gray-700 text-sm"
-               placeholder="Impressões clínicas pessoais, hipóteses, lembretes... isso nunca aparece para outras pessoas, nem Supervisor ou Administrativo."
-             />
-           </div>
+           {writingSessionId && sessions.find(s => s.id === writingSessionId)?.privateNotes && (
+             <div className="mb-4">
+               <label className="flex items-center gap-2 text-xs font-bold text-amber-700 uppercase tracking-wide mb-1.5">
+                 <Lock size={12} /> Sua Anotação Privada desta sessão (somente visualização)
+               </label>
+               <p className="w-full bg-amber-50 border border-amber-200 rounded-2xl p-4 font-medium text-gray-700 text-sm whitespace-pre-wrap">
+                 {sessions.find(s => s.id === writingSessionId)?.privateNotes}
+               </p>
+             </div>
+           )}
            <div className="flex items-center justify-end gap-3">
              <button onClick={() => { setIsWritingNew(false); setWritingSessionId(null); setNotes(""); setPrivateNotesDraft(""); setAttendance("PRESENTE"); }} className="px-5 py-2.5 text-gray-500 font-bold hover:bg-gray-100 rounded-xl transition-colors">Cancelar</button>
              <button onClick={handleSave} className="bg-blue-600 text-white px-6 py-2.5 rounded-xl font-bold hover:bg-blue-700 transition-colors">Salvar Registro</button>
@@ -1060,12 +1076,50 @@ function ProntuarioView({ clientId }: { clientId: string }) {
                </div>
                
                {s.isDraft ? (
-                  <div className="flex justify-between items-center">
-                     <p className="text-amber-700/60 text-sm italic">Sessão agendada. Aguardando preenchimento do prontuário após a realização.</p>
-                     {!isWritingAny && (
-                        <button onClick={() => handleEditDraft(s)} className="text-amber-700 bg-amber-100/50 hover:bg-amber-100 px-4 py-2 rounded-xl text-sm font-bold transition-colors">
-                          Preencher Agora
-                        </button>
+                  <div>
+                     <div className="flex justify-between items-center">
+                        <p className="text-amber-700/60 text-sm italic">Sessão agendada. Aguardando preenchimento do prontuário após a realização.</p>
+                        {!isWritingAny && (
+                           <button onClick={() => handleEditDraft(s)} className="text-amber-700 bg-amber-100/50 hover:bg-amber-100 px-4 py-2 rounded-xl text-sm font-bold transition-colors">
+                             Preencher Agora
+                           </button>
+                        )}
+                     </div>
+
+                     {s.psicoId === currentUser?.id && (
+                        <div className="mt-4 pt-4 border-t border-amber-200 border-dashed">
+                           <div className="flex items-center justify-between mb-2">
+                              <span className="flex items-center gap-1.5 text-xs font-bold text-amber-700 uppercase tracking-wide">
+                                 <Lock size={12} /> Anotação Privada (só você vê)
+                              </span>
+                              {editingPrivateId !== s.id && (
+                                 <button onClick={() => { setEditingPrivateId(s.id); setEditPrivateNotes(s.privateNotes || ""); }} className="text-xs text-amber-700 hover:bg-amber-100 px-2 py-1 rounded-lg font-bold transition-colors">
+                                    {s.privateNotes ? "Editar" : "Adicionar"}
+                                 </button>
+                              )}
+                           </div>
+                           {editingPrivateId === s.id ? (
+                              <div className="space-y-2">
+                                 <textarea
+                                    autoFocus
+                                    value={editPrivateNotes}
+                                    onChange={e => setEditPrivateNotes(e.target.value)}
+                                    className="w-full bg-amber-50 border border-amber-200 rounded-xl p-3 min-h-[100px] outline-none focus:ring-2 focus:ring-amber-400 resize-y font-medium text-gray-700 text-sm"
+                                    placeholder="Impressões clínicas, hipóteses, lembretes antes de formalizar o prontuário..."
+                                 />
+                                 <div className="flex justify-end gap-2">
+                                    <button onClick={() => setEditingPrivateId(null)} className="px-3 py-1.5 text-xs text-gray-500 font-bold hover:bg-gray-100 rounded-lg transition-colors">Cancelar</button>
+                                    <button onClick={() => handleSavePrivateNotes(s.id)} className="bg-amber-600 text-white px-4 py-1.5 text-xs font-bold rounded-lg hover:bg-amber-700 transition-colors">Salvar</button>
+                                 </div>
+                              </div>
+                           ) : (
+                              s.privateNotes ? (
+                                 <p className="text-sm text-gray-600 bg-amber-50 border border-amber-100 rounded-xl p-3 whitespace-pre-wrap">{s.privateNotes}</p>
+                              ) : (
+                                 <p className="text-xs text-gray-400 italic">Nenhuma anotação privada ainda.</p>
+                              )
+                           )}
+                        </div>
                      )}
                   </div>
                ) : (
@@ -1184,4 +1238,101 @@ function viewViewingVersionsModal(recordId: string | null, sessions: any[], onCl
 
 function PlusIcon({size}: {size: number}) {
   return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12h14"/><path d="M12 5v14"/></svg>
+}
+
+function GroupTabView({ client, myGroupsWithClient, groupClientNotes, saveGroupClientNote, sessions, currentUser }: {
+  client: Client;
+  myGroupsWithClient: Group[];
+  groupClientNotes: GroupClientNote[];
+  saveGroupClientNote: (clientId: string, groupId: string, content: string) => Promise<void>;
+  sessions: SessionRecord[];
+  currentUser: User | null;
+}) {
+  const [editingGroupId, setEditingGroupId] = useState<string | null>(null);
+  const [noteText, setNoteText] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  const clientSessions = sessions
+    .filter(s => s.clientId === client.id && !s.isDraft)
+    .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+
+  const handleSave = async (groupId: string) => {
+    setSaving(true);
+    try {
+      await saveGroupClientNote(client.id, groupId, noteText);
+      setEditingGroupId(null);
+      setNoteText("");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="space-y-8">
+      <div>
+        <h2 className="text-xl font-bold text-gray-900 mb-1">Anotações como Psicólogo do Grupo</h2>
+        <p className="text-sm text-gray-500 mb-4">Este paciente participa de um grupo que você conduz. Aqui você pode manter suas próprias anotações sobre ele (visíveis só para você e o Supervisor), e consultar o prontuário individual, mesmo que outro profissional seja o responsável pelo atendimento individual.</p>
+      </div>
+
+      {myGroupsWithClient.map(group => {
+        const existingNote = groupClientNotes.find(n => n.groupId === group.id && n.clientId === client.id && n.authorId === currentUser?.id);
+        const isEditingThis = editingGroupId === group.id;
+        return (
+          <div key={group.id} className="bg-purple-50 border border-purple-100 rounded-3xl p-6">
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="font-bold text-purple-900">Grupo: {group.name}</h3>
+              {!isEditingThis && (
+                <button
+                  onClick={() => { setEditingGroupId(group.id); setNoteText(existingNote?.content || ""); }}
+                  className="text-xs bg-purple-100 hover:bg-purple-200 text-purple-700 font-bold px-3 py-1.5 rounded-full transition-colors"
+                >
+                  {existingNote ? "Editar" : "Adicionar Anotação"}
+                </button>
+              )}
+            </div>
+            {isEditingThis ? (
+              <div className="space-y-2">
+                <textarea
+                  autoFocus
+                  value={noteText}
+                  onChange={e => setNoteText(e.target.value)}
+                  rows={4}
+                  className="w-full bg-white border border-purple-200 rounded-xl p-3 outline-none focus:ring-2 focus:ring-purple-400 resize-y text-sm"
+                  placeholder="Observações sobre este paciente no contexto do grupo..."
+                />
+                <div className="flex justify-end gap-2">
+                  <button onClick={() => setEditingGroupId(null)} className="px-3 py-1.5 text-xs text-gray-500 font-bold hover:bg-white rounded-lg transition-colors">Cancelar</button>
+                  <button onClick={() => handleSave(group.id)} disabled={saving} className="bg-purple-600 hover:bg-purple-700 disabled:opacity-60 text-white px-4 py-1.5 text-xs font-bold rounded-lg transition-colors">Salvar</button>
+                </div>
+              </div>
+            ) : (
+              existingNote?.content ? (
+                <p className="text-sm text-purple-900 whitespace-pre-wrap">{existingNote.content}</p>
+              ) : (
+                <p className="text-xs text-purple-400 italic">Nenhuma anotação ainda.</p>
+              )
+            )}
+          </div>
+        );
+      })}
+
+      <div>
+        <h3 className="font-bold text-gray-800 mb-3">Prontuário do Paciente (somente visualização)</h3>
+        {clientSessions.length === 0 ? (
+          <div className="p-8 text-center bg-gray-50 rounded-2xl border border-dashed border-gray-200 text-gray-400 text-sm">
+            Nenhuma evolução de sessão registrada ainda.
+          </div>
+        ) : (
+          <div className="space-y-3">
+            {clientSessions.map(s => (
+              <div key={s.id} className="bg-gray-50 border border-gray-100 rounded-2xl p-4">
+                <p className="text-xs font-bold text-gray-500 mb-2">{format(new Date(s.date), "dd/MM/yyyy")}</p>
+                <p className="text-sm text-gray-700 whitespace-pre-wrap">{s.notes || "(sem registro de evolução)"}</p>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
 }

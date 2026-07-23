@@ -20,6 +20,7 @@ import {
   mapInstrument,
   mapInstrumentLog,
   mapClinicalDocument,
+  mapGroupClientNote,
 } from "./mappers.js";
 
 const app = express();
@@ -94,7 +95,7 @@ app.get(
 
     const isSupervisorOrAdmin = session.role === "SUPERVISOR" || session.role === "ADMIN";
 
-    const [users, clientsRaw, sessionsRaw, appointmentsRaw, groupsRaw, groupRecordsRaw, configItems, instruments, instrumentLogsRaw, clinicalDocumentsRaw] =
+    const [users, clientsRaw, sessionsRaw, appointmentsRaw, groupsRaw, groupRecordsRaw, configItems, instruments, instrumentLogsRaw, clinicalDocumentsRaw, groupClientNotesRaw] =
       await Promise.all([
         prisma.user.findMany({ orderBy: { name: "asc" } }),
         prisma.client.findMany({
@@ -109,12 +110,27 @@ app.get(
         prisma.instrument.findMany(),
         prisma.instrumentLog.findMany({ orderBy: { date: "desc" } }),
         prisma.clinicalDocument.findMany({ include: { author: true }, orderBy: { createdAt: "desc" } }),
+        prisma.groupClientNote.findMany(),
       ]);
 
+    // Grupos liderados pelo usuário atual (usado para estender a visibilidade
+    // ao paciente + prontuário para o psicólogo do grupo, mesmo quando o
+    // paciente é individualmente atribuído a outro profissional).
+    const myLedGroupIds = new Set(groupsRaw.filter((g: any) => g.psychologistId === session.userId).map((g: any) => g.id));
+    const myGroupMemberClientIds = new Set(
+      groupsRaw
+        .filter((g: any) => myLedGroupIds.has(g.id))
+        .flatMap((g: any) => g.members.map((m: any) => m.clientId))
+    );
+
     // PSICO só vê os próprios pacientes/sessões/grupos/agenda — Supervisor e Admin veem tudo.
+    // Exceção: paciente que participa de um grupo que o usuário lidera também
+    // fica visível (leitura do prontuário individual), mesmo sem ser o
+    // psicólogo responsável — cobre o caso de grupo com um profissional e
+    // atendimento individual com outro.
     const clients = isSupervisorOrAdmin
       ? clientsRaw
-      : clientsRaw.filter((c: any) => c.assignedPsicoId === session.userId);
+      : clientsRaw.filter((c: any) => c.assignedPsicoId === session.userId || myGroupMemberClientIds.has(c.id));
     const clientIds = new Set(clients.map((c: any) => c.id));
 
     const sessions = isSupervisorOrAdmin
@@ -140,6 +156,12 @@ app.get(
       ? clinicalDocumentsRaw
       : clinicalDocumentsRaw.filter((d: any) => clientIds.has(d.clientId));
 
+    // Anotação de grupo sobre um paciente é pessoal de quem escreveu — Supervisor
+    // vê todas (supervisão clínica), cada psicólogo só vê as próprias.
+    const groupClientNotes = session.role === "SUPERVISOR"
+      ? groupClientNotesRaw
+      : groupClientNotesRaw.filter((n: any) => n.authorId === session.userId);
+
     const instrumentLogs = instrumentLogsRaw; // consumo de material é visível a todos (não é dado clínico)
 
     res.json({
@@ -158,6 +180,7 @@ app.get(
       instruments: instruments.map(mapInstrument),
       instrumentLogs: instrumentLogs.map(mapInstrumentLog),
       clinicalDocuments: clinicalDocuments.map(mapClinicalDocument),
+      groupClientNotes: groupClientNotes.map(mapGroupClientNote),
     });
   })
 );
@@ -1094,6 +1117,39 @@ app.patch(
 );
 
 // Rota de teste simples para conferir se a API subiu (sem precisar de login).
+// ---------------------------------------------------------------------------
+// GROUP CLIENT NOTES (anotação do psicólogo do grupo sobre um paciente)
+// ---------------------------------------------------------------------------
+
+app.post(
+  "/api/group-client-notes",
+  asyncHandler(async (req, res) => {
+    const session = requireSession(req, res);
+    if (!session) return;
+    const { clientId, groupId, content } = req.body ?? {};
+    if (!clientId || !groupId) {
+      res.status(400).json({ error: "clientId e groupId são obrigatórios." });
+      return;
+    }
+    const group = await prisma.group.findUnique({ where: { id: groupId } });
+    if (!group || (group.psychologistId !== session.userId && session.role !== "SUPERVISOR")) {
+      res.status(403).json({ error: "Somente o psicólogo responsável pelo grupo pode registrar esta anotação." });
+      return;
+    }
+    const member = await prisma.groupMember.findUnique({ where: { groupId_clientId: { groupId, clientId } } }).catch(() => null);
+    if (!member) {
+      res.status(400).json({ error: "Este paciente não é membro deste grupo." });
+      return;
+    }
+    const note = await prisma.groupClientNote.upsert({
+      where: { groupId_clientId_authorId: { groupId, clientId, authorId: session.userId } },
+      update: { contentEnc: encryptField(content) },
+      create: { groupId, clientId, authorId: session.userId, contentEnc: encryptField(content) },
+    });
+    res.json({ groupClientNote: mapGroupClientNote(note) });
+  })
+);
+
 app.get("/api/health", (_req, res) => res.json({ ok: true, time: new Date().toISOString() }));
 
 app.use((req: Request, res: Response) => {

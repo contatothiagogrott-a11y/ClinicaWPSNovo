@@ -106,8 +106,8 @@ const ActiveCard: React.FC<{ client: Client }> = ({ client }) => {
               </div>
             )}
           </div>
-          <div className="w-10 h-10 bg-blue-50 text-blue-600 rounded-full flex items-center justify-center font-bold shrink-0 ml-4">
-            {client.completedSessions}
+          <div className="bg-blue-50 text-blue-700 rounded-full px-3 py-1.5 font-bold shrink-0 ml-4 text-xs whitespace-nowrap">
+            Nº {client.protocolNumber}
           </div>
        </div>
 

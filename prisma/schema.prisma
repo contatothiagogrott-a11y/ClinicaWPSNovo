@@ -79,6 +79,7 @@ model User {
   instrumentApps    InstrumentApplication[]
   historyLogs       HistoryLog[]
   clinicalDocuments ClinicalDocument[]
+  groupClientNotes  GroupClientNote[]
 }
 
 model Client {
@@ -133,6 +134,7 @@ model Client {
   groupMemberships       GroupMember[]
   clinicalDocuments      ClinicalDocument[]
   groupAttendances       GroupAttendance[]
+  groupClientNotes       GroupClientNote[]
 
   @@index([status])
   @@index([assignedPsicoId])
@@ -197,6 +199,7 @@ model Group {
   members        GroupMember[]
   records        GroupRecord[]
   appointments   Appointment[]
+  clientNotes    GroupClientNote[]
 }
 
 model GroupMember {
@@ -329,4 +332,21 @@ model ClinicalDocument {
   updatedAt   DateTime             @updatedAt
 
   @@index([clientId])
+}
+
+// Anotação do psicólogo de um GRUPO sobre um paciente específico daquele
+// grupo — útil quando o paciente faz terapia individual com um profissional
+// diferente do psicólogo do grupo. Uma anotação por (grupo, autor, paciente).
+model GroupClientNote {
+  id         String   @id @default(uuid())
+  clientId   String
+  client     Client   @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  groupId    String
+  group      Group    @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  authorId   String
+  author     User     @relation(fields: [authorId], references: [id])
+  contentEnc String   @default("")
+  updatedAt  DateTime @updatedAt
+
+  @@unique([groupId, clientId, authorId])
 }

@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useEffect, useState, useCallback } from "react";
-import { User, Client, SessionRecord, AppConfig, ClientStatus, ConfigItem, Appointment, Group, GroupRecord, Instrument, InstrumentLog, ClinicalDocument, ClinicalDocumentType } from "../types";
+import { User, Client, SessionRecord, AppConfig, ClientStatus, ConfigItem, Appointment, Group, GroupRecord, Instrument, InstrumentLog, ClinicalDocument, ClinicalDocumentType, GroupClientNote } from "../types";
 import { api, ApiError } from "../lib/api";
 
 export interface StoreState {
@@ -13,6 +13,7 @@ export interface StoreState {
   instruments: Instrument[];
   instrumentLogs: InstrumentLog[];
   clinicalDocuments: ClinicalDocument[];
+  groupClientNotes: GroupClientNote[];
   currentUser: User | null;
 }
 
@@ -50,6 +51,7 @@ interface StoreContextType extends StoreState {
   addClinicalDocument: (clientId: string, type: ClinicalDocumentType, data: Record<string, any>) => Promise<ClinicalDocument>;
   updateClinicalDocument: (id: string, data: Record<string, any>) => Promise<void>;
   importClients: (rows: Record<string, any>[]) => Promise<{ created: number; errors: { row: number; error: string }[] }>;
+  saveGroupClientNote: (clientId: string, groupId: string, content: string) => Promise<void>;
 }
 
 const StoreContext = createContext<StoreContextType | null>(null);
@@ -65,6 +67,7 @@ interface BootstrapResponse {
   instruments: Instrument[];
   instrumentLogs: InstrumentLog[];
   clinicalDocuments: ClinicalDocument[];
+  groupClientNotes: GroupClientNote[];
 }
 
 export function StoreProvider({ children }: { children: React.ReactNode }) {
@@ -80,6 +83,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
   const [instruments, setInstruments] = useState<Instrument[]>([]);
   const [instrumentLogs, setInstrumentLogs] = useState<InstrumentLog[]>([]);
   const [clinicalDocuments, setClinicalDocuments] = useState<ClinicalDocument[]>([]);
+  const [groupClientNotes, setGroupClientNotes] = useState<GroupClientNote[]>([]);
 
   const applyBootstrap = (data: BootstrapResponse) => {
     setUsers(data.users);
@@ -92,6 +96,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     setInstruments(data.instruments);
     setInstrumentLogs(data.instrumentLogs);
     setClinicalDocuments(data.clinicalDocuments);
+    setGroupClientNotes(data.groupClientNotes);
   };
 
   // Recarrega todos os dados do servidor. Chamado depois de toda operação de
@@ -148,6 +153,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
       setInstruments([]);
       setInstrumentLogs([]);
       setClinicalDocuments([]);
+      setGroupClientNotes([]);
       return;
     }
     // Por segurança, trocar de usuário sem senha não é permitido: só é possível
@@ -298,6 +304,11 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     return result;
   };
 
+  const saveGroupClientNote: StoreContextType["saveGroupClientNote"] = async (clientId, groupId, content) => {
+    await api.post("/api/group-client-notes", { clientId, groupId, content });
+    await refreshAll();
+  };
+
   if (isLoading) return null;
 
   return (
@@ -313,6 +324,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
         instruments,
         instrumentLogs,
         clinicalDocuments,
+        groupClientNotes,
         currentUser,
         isLoading,
         login,
@@ -345,6 +357,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
         addClinicalDocument,
         updateClinicalDocument,
         importClients,
+        saveGroupClientNote,
       }}
     >
       {children}

@@ -104,16 +104,21 @@ export default function AgendaPage() {
     };
   }, [users]);
 
-  const handleSelectSlot = useCallback((slotInfo: { start: Date; end: Date; resourceId?: string }) => {
+  const handleSelectSlot = useCallback((slotInfo: { start: Date; end: Date; resourceId?: string; action?: string }) => {
     const roomId = slotInfo.resourceId || roomFilter || activeRooms[0];
     if (!roomId) {
       alert("Cadastre pelo menos uma sala ativa em Configurações antes de agendar.");
       return;
     }
+    // Um clique simples (sem arrastar) seleciona só 1 "passo" da grade (30 min)
+    // no react-big-calendar — isso deixava todo agendamento novo com 30 min por
+    // padrão. Se não foi um arraste (action !== "select"), força 1 hora.
+    const oneHourEnd = new Date(slotInfo.start.getTime() + 60 * 60 * 1000);
+    const effectiveEnd = slotInfo.action === "select" && slotInfo.end > oneHourEnd ? slotInfo.end : oneHourEnd;
     setModalData({
       date: format(slotInfo.start, "yyyy-MM-dd"),
       time: format(slotInfo.start, "HH:mm"),
-      endTime: format(slotInfo.end, "HH:mm"),
+      endTime: format(effectiveEnd, "HH:mm"),
       roomId,
     });
   }, [roomFilter, activeRooms]);

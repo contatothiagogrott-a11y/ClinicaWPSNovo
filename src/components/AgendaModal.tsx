@@ -81,7 +81,7 @@ export default function AgendaModal({ open, onClose, initialData, existingAppoin
        setErrorMsg("O horário de término deve ser maior que o início.");
        return;
     }
-    if (statusTransition === "EM_ATENDIMENTO" && !responsiblePsicoId) {
+    if ((statusTransition === "EM_ATENDIMENTO" || statusTransition === "TRIAGEM") && !responsiblePsicoId) {
        setErrorMsg("Escolha o psicólogo responsável pelo atendimento antes de continuar.");
        return;
     }
@@ -110,13 +110,32 @@ export default function AgendaModal({ open, onClose, initialData, existingAppoin
        seriesId = Math.random().toString(36).substring(2, 9);
     }
     
+    // O responsável pelo agendamento é o psicólogo do PACIENTE (ou do grupo),
+    // não necessariamente quem está preenchendo a agenda — senão o
+    // agendamento não aparecia na agenda do psicólogo certo, e a cor exibida
+    // também ficava errada.
+    let resolvedPsicoId = existingAppointment?.psicoId;
+    if (!resolvedPsicoId) {
+      if (bookingType === "client") {
+        if ((statusTransition === "TRIAGEM" || statusTransition === "EM_ATENDIMENTO") && responsiblePsicoId) {
+          resolvedPsicoId = responsiblePsicoId;
+        } else {
+          const selectedClient = clients.find(c => c.id === selectedId);
+          resolvedPsicoId = selectedClient?.assignedPsicoId || currentUser?.id || "";
+        }
+      } else {
+        const selectedGroup = groups.find(g => g.id === selectedId);
+        resolvedPsicoId = selectedGroup?.psychologistId || currentUser?.id || "";
+      }
+    }
+
     const baseAppt = {
       time: startTime,
       endTime: endTime,
       roomId: roomId,
       clientId: bookingType === "client" ? selectedId : undefined,
       groupId: bookingType === "group" ? selectedId : undefined,
-      psicoId: existingAppointment?.psicoId || currentUser?.id || "",
+      psicoId: resolvedPsicoId,
       recurrence,
       seriesId
     };
@@ -141,7 +160,7 @@ export default function AgendaModal({ open, onClose, initialData, existingAppoin
     if (bookingType === "client" && statusTransition) {
       const selectedClient = clients.find(c => c.id === selectedId);
       const updates: any = { status: statusTransition };
-      if (statusTransition === "EM_ATENDIMENTO" && responsiblePsicoId) {
+      if ((statusTransition === "EM_ATENDIMENTO" || statusTransition === "TRIAGEM") && responsiblePsicoId) {
         updates.assignedPsicoId = responsiblePsicoId;
       } else if (selectedClient && !selectedClient.assignedPsicoId && currentUser) {
         updates.assignedPsicoId = currentUser.id;
@@ -267,9 +286,9 @@ export default function AgendaModal({ open, onClose, initialData, existingAppoin
                      />
                      {NEXT_STATUS[clients.find(c => c.id === selectedId)!.status]!.label} ao salvar este agendamento
                    </label>
-                   {statusTransition === "EM_ATENDIMENTO" && (
+                   {(statusTransition === "EM_ATENDIMENTO" || statusTransition === "TRIAGEM") && (
                      <div>
-                       <label className="block text-xs font-semibold text-blue-800 mb-1">Psicólogo responsável pelo atendimento</label>
+                       <label className="block text-xs font-semibold text-blue-800 mb-1">{statusTransition === "TRIAGEM" ? "Psicólogo responsável pela triagem" : "Psicólogo responsável pelo atendimento"}</label>
                        <select required value={responsiblePsicoId} onChange={e => setResponsiblePsicoId(e.target.value)} className="w-full bg-white border border-blue-200 rounded-lg px-3 py-2 outline-none font-medium text-sm">
                          <option value="">-- Escolher psicólogo --</option>
                          {psicos.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}

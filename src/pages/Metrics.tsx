@@ -30,12 +30,17 @@ export default function Metrics() {
   const filteredLogs = instrumentLogs.filter(l => l.type === "CONSUMPTION" && isWithinPeriod(l.date));
 
   const periodInterval = { start: new Date(startDate + "T00:00:00"), end: new Date(endDate + "T23:59:59.999") };
+  // Só agendamentos individuais (de um paciente específico) contam aqui — os de
+  // grupo têm presença registrada por membro em outro lugar (prontuário do
+  // grupo), então misturar os dois deixava o número sem sentido claro.
   const apptsInPeriod = appointments.filter(a => {
+     if (!a.clientId) return false;
      try { return isWithinInterval(parseISO(a.date), periodInterval); } catch { return false; }
   });
   const withAttendance = apptsInPeriod.filter(a => a.attendance && a.attendance !== "PENDENTE");
-  const attended = withAttendance.filter(a => a.attendance === "COMPARECEU");
-  const attendanceRate = withAttendance.length > 0 ? Math.round((attended.length / withAttendance.length) * 100) : null;
+  const countCompareceu = withAttendance.filter(a => a.attendance === "COMPARECEU").length;
+  const countFaltaJustificada = withAttendance.filter(a => a.attendance === "FALTA_JUSTIFICADA").length;
+  const countFaltaInjustificada = withAttendance.filter(a => a.attendance === "FALTA_INJUSTIFICADA").length;
 
   const psicos = users.filter(u => u.role === "PSICO");
   const psicoPerformance = psicos.map(p => {
@@ -46,14 +51,14 @@ export default function Metrics() {
         : null;
      const myAppts = apptsInPeriod.filter(a => a.psicoId === p.id);
      const myWithAttendance = myAppts.filter(a => a.attendance && a.attendance !== "PENDENTE");
-     const myAttended = myWithAttendance.filter(a => a.attendance === "COMPARECEU");
-     const myAttendanceRate = myWithAttendance.length > 0 ? Math.round((myAttended.length / myWithAttendance.length) * 100) : null;
      return {
         id: p.id,
         name: p.name,
         activeClients: activeClients.length,
         avgCompletion,
-        attendanceRate: myAttendanceRate,
+        compareceu: myWithAttendance.filter(a => a.attendance === "COMPARECEU").length,
+        faltaJustificada: myWithAttendance.filter(a => a.attendance === "FALTA_JUSTIFICADA").length,
+        faltaInjustificada: myWithAttendance.filter(a => a.attendance === "FALTA_INJUSTIFICADA").length,
         sessionsInPeriod: sessions.filter(s => s.psicoId === p.id && !s.isDraft && isWithinPeriod(s.date || s.createdAt)).length,
      };
   });
@@ -171,7 +176,9 @@ export default function Metrics() {
           ["Pacientes distintos atendidos no período", atendidosNoPeriodo],
           ["Em atendimento (agora)", emAtendimentoAgora],
           ["Na fila de espera (agora)", inWaitlist.length],
-          ["Taxa de comparecimento no período", attendanceRate !== null ? `${attendanceRate}%` : "—"],
+          ["Compareceram no período (atendimentos individuais)", countCompareceu],
+          ["Faltas justificadas no período (individuais)", countFaltaJustificada],
+          ["Faltas injustificadas no período (individuais)", countFaltaInjustificada],
           ["Média de sessões por paciente ativo/concluído", avgAtendimentos],
           ["Avaliações/instrumentos aplicados no período", totalAvaliacoes],
         ],
@@ -187,8 +194,8 @@ export default function Metrics() {
     if (selectedSections.has("psicologos")) {
       sections.push({
         title: "Desempenho por Psicólogo",
-        headers: ["Psicólogo", "Pacientes Ativos", "Sessões no Período", "% Plano Concluído", "Comparecimento"],
-        rows: psicoPerformance.map(p => [p.name, p.activeClients, p.sessionsInPeriod, p.avgCompletion !== null ? `${p.avgCompletion}%` : "—", p.attendanceRate !== null ? `${p.attendanceRate}%` : "—"]),
+        headers: ["Psicólogo", "Pacientes Ativos", "Sessões no Período", "% Plano Concluído", "Compareceram", "Faltas Justif.", "Faltas Injustif."],
+        rows: psicoPerformance.map(p => [p.name, p.activeClients, p.sessionsInPeriod, p.avgCompletion !== null ? `${p.avgCompletion}%` : "—", p.compareceu, p.faltaJustificada, p.faltaInjustificada]),
       });
     }
     if (selectedSections.has("triagem")) {
@@ -277,15 +284,38 @@ export default function Metrics() {
             <p className="text-xs text-gray-400 mt-2">Sessões por paciente ativo</p>
          </div>
          <div className="bg-white p-6 rounded-3xl border border-gray-100 shadow-sm flex flex-col justify-between">
-            <h4 className="text-gray-500 font-medium text-sm mb-2 flex items-center gap-2"><CheckCircle size={16}/> Avaliações Aplicadas</h4>
+            <h4 className="text-gray-500 font-medium text-sm mb-2 flex items-center gap-2"><CheckCircle size={16}/> Testes Aplicados</h4>
             <div className="text-4xl font-black text-purple-600">{totalAvaliacoes}</div>
             <p className="text-xs text-gray-400 mt-2">Instrumentos consumidos no período</p>
          </div>
-         <div className="bg-white p-6 rounded-3xl border border-gray-100 shadow-sm flex flex-col justify-between">
-            <h4 className="text-gray-500 font-medium text-sm mb-2 flex items-center gap-2"><TrendingUp size={16}/> Taxa de Comparecimento</h4>
-            <div className="text-4xl font-black text-teal-600">{attendanceRate !== null ? `${attendanceRate}%` : "—"}</div>
-            <p className="text-xs text-gray-400 mt-2">{withAttendance.length} agendamentos com presença registrada no período</p>
+      </div>
+
+      <div>
+         <p className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">Presença em atendimentos individuais no período (não inclui sessões de grupo)</p>
+         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+            <div className="bg-white p-6 rounded-3xl border border-gray-100 shadow-sm flex items-center justify-between">
+               <div>
+                  <h4 className="text-gray-500 font-medium text-sm mb-1">Compareceram</h4>
+                  <div className="text-3xl font-black text-emerald-600">{countCompareceu}</div>
+               </div>
+               <TrendingUp className="text-emerald-200" size={32} />
+            </div>
+            <div className="bg-white p-6 rounded-3xl border border-gray-100 shadow-sm flex items-center justify-between">
+               <div>
+                  <h4 className="text-gray-500 font-medium text-sm mb-1">Faltas Justificadas</h4>
+                  <div className="text-3xl font-black text-amber-600">{countFaltaJustificada}</div>
+               </div>
+               <Clock className="text-amber-200" size={32} />
+            </div>
+            <div className="bg-white p-6 rounded-3xl border border-gray-100 shadow-sm flex items-center justify-between">
+               <div>
+                  <h4 className="text-gray-500 font-medium text-sm mb-1">Faltas Injustificadas</h4>
+                  <div className="text-3xl font-black text-red-600">{countFaltaInjustificada}</div>
+               </div>
+               <Activity className="text-red-200" size={32} />
+            </div>
          </div>
+         <p className="text-xs text-gray-400 mt-2">{withAttendance.length} agendamento(s) individual(is) com presença registrada no período — o total pode ser menor que o volume geral porque alguns agendamentos ainda estão como "pendente" ou são sessões de grupo.</p>
       </div>
 
       <div className="bg-white p-6 rounded-3xl border border-gray-100 shadow-sm">
@@ -301,7 +331,9 @@ export default function Metrics() {
                      <th className="pb-3 pr-4">Pacientes ativos</th>
                      <th className="pb-3 pr-4">Sessões no período</th>
                      <th className="pb-3 pr-4">% do plano concluído (média)</th>
-                     <th className="pb-3">Comparecimento no período</th>
+                     <th className="pb-3 pr-4">Compareceram</th>
+                     <th className="pb-3 pr-4">Faltas Justif.</th>
+                     <th className="pb-3">Faltas Injustif.</th>
                   </tr>
                </thead>
                <tbody>
@@ -317,11 +349,13 @@ export default function Metrics() {
                               </span>
                            ) : <span className="text-gray-300">—</span>}
                         </td>
-                        <td className="py-3 font-bold text-gray-700">{p.attendanceRate !== null ? `${p.attendanceRate}%` : "—"}</td>
+                        <td className="py-3 pr-4 font-bold text-emerald-600">{p.compareceu}</td>
+                        <td className="py-3 pr-4 font-bold text-amber-600">{p.faltaJustificada}</td>
+                        <td className="py-3 font-bold text-red-600">{p.faltaInjustificada}</td>
                      </tr>
                   ))}
                   {psicoPerformance.length === 0 && (
-                     <tr><td colSpan={5} className="py-6 text-center text-gray-400">Nenhum psicólogo cadastrado ainda.</td></tr>
+                     <tr><td colSpan={7} className="py-6 text-center text-gray-400">Nenhum psicólogo cadastrado ainda.</td></tr>
                   )}
                </tbody>
             </table>

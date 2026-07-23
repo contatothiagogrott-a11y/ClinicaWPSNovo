@@ -196,6 +196,15 @@ export interface InstrumentLog {
   reason?: string;
 }
 
+export interface GroupClientNote {
+  id: string;
+  clientId: string;
+  groupId: string;
+  authorId: string;
+  content: string;
+  updatedAt: string;
+}
+
 export type ClinicalDocumentType = "ANAMNESE_RISCO" | "URGENCIA" | "ATESTADO";
 
 export interface ClinicalDocument {
