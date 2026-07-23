@@ -1,10 +1,12 @@
 import React, { useState } from "react";
 import { useStore } from "../contexts/StoreContext";
-import { BarChart as BarChartIcon, Users, Activity, CheckCircle, Clock, TrendingUp, Tag, History, Layers, Download } from "lucide-react";
+import { BarChart as BarChartIcon, Users, Activity, CheckCircle, Clock, TrendingUp, Tag, History, Layers, Download, ChevronDown } from "lucide-react";
 import { cn } from "../lib/utils";
 import { parseISO, isWithinInterval } from "date-fns";
 import { downloadPdf } from "../lib/pdfGenerator";
 import { buildRelatorioDocDefinition, ReportTableSection } from "../lib/pdfRelatorio";
+import { getSessionTier } from "../lib/sessionTiers";
+import InfoTip from "../components/InfoTip";
 
 export default function Metrics() {
   const { clients, sessions, instruments, instrumentLogs, config, appointments, users } = useStore();
@@ -45,23 +47,49 @@ export default function Metrics() {
   const psicos = users.filter(u => u.role === "PSICO");
   const psicoPerformance = psicos.map(p => {
      const activeClients = clients.filter(c => c.assignedPsicoId === p.id && c.status === "EM_ATENDIMENTO");
-     const withPlan = activeClients.filter(c => c.maxSessions > 0);
-     const avgCompletion = withPlan.length > 0
-        ? Math.round(withPlan.reduce((acc, c) => acc + (c.completedSessions / c.maxSessions), 0) / withPlan.length * 100)
-        : null;
      const myAppts = apptsInPeriod.filter(a => a.psicoId === p.id);
      const myWithAttendance = myAppts.filter(a => a.attendance && a.attendance !== "PENDENTE");
+
+     // Detalhe por paciente: sessões e faltas no período são contadas por
+     // paciente individualmente (não só o total do psicólogo), além de
+     // tema/prioridade/grau — é o que dá o "raio-x" pedido pela gestão.
+     const patients = activeClients.map(c => {
+        const clientAppts = myWithAttendance.filter(a => a.clientId === c.id);
+        return {
+           id: c.id,
+           name: c.fullName,
+           tags: c.tags || [],
+           priority: c.priority || null,
+           tier: getSessionTier(c.completedSessions),
+           completedSessions: c.completedSessions || 0,
+           maxSessions: c.maxSessions || 0,
+           compareceu: clientAppts.filter(a => a.attendance === "COMPARECEU").length,
+           faltaJustificada: clientAppts.filter(a => a.attendance === "FALTA_JUSTIFICADA").length,
+           faltaInjustificada: clientAppts.filter(a => a.attendance === "FALTA_INJUSTIFICADA").length,
+        };
+     });
+
+     const tierCounts = {
+        verde: patients.filter(pt => pt.completedSessions > 0 && pt.completedSessions <= 8).length,
+        amarelo: patients.filter(pt => pt.completedSessions >= 9 && pt.completedSessions <= 10).length,
+        laranja: patients.filter(pt => pt.completedSessions >= 11 && pt.completedSessions <= 15).length,
+        vermelho: patients.filter(pt => pt.completedSessions >= 16).length,
+     };
+
      return {
         id: p.id,
         name: p.name,
         activeClients: activeClients.length,
-        avgCompletion,
+        tierCounts,
         compareceu: myWithAttendance.filter(a => a.attendance === "COMPARECEU").length,
         faltaJustificada: myWithAttendance.filter(a => a.attendance === "FALTA_JUSTIFICADA").length,
         faltaInjustificada: myWithAttendance.filter(a => a.attendance === "FALTA_INJUSTIFICADA").length,
         sessionsInPeriod: sessions.filter(s => s.psicoId === p.id && !s.isDraft && isWithinPeriod(s.date || s.createdAt)).length,
+        patients,
      };
   });
+
+  const [expandedPsicoId, setExpandedPsicoId] = useState<string | null>(null);
 
   const totalAtendimentos = filteredSessions.length;
   const inWaitlist = filteredClients.filter(c => c.status === "FILA_ESPERA" || c.status === "TRIAGEM" || c.status === "TRIADOS");
@@ -149,6 +177,7 @@ export default function Metrics() {
     { key: "resumo", label: "Resumo Geral" },
     { key: "tags", label: "Métricas por Tag" },
     { key: "psicologos", label: "Desempenho por Psicólogo" },
+    { key: "pacientes", label: "Detalhamento por Paciente" },
     { key: "triagem", label: "Triagem por Psicólogo" },
     { key: "coorte", label: `Coorte ${cohortYear} (fila de espera)` },
     { key: "vinculo", label: "Público por Vínculo" },
@@ -194,8 +223,15 @@ export default function Metrics() {
     if (selectedSections.has("psicologos")) {
       sections.push({
         title: "Desempenho por Psicólogo",
-        headers: ["Psicólogo", "Pacientes Ativos", "Sessões no Período", "% Plano Concluído", "Compareceram", "Faltas Justif.", "Faltas Injustif."],
-        rows: psicoPerformance.map(p => [p.name, p.activeClients, p.sessionsInPeriod, p.avgCompletion !== null ? `${p.avgCompletion}%` : "—", p.compareceu, p.faltaJustificada, p.faltaInjustificada]),
+        headers: ["Psicólogo", "Pacientes Ativos", "Sessões no Período", "Verde (1-8)", "Amarelo (9-10)", "Laranja (11-15)", "Vermelho (16+)", "Compareceram", "Faltas Justif.", "Faltas Injustif."],
+        rows: psicoPerformance.map(p => [p.name, p.activeClients, p.sessionsInPeriod, p.tierCounts.verde, p.tierCounts.amarelo, p.tierCounts.laranja, p.tierCounts.vermelho, p.compareceu, p.faltaJustificada, p.faltaInjustificada]),
+      });
+    }
+    if (selectedSections.has("pacientes")) {
+      sections.push({
+        title: "Detalhamento por Paciente (todos os psicólogos)",
+        headers: ["Psicólogo", "Paciente", "Temas", "Prioridade", "Sessões", "Faltas Justif.", "Faltas Injustif."],
+        rows: psicoPerformance.flatMap(p => p.patients.map(pt => [p.name, pt.name, pt.tags.join(", ") || "—", pt.priority || "—", `${pt.completedSessions}/${pt.maxSessions || "—"}`, pt.faltaJustificada, pt.faltaInjustificada])),
       });
     }
     if (selectedSections.has("triagem")) {
@@ -267,31 +303,46 @@ export default function Metrics() {
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
          <div className="bg-white p-6 rounded-3xl border border-gray-100 shadow-sm flex flex-col justify-between">
-            <h4 className="text-gray-500 font-medium text-sm mb-2 flex items-center gap-2"><Activity size={16}/> Volume Total</h4>
+            <div className="flex items-start justify-between">
+              <h4 className="text-gray-500 font-medium text-sm mb-2 flex items-center gap-2"><Activity size={16}/> Volume Total</h4>
+              <InfoTip text="Quantidade de prontuários (evoluções de sessão) salvos com data dentro do período selecionado no topo da página. Conta o registro, não pacientes distintos." />
+            </div>
             <div className="text-4xl font-black text-gray-900">{totalAtendimentos}</div>
             <p className="text-xs text-gray-400 mt-2">Prontuários salvos no período</p>
          </div>
          <div className="bg-white p-6 rounded-3xl border border-gray-100 shadow-sm flex flex-col justify-between">
-            <h4 className="text-gray-500 font-medium text-sm mb-2 flex items-center gap-2"><Clock size={16}/> Origem vs Término</h4>
+            <div className="flex items-start justify-between">
+              <h4 className="text-gray-500 font-medium text-sm mb-2 flex items-center gap-2"><Clock size={16}/> Origem vs Término</h4>
+              <InfoTip text="Primeiro número: quantos pacientes com data de entrada na fila dentro do período estão hoje em Fila de Espera, Triagem ou Triados. Segundo número: quantos, desse mesmo grupo, já estão Em Atendimento ou Finalizados." />
+            </div>
             <div className="flex items-end gap-2 text-4xl font-black text-gray-900">
                {inWaitlist.length} <span className="text-xl text-gray-400 font-medium mb-1">/ {completedOrActive.length}</span>
             </div>
             <p className="text-xs text-gray-400 mt-2">Na fila x Em atendimento (ou concluídos)</p>
          </div>
          <div className="bg-white p-6 rounded-3xl border border-gray-100 shadow-sm flex flex-col justify-between">
-            <h4 className="text-gray-500 font-medium text-sm mb-2 flex items-center gap-2"><BarChartIcon size={16}/> Média de Retorno</h4>
+            <div className="flex items-start justify-between">
+              <h4 className="text-gray-500 font-medium text-sm mb-2 flex items-center gap-2"><BarChartIcon size={16}/> Média de Retorno</h4>
+              <InfoTip text="Total de prontuários salvos no período, dividido pelo número de pacientes que entraram na fila no período E estão Em Atendimento ou Finalizados. É a média bruta de sessões por paciente, não percentual." />
+            </div>
             <div className="text-4xl font-black text-blue-600">{avgAtendimentos}</div>
             <p className="text-xs text-gray-400 mt-2">Sessões por paciente ativo</p>
          </div>
          <div className="bg-white p-6 rounded-3xl border border-gray-100 shadow-sm flex flex-col justify-between">
-            <h4 className="text-gray-500 font-medium text-sm mb-2 flex items-center gap-2"><CheckCircle size={16}/> Testes Aplicados</h4>
+            <div className="flex items-start justify-between">
+              <h4 className="text-gray-500 font-medium text-sm mb-2 flex items-center gap-2"><CheckCircle size={16}/> Testes Aplicados</h4>
+              <InfoTip text="Soma de todas as unidades de instrumentos/testes consumidas do estoque dentro do período selecionado (vem do registro de consumo do Inventário de Testes)." />
+            </div>
             <div className="text-4xl font-black text-purple-600">{totalAvaliacoes}</div>
             <p className="text-xs text-gray-400 mt-2">Instrumentos consumidos no período</p>
          </div>
       </div>
 
       <div>
-         <p className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">Presença em atendimentos individuais no período (não inclui sessões de grupo)</p>
+         <p className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2 flex items-center gap-1.5">
+           Presença em atendimentos individuais no período (não inclui sessões de grupo)
+           <InfoTip text="Conta só agendamentos de pacientes individuais (não de grupo) dentro do período selecionado acima, com presença já marcada. Sessões de grupo têm presença registrada separadamente, no prontuário do grupo." />
+         </p>
          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
             <div className="bg-white p-6 rounded-3xl border border-gray-100 shadow-sm flex items-center justify-between">
                <div>
@@ -319,9 +370,12 @@ export default function Metrics() {
       </div>
 
       <div className="bg-white p-6 rounded-3xl border border-gray-100 shadow-sm">
-         <h3 className="text-lg font-bold text-gray-900 mb-1 flex items-center gap-2"><Users className="text-blue-600"/> Desempenho por Psicólogo</h3>
+         <div className="flex items-center justify-between mb-1">
+            <h3 className="text-lg font-bold text-gray-900 flex items-center gap-2"><Users className="text-blue-600"/> Desempenho por Psicólogo</h3>
+            <InfoTip text="Cada linha é um psicólogo com pacientes ativos. As colunas coloridas mostram QUANTOS pacientes desse psicólogo estão em cada faixa de sessões: Verde 1-8, Amarelo 9-10, Laranja 11-15, Vermelho 16+. Clique em 'Ver pacientes' para abrir o detalhe de cada um (tema, prioridade, sessões e faltas)." />
+         </div>
          <p className="text-xs text-gray-400 mb-6">
-            "% do plano" compara sessões realizadas com o total previsto para cada paciente ativo — mais justo do que somar sessões brutas, já que cada caso tem um plano de tamanho diferente.
+            Números absolutos de pacientes por psicólogo, sem percentuais. Clique em um psicólogo para ver o detalhe de cada paciente.
          </p>
          <div className="overflow-x-auto">
             <table className="w-full text-sm">
@@ -330,7 +384,10 @@ export default function Metrics() {
                      <th className="pb-3 pr-4">Psicólogo</th>
                      <th className="pb-3 pr-4">Pacientes ativos</th>
                      <th className="pb-3 pr-4">Sessões no período</th>
-                     <th className="pb-3 pr-4">% do plano concluído (média)</th>
+                     <th className="pb-3 pr-4">Verde (1-8)</th>
+                     <th className="pb-3 pr-4">Amarelo (9-10)</th>
+                     <th className="pb-3 pr-4">Laranja (11-15)</th>
+                     <th className="pb-3 pr-4">Vermelho (16+)</th>
                      <th className="pb-3 pr-4">Compareceram</th>
                      <th className="pb-3 pr-4">Faltas Justif.</th>
                      <th className="pb-3">Faltas Injustif.</th>
@@ -338,24 +395,61 @@ export default function Metrics() {
                </thead>
                <tbody>
                   {psicoPerformance.map(p => (
-                     <tr key={p.id} className="border-b border-gray-50 last:border-0">
-                        <td className="py-3 pr-4 font-semibold text-gray-800">{p.name}</td>
+                     <React.Fragment key={p.id}>
+                     <tr className="border-b border-gray-50 last:border-0 cursor-pointer hover:bg-gray-50" onClick={() => setExpandedPsicoId(expandedPsicoId === p.id ? null : p.id)}>
+                        <td className="py-3 pr-4 font-semibold text-gray-800 flex items-center gap-1.5">{p.name} <ChevronDown size={14} className={cn("text-gray-400 transition-transform", expandedPsicoId === p.id && "rotate-180")} /></td>
                         <td className="py-3 pr-4 text-gray-600">{p.activeClients}</td>
                         <td className="py-3 pr-4 text-gray-600">{p.sessionsInPeriod}</td>
-                        <td className="py-3 pr-4">
-                           {p.avgCompletion !== null ? (
-                              <span className={cn("font-bold", p.avgCompletion >= 90 ? "text-red-600" : p.avgCompletion >= 70 ? "text-amber-600" : "text-emerald-600")}>
-                                 {p.avgCompletion}%
-                              </span>
-                           ) : <span className="text-gray-300">—</span>}
-                        </td>
+                        <td className="py-3 pr-4"><span className="font-bold text-emerald-600">{p.tierCounts.verde}</span></td>
+                        <td className="py-3 pr-4"><span className="font-bold text-yellow-600">{p.tierCounts.amarelo}</span></td>
+                        <td className="py-3 pr-4"><span className="font-bold text-orange-600">{p.tierCounts.laranja}</span></td>
+                        <td className="py-3 pr-4"><span className="font-bold text-red-600">{p.tierCounts.vermelho}</span></td>
                         <td className="py-3 pr-4 font-bold text-emerald-600">{p.compareceu}</td>
                         <td className="py-3 pr-4 font-bold text-amber-600">{p.faltaJustificada}</td>
                         <td className="py-3 font-bold text-red-600">{p.faltaInjustificada}</td>
                      </tr>
+                     {expandedPsicoId === p.id && (
+                        <tr>
+                           <td colSpan={10} className="bg-gray-50 p-4 rounded-2xl">
+                              {p.patients.length === 0 ? (
+                                 <p className="text-xs text-gray-400 py-2">Nenhum paciente ativo no momento.</p>
+                              ) : (
+                                 <table className="w-full text-xs">
+                                    <thead>
+                                       <tr className="text-left text-gray-400 uppercase font-bold border-b border-gray-200">
+                                          <th className="pb-2 pr-3">Paciente</th>
+                                          <th className="pb-2 pr-3">Temas</th>
+                                          <th className="pb-2 pr-3">Prioridade (risco)</th>
+                                          <th className="pb-2 pr-3">Grau</th>
+                                          <th className="pb-2 pr-3">Sessões</th>
+                                          <th className="pb-2 pr-3">Faltas Justif.</th>
+                                          <th className="pb-2">Faltas Injustif.</th>
+                                       </tr>
+                                    </thead>
+                                    <tbody>
+                                       {p.patients.map(pt => (
+                                          <tr key={pt.id} className="border-b border-gray-100 last:border-0">
+                                             <td className="py-2 pr-3 font-semibold text-gray-800">{pt.name}</td>
+                                             <td className="py-2 pr-3 text-gray-600">{pt.tags.length > 0 ? pt.tags.join(", ") : "—"}</td>
+                                             <td className="py-2 pr-3 text-gray-600">{pt.priority || "—"}</td>
+                                             <td className="py-2 pr-3">
+                                                <span className="px-2 py-0.5 rounded-full text-[11px] font-bold" style={{ backgroundColor: pt.tier.bgColor, color: pt.tier.textColor }}>{pt.tier.label}</span>
+                                             </td>
+                                             <td className="py-2 pr-3 text-gray-600">{pt.completedSessions}/{pt.maxSessions || "—"}</td>
+                                             <td className="py-2 pr-3 font-bold text-amber-600">{pt.faltaJustificada}</td>
+                                             <td className="py-2 font-bold text-red-600">{pt.faltaInjustificada}</td>
+                                          </tr>
+                                       ))}
+                                    </tbody>
+                                 </table>
+                              )}
+                           </td>
+                        </tr>
+                     )}
+                     </React.Fragment>
                   ))}
                   {psicoPerformance.length === 0 && (
-                     <tr><td colSpan={7} className="py-6 text-center text-gray-400">Nenhum psicólogo cadastrado ainda.</td></tr>
+                     <tr><td colSpan={10} className="py-6 text-center text-gray-400">Nenhum psicólogo cadastrado ainda.</td></tr>
                   )}
                </tbody>
             </table>
@@ -380,7 +474,10 @@ export default function Metrics() {
       </div>
 
       <div className="bg-white p-6 rounded-3xl border border-gray-100 shadow-sm">
-         <h3 className="text-lg font-bold text-gray-900 mb-1 flex items-center gap-2"><Tag className="text-blue-600" size={18} /> Métricas por Tag</h3>
+         <div className="flex items-center justify-between mb-1">
+            <h3 className="text-lg font-bold text-gray-900 flex items-center gap-2"><Tag className="text-blue-600" size={18} /> Métricas por Tag</h3>
+            <InfoTip text="Para cada tag/tema (ex: Ansiedade), mostra quantos pacientes estão em cada etapa (fila, triagem, triados, em atendimento, finalizado) e a média de sessões dos casos JÁ finalizados com essa tag. Não depende do período selecionado — é uma foto de agora." />
+         </div>
          <p className="text-xs text-gray-400 mb-6">Contagem por status e média de sessões dos casos já finalizados com cada tag (não é filtrado por período — é uma foto de agora).</p>
          <div className="overflow-x-auto">
             <table className="w-full text-sm">
@@ -418,7 +515,10 @@ export default function Metrics() {
       </div>
 
       <div className="bg-white p-6 rounded-3xl border border-gray-100 shadow-sm">
-         <h3 className="text-lg font-bold text-gray-900 mb-1 flex items-center gap-2"><History className="text-blue-600" size={18} /> Triagem por Psicólogo (no período)</h3>
+         <div className="flex items-center justify-between mb-1">
+            <h3 className="text-lg font-bold text-gray-900 flex items-center gap-2"><History className="text-blue-600" size={18} /> Triagem por Psicólogo (no período)</h3>
+            <InfoTip text="Conta quantas vezes cada psicólogo moveu um caso para Triagem ou para Triados dentro do período selecionado acima. Isso vem do histórico registrado em cada paciente, não é um contador separado." />
+         </div>
          <p className="text-xs text-gray-400 mb-6">Baseado no histórico de mudança de status de cada caso — mostra quem realizou a triagem/classificação de risco.</p>
          <div className="overflow-x-auto">
             <table className="w-full text-sm">
@@ -447,7 +547,7 @@ export default function Metrics() {
 
       <div className="bg-white p-6 rounded-3xl border border-gray-100 shadow-sm">
          <div className="flex items-center justify-between mb-1">
-            <h3 className="text-lg font-bold text-gray-900 flex items-center gap-2"><Layers className="text-blue-600" size={18} /> Coorte por Ano de Entrada na Fila</h3>
+            <h3 className="text-lg font-bold text-gray-900 flex items-center gap-2"><Layers className="text-blue-600" size={18} /> Coorte por Ano de Entrada na Fila <InfoTip text="Pega todo mundo que entrou na fila de espera no ano escolhido ao lado e mostra: quantos já tiveram pelo menos 1 sessão dentro do período filtrado no topo da página, e quantos ainda estão esperando (fila, triagem ou triados)." /></h3>
             <select value={cohortYear} onChange={e => setCohortYear(Number(e.target.value))} className="bg-gray-50 border border-gray-200 rounded-xl px-3 py-1.5 text-sm font-bold outline-none">
                {waitlistYears.map(y => <option key={y} value={y}>{y}</option>)}
             </select>

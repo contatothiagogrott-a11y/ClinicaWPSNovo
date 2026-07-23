@@ -14,6 +14,7 @@ import { buildAtestadoDocDefinition } from "../lib/pdfAtestado";
 import AtestadoModal from "../components/AtestadoModal";
 import { openPdfInNewTab, downloadPdf } from "../lib/pdfGenerator";
 import type { Client, Group, GroupClientNote, SessionRecord, User } from "../types";
+import { getSessionTier } from "../lib/sessionTiers";
 
 import { TagInput } from "../components/TagInput";
 
@@ -266,6 +267,36 @@ export default function ClientProfile() {
                       <div className="bg-white px-4 py-3 rounded-xl border border-gray-100 font-medium">{client.workShift || "—"}</div>
                     )}
                   </div>
+                </div>
+
+                <div className="rounded-2xl border p-4" style={{ backgroundColor: getSessionTier(client.completedSessions).bgColor, borderColor: getSessionTier(client.completedSessions).dotColor + "40" }}>
+                  <div className="flex items-center justify-between mb-3">
+                    <label className="text-xs font-semibold tracking-wider uppercase" style={{ color: getSessionTier(client.completedSessions).textColor }}>Controle de Sessões</label>
+                    <span className="flex items-center gap-1.5 text-xs font-bold px-2.5 py-1 rounded-full" style={{ backgroundColor: getSessionTier(client.completedSessions).dotColor, color: "white" }}>
+                      <span className="w-2 h-2 rounded-full bg-white/80" /> {getSessionTier(client.completedSessions).label}
+                    </span>
+                  </div>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-[11px] font-semibold text-gray-500 mb-1">Sessões Realizadas</label>
+                      {isEditingInfo ? (
+                        <input type="number" min={0} value={editData.completedSessions ?? 0} onChange={e => setEditData({...editData, completedSessions: Number(e.target.value)})} className="w-full bg-white border border-gray-200 rounded-xl px-4 py-3 outline-none font-bold text-lg" />
+                      ) : (
+                        <div className="bg-white px-4 py-3 rounded-xl border border-gray-100 font-bold text-lg">{client.completedSessions ?? 0}</div>
+                      )}
+                    </div>
+                    <div>
+                      <label className="block text-[11px] font-semibold text-gray-500 mb-1">Máximo Previsto</label>
+                      {isEditingInfo ? (
+                        <input type="number" min={0} value={editData.maxSessions ?? 0} onChange={e => setEditData({...editData, maxSessions: Number(e.target.value)})} className="w-full bg-white border border-gray-200 rounded-xl px-4 py-3 outline-none font-bold text-lg" />
+                      ) : (
+                        <div className="bg-white px-4 py-3 rounded-xl border border-gray-100 font-bold text-lg">{client.maxSessions ?? 0}</div>
+                      )}
+                    </div>
+                  </div>
+                  <p className="text-[11px] mt-2" style={{ color: getSessionTier(client.completedSessions).textColor }}>
+                    Verde: 1-8 · Amarelo: 9-10 · Laranja: 11-15 · Vermelho: 16+
+                  </p>
                 </div>
 
                 <div>
