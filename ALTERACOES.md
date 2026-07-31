@@ -11,7 +11,7 @@ Documento de entrega. Contém **o que mudou**, **o que você precisa fazer antes
 Três coisas, na ordem:
 
 1. **Cadastrar `DIRECT_URL` na Vercel** — a string de conexão do Neon **sem** o `-pooler`. As migrations do Prisma não funcionam através do pooler (PgBouncer em modo transação). Sem isso, o build falha.
-2. **Gerar a migration inicial**, uma única vez, pelo **GitHub Codespaces** (terminal no navegador, sem instalar nada): `npx prisma migrate dev --name init`.
+2. **Gerar a migration inicial**, uma única vez, pelo **GitHub Codespaces** (terminal no navegador, sem instalar nada): `npm run migration -- --name init`.
 3. **Criar os usuários iniciais**: `npm run db:seed`. O seed não roda mais a cada publicação — semear um banco de prontuários em todo build é arriscado.
 
 Depois disso, o fluxo volta a ser 100% pelo navegador. A única exceção passa a ser mudança de estrutura do banco, que exige uma migration nova — e isso é intencional: antes, uma alteração malfeita no `schema.prisma` era aplicada direto na produção, em silêncio.
@@ -181,9 +181,9 @@ npm run verificar       → 19/19 testes, em TZ=UTC e TZ=America/Sao_Paulo
 **O que NÃO pude executar neste ambiente** (rede restrita ao `binaries.prisma.sh`), e você precisa rodar:
 
 ```bash
-npx prisma validate     # valida o schema
-npx prisma generate     # gera o client
-npx prisma migrate dev --name init
+npx prisma@6 validate     # valida o schema
+npm run postinstall     # gera o client
+npm run migration -- --name init
 npm run db:seed
 npm run dev             # + npm run dev:api em outro terminal
 ```

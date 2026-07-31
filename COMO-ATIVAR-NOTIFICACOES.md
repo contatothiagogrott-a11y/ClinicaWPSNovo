@@ -113,7 +113,7 @@ notificação, e o controle que impede o mesmo aviso de sair duas vezes.
 No terminal do **Codespace**:
 
 ```bash
-npx prisma migrate dev --name notificacoes_push
+npm run migration -- --name notificacoes_push
 ```
 
 Depois, no menu de controle de versão (ícone de bifurcação, lateral esquerda):

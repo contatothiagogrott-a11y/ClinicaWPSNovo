@@ -234,7 +234,7 @@ em computador compartilhado.
 Isso **não é necessário** para publicar (o Passo 4 já cuida de tudo), mas se
 quiser testar localmente: instale o [Node.js](https://nodejs.org) (LTS), copie
 `.env.example` para `.env` preenchendo os valores, rode `npm install`,
-depois `npx prisma migrate dev` e `npm run db:seed` uma vez, e por fim, em dois
+depois `npm run migration --` e `npm run db:seed` uma vez, e por fim, em dois
 terminais: `npm run dev:api` e `npm run dev`.
 
 Comandos úteis de verificação:

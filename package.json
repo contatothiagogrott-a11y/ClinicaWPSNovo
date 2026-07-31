@@ -18,7 +18,8 @@
     "db:baseline": "prisma migrate dev --name init",
     "verificar": "TZ=UTC tsx scripts/verificacao.ts && TZ=America/Sao_Paulo tsx scripts/verificacao.ts",
     "typecheck": "tsc --noEmit -p tsconfig.json",
-    "typecheck:api": "tsc --noEmit -p tsconfig.api.json"
+    "typecheck:api": "tsc --noEmit -p tsconfig.api.json",
+    "migration": "prisma migrate dev"
   },
   "prisma": {
     "seed": "tsx prisma/seed.ts"

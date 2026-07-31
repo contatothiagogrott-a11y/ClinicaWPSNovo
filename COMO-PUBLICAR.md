@@ -99,6 +99,13 @@ Daqui em diante, você vai **digitar comandos e apertar Enter**. Um de cada vez,
 npm install
 ```
 
+> ⚠️ **Nunca use `npx prisma ...`.** Se o Prisma não estiver instalado na
+> pasta, o `npx` baixa a versão mais nova da internet sem avisar (a 7),
+> enquanto o projeto usa a 6 — e o erro que aparece (`P1012: datasource
+> property url is no longer supported`) parece problema de banco, mas é só
+> versão errada. Use sempre `npm run`.
+> Passo a passo completo em **[COMO-CRIAR-MIGRATION.md](./COMO-CRIAR-MIGRATION.md)**.
+
 Demora 1 a 2 minutos. É normal aparecerem avisos amarelos (`warn`) — só se preocupe com `error` em vermelho.
 
 ### 2.4 — Criar o arquivo `.env` dentro do Codespace
@@ -163,7 +170,7 @@ DIRECT_URL="postgresql://USUARIO:SENHA@ep-nome-123456.sa-east-1.aws.neon.tech/ne
 Este é o comando principal de toda a operação:
 
 ```bash
-npx prisma migrate dev --name init
+npm run migration -- --name init
 ```
 
 O que ele faz: lê a estrutura descrita em `prisma/schema.prisma`, compara com o banco no Neon, e **cria a pasta `prisma/migrations/`** com o histórico inicial.
@@ -242,7 +249,7 @@ para mantê-lo existindo depois que o trabalho acabou.
 A **única** situação que exige voltar ao Codespaces é **mudar a estrutura do banco** (editar `prisma/schema.prisma` — criar um campo novo, por exemplo). Nesse caso o roteiro é o mesmo, trocando o nome ao final:
 
 ```bash
-npx prisma migrate dev --name descricao_da_mudanca
+npm run migration -- --name descricao_da_mudanca
 ```
 
 E isso é justamente o ponto: mudança de estrutura de banco **deve** ter uma etapa deliberada. Antes ela acontecia sozinha, em silêncio, direto na produção.
