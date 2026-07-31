@@ -52,8 +52,13 @@ As migrations **não funcionam** pelo endereço pooled — é uma limitação co
 7. Clique em **Add New** e preencha:
    - **Key:** `DIRECT_URL`
    - **Value:** a string direta que você acabou de copiar
-   - **Environments:** marque **os três** (Production, Preview, Development)
-   - ✅ **Ative o toggle "Sensitive"** antes de salvar (mesma prática das outras chaves)
+   - **Environments:** marque **Production** e **Preview**
+   - ✅ **Ative o toggle "Sensitive"** antes de salvar
+
+   > ℹ️ A Vercel **não permite** marcar uma variável como *Sensitive* e, ao mesmo
+   > tempo, habilitá-la em *Development* — são opções mutuamente exclusivas.
+   > Isso é esperado e não é problema: o build de produção usa o ambiente
+   > *Production*, que é o que importa aqui.
 8. Salve.
 
 > ✅ **Confira antes de seguir:** você deve ter agora **4** variáveis na Vercel — `DATABASE_URL`, `DIRECT_URL`, `JWT_SECRET`, `ENCRYPTION_KEY`.
@@ -96,47 +101,62 @@ npm install
 
 Demora 1 a 2 minutos. É normal aparecerem avisos amarelos (`warn`) — só se preocupe com `error` em vermelho.
 
-### 2.4 — Conectar-se à Vercel para buscar as senhas
+### 2.4 — Criar o arquivo `.env` dentro do Codespace
 
-Aqui está a parte elegante: em vez de você copiar e colar senhas manualmente (arriscado e sujeito a erro de digitação), vamos **baixá-las direto da Vercel**.
+O Codespace precisa saber o endereço do banco. Vamos preencher isso à mão.
 
-```bash
-npm install -g vercel
+> 💡 **Por que não baixar as variáveis da Vercel automaticamente?**
+> Porque variáveis marcadas como **Sensitive** são *write-only*: a Vercel as
+> entrega ao build, mas **nunca as devolve** para leitura — nem para você, nem
+> para a CLI. Se você tentar `vercel env pull`, o arquivo vem com o texto
+> literal `[SENSITIVE]` no lugar do valor, e o Prisma responde com o erro
+> `P1013: The provided database string is invalid`.
+> Esse comportamento é proposital e é uma boa coisa: significa que suas chaves
+> não podem ser extraídas do painel por ninguém.
+
+1. No explorador de arquivos do Codespace (ícone de pastas, canto superior
+   esquerdo), clique com o botão direito na área vazia → **New File**.
+2. Nomeie exatamente **`.env`** (com o ponto na frente).
+3. Cole o conteúdo abaixo, substituindo as duas primeiras linhas pelas strings
+   que você copiou do Neon na Parte 1:
+
+```
+DATABASE_URL="cole_aqui_a_string_COM_pooler"
+DIRECT_URL="cole_aqui_a_string_SEM_pooler"
+JWT_SECRET="qualquer_texto_longo_serve_nesta_etapa_1234567890abcdefghij"
+ENCRYPTION_KEY="idem_outro_texto_longo_qualquer_para_esta_etapa_9876543210"
 ```
 
-```bash
-vercel login
-```
+4. Salve com `Ctrl+S` (ou `Cmd+S`).
 
-Isso mostra um link e um código. Clique no link, confirme na sua conta Vercel, e volte para a aba do Codespace. O terminal reconhece sozinho.
+> 🔑 **Sobre as duas últimas linhas:** nesta etapa você vai apenas **criar
+> tabelas vazias e usuários**. Nada será criptografado agora, então essas duas
+> chaves podem ser qualquer texto longo. As chaves **reais** permanecem só na
+> Vercel — que é onde devem ficar. Assim você não precisa trazer as credenciais
+> de produção para dentro do Codespace.
 
-```bash
-vercel link
-```
-
-Ele fará algumas perguntas:
-- *"Set up ... ?"* → responda **`y`** (sim)
-- *"Which scope?"* → escolha sua conta (setas ↑↓ e Enter)
-- *"Link to existing project?"* → **`y`** (sim)
-- *"What's the name of your existing project?"* → digite o nome do projeto na Vercel
-
-### 2.5 — Baixar as variáveis de ambiente
+### 2.5 — Conferir se o arquivo ficou correto
 
 ```bash
-vercel env pull .env --environment=production
+grep -E "^(DATABASE_URL|DIRECT_URL)" .env | sed -E 's|://[^@]*@|://USUARIO:SENHA@|'
 ```
 
-Isso cria um arquivo `.env` dentro do Codespace com as 4 variáveis — incluindo a `DIRECT_URL` que você cadastrou na Parte 1.
+Este comando **mascara usuário e senha**, então a saída pode ser compartilhada
+sem risco. Você deve ver duas linhas começando com `postgresql://` — uma
+**com** `-pooler` e outra **sem**:
 
-> 🔒 **Este arquivo contém as credenciais reais do banco.** Ele fica **só** dentro desta máquina temporária. O `.gitignore` garante que ele nunca seja enviado ao GitHub. Por isso o passo 2.9 (apagar o Codespace) importa.
-
-Confira se deu certo:
-
-```bash
-grep -c DIRECT_URL .env
+```
+DATABASE_URL="postgresql://USUARIO:SENHA@ep-nome-123456-pooler.sa-east-1.aws.neon.tech/neondb?sslmode=require"
+DIRECT_URL="postgresql://USUARIO:SENHA@ep-nome-123456.sa-east-1.aws.neon.tech/neondb?sslmode=require"
 ```
 
-Deve responder **`1`**. Se responder `0`, a variável não foi cadastrada na Vercel — volte à Parte 1.
+**Três detalhes que costumam derrubar esta etapa:**
+
+- Se você copiou a string pela aba **psql** do Neon, ela vem como
+  `psql 'postgresql://...'`. Apague o `psql ` e as aspas simples — o valor deve
+  começar em `postgresql://`.
+- Aspas duplas: **uma de cada lado**, nunca duas (`""postgresql://..."" `dá erro).
+- A `DIRECT_URL` é idêntica à `DATABASE_URL`, apenas **sem** o `-pooler`.
 
 ### 2.6 — Criar a migration
 
@@ -175,7 +195,10 @@ A Vercel detecta o novo commit e republica sozinha em alguns minutos.
 
 ### 2.9 — Apagar o Codespace ⚠️ *não pule esta etapa*
 
-O Codespace tem, dentro dele, um arquivo `.env` com as credenciais reais do seu banco. Ele é seu e privado, mas não há motivo para mantê-lo existindo depois que o trabalho acabou — é superfície de risco desnecessária.
+O Codespace tem, dentro dele, um arquivo `.env` com a string de conexão do
+banco. Seguindo o passo 2.4, ele **não** contém as chaves de criptografia de
+produção — mas ainda dá acesso ao banco. Ele é seu e privado, e não há motivo
+para mantê-lo existindo depois que o trabalho acabou.
 
 1. Volte para https://github.com/codespaces
 2. Localize o Codespace deste projeto
@@ -203,7 +226,8 @@ O Codespace tem, dentro dele, um arquivo `.env` com as credenciais reais do seu 
 
 | Mensagem no log | O que significa | Solução |
 |---|---|---|
-| `Environment variable not found: DIRECT_URL` | A variável não foi cadastrada na Vercel | Refaça a Parte 1 e marque os 3 ambientes |
+| `P1013: The provided database string is invalid` | O `.env` está com `[SENSITIVE]` ou vazio no lugar da string | Refaça o passo 2.4 preenchendo à mão. Variáveis *Sensitive* da Vercel não podem ser baixadas pela CLI |
+| `Environment variable not found: DIRECT_URL` | A variável não existe no `.env` (Codespace) ou na Vercel (build) | No Codespace, passo 2.4. Na Vercel, Parte 1 |
 | `prepared statement ... already exists` ou erro de *advisory lock* | Migration tentando rodar pela conexão **pooled** | A `DIRECT_URL` está com `-pooler` no endereço. Use a versão **sem** `-pooler` |
 | `No migration found in prisma/migrations` | A pasta não foi enviada ao GitHub | Refaça o passo 2.8 |
 | `Can't reach database server` | Banco pausado ou string errada | Abra o console do Neon (isso "acorda" o banco) e confira a string |

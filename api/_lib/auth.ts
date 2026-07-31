@@ -51,7 +51,16 @@ export interface SessionPayload {
 }
 
 export function createSessionToken(payload: SessionPayload): string {
-  return jwt.sign(payload, getJwtSecret(), { expiresIn: IDLE_TIMEOUT_SECONDS });
+  // Reconstrução explícita: garante que só os 4 campos do nosso contrato vão
+  // para o token, mesmo que quem chamou tenha passado por engano um payload
+  // que já veio de jwt.verify() (e portanto já tem iat/exp/nbf).
+  const clean: SessionPayload = {
+    userId: payload.userId,
+    role: payload.role,
+    name: payload.name,
+    loginAt: payload.loginAt,
+  };
+  return jwt.sign(clean, getJwtSecret(), { expiresIn: IDLE_TIMEOUT_SECONDS });
 }
 
 function parseCookies(header: string | undefined): Record<string, string> {
@@ -96,13 +105,34 @@ export function getSession(req: Request): SessionPayload | null {
   const token = cookies[COOKIE_NAME];
   if (!token) return null;
   try {
-    const payload = jwt.verify(token, getJwtSecret()) as SessionPayload;
+    const decoded = jwt.verify(token, getJwtSecret()) as SessionPayload & {
+      iat?: number;
+      exp?: number;
+      nbf?: number;
+    };
     const nowSeconds = Math.floor(Date.now() / 1000);
     // Teto absoluto: nem o uso contínuo estende a sessão para sempre.
-    if (!payload.loginAt || nowSeconds - payload.loginAt > ABSOLUTE_TIMEOUT_SECONDS) {
+    if (!decoded.loginAt || nowSeconds - decoded.loginAt > ABSOLUTE_TIMEOUT_SECONDS) {
       return null;
     }
-    return payload;
+    /**
+     * BUG CORRIGIDO: `jwt.verify` devolve o payload ACRESCIDO de `iat`/`exp`
+     * (campos que o próprio JWT usa por baixo dos panos). Se esse objeto
+     * "sujo" fosse repassado para `jwt.sign(..., { expiresIn })` em
+     * `refreshSessionCookie`, a biblioteca rejeitava com "the payload already
+     * has an exp property" — e como TODA requisição autenticada renova a
+     * sessão (sessão deslizante), isso derrubava o sistema inteiro.
+     *
+     * A correção é reconstruir um payload limpo, só com os campos que nos
+     * pertencem, descartando `iat`/`exp`/`nbf`.
+     */
+    const session: SessionPayload = {
+      userId: decoded.userId,
+      role: decoded.role,
+      name: decoded.name,
+      loginAt: decoded.loginAt,
+    };
+    return session;
   } catch {
     return null;
   }
