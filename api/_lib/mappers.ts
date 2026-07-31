@@ -1,7 +1,20 @@
 import { decryptField } from "./crypto.js";
+import { toDateOnly, toISO } from "./datetime.js";
 
-const dateOnly = (d: Date | null | undefined) => (d ? d.toISOString().split("T")[0] : "");
-const isoDate = (d: Date | null | undefined) => (d ? d.toISOString() : "");
+/**
+ * Conversão banco -> JSON da API.
+ *
+ * Duas responsabilidades de compliance vivem aqui:
+ *  1. Decriptação (os campos "*Enc" só voltam a ser legíveis nesta camada).
+ *  2. MINIMIZAÇÃO: cada mapper só devolve o que aquele solicitante pode ver.
+ *     Se um dado não deve chegar ao navegador, ele não pode ser incluído aqui —
+ *     esconder no front-end não é controle de acesso, é maquiagem (qualquer
+ *     pessoa lê a resposta da API pelo "Inspecionar elemento").
+ *
+ * Datas: `toDateOnly`/`toISO` respeitam America/Sao_Paulo. O antigo
+ * `toISOString().split("T")[0]` deslocava o dia civil e era a origem do bug
+ * de datas dos atestados.
+ */
 
 export function mapUser(u: any) {
   if (!u) return null;
@@ -13,29 +26,62 @@ export function mapUser(u: any) {
     crp: u.crp ?? undefined,
     title: u.title ?? undefined,
     institutionalLink: u.institutionalLink ?? undefined,
-    birthDate: u.birthDate ? dateOnly(u.birthDate) : undefined,
+    birthDate: u.birthDate ? toDateOnly(u.birthDate) : undefined,
     matricula: u.matricula ?? undefined,
     color: u.color ?? undefined,
     capacity: u.capacity ?? undefined,
-    // password NUNCA é enviado ao front-end.
+    mustChangePassword: u.mustChangePassword ?? false,
+    // passwordHash NUNCA é enviado ao front-end.
+  };
+}
+
+/**
+ * Versão reduzida do usuário para listas visíveis a todos os perfis.
+ * Não expõe e-mail, matrícula nem data de nascimento de colegas — dado
+ * pessoal de funcionário também é protegido pela LGPD.
+ */
+export function mapUserPublic(u: any) {
+  if (!u) return null;
+  return {
+    id: u.id,
+    name: u.name,
+    role: u.role,
+    crp: u.crp ?? undefined,
+    title: u.title ?? undefined,
+    color: u.color ?? undefined,
+    capacity: u.capacity ?? undefined,
   };
 }
 
 export function mapHistoryLog(h: any) {
   return {
     id: h.id,
-    date: isoDate(h.date),
+    date: toISO(h.date),
     actorId: h.actorId,
     actorName: h.actor?.name ?? "",
+    actorRole: h.actor?.role ?? undefined,
     action: h.action,
+    category: h.category ?? "CADASTRO",
+    // `details` nunca contém conteúdo clínico (ver api/_lib/audit.ts).
     details: h.detailsEnc ? decryptField(h.detailsEnc) : undefined,
+  };
+}
+
+export function mapAccessLog(a: any) {
+  return {
+    id: a.id,
+    at: toISO(a.at),
+    actorId: a.actorId,
+    actorName: a.actor?.name ?? "",
+    action: a.action,
+    resource: a.resource,
   };
 }
 
 export function mapInstrumentApplicationEntry(e: any) {
   return {
     id: e.id,
-    date: isoDate(e.date),
+    date: toISO(e.date),
     description: decryptField(e.descriptionEnc),
   };
 }
@@ -46,13 +92,22 @@ export function mapInstrumentApplication(a: any) {
     instrumentId: a.instrumentId,
     psychoId: a.psychoId,
     purpose: decryptField(a.purposeEnc),
-    createdAt: isoDate(a.createdAt),
-    entries: (a.entries ?? []).map(mapInstrumentApplicationEntry).sort((x: any, y: any) => new Date(x.date).getTime() - new Date(y.date).getTime()),
+    createdAt: toISO(a.createdAt),
+    entries: (a.entries ?? [])
+      .map(mapInstrumentApplicationEntry)
+      .sort((x: any, y: any) => new Date(x.date).getTime() - new Date(y.date).getTime()),
   };
 }
 
-export function mapClient(c: any) {
-  return {
+export interface ClientMapOptions {
+  /** Histórico só vai junto quando explicitamente pedido (rota dedicada). */
+  includeHistory?: boolean;
+  /** Instrumentos aplicados são dado clínico: só para quem tem acesso clínico. */
+  includeClinical?: boolean;
+}
+
+export function mapClient(c: any, options: ClientMapOptions = {}) {
+  const base = {
     id: c.id,
     protocolNumber: c.protocolNumber,
     signedAgreement: c.signedAgreement,
@@ -65,12 +120,11 @@ export function mapClient(c: any) {
     dependencyType: c.dependencyType ?? undefined,
     dependencySponsor: c.dependencySponsor ?? undefined,
     tags: c.tags ?? [],
-    dateIncluded: dateOnly(c.dateIncluded),
+    dateIncluded: toDateOnly(c.dateIncluded),
     status: c.status,
     priority: c.priority ?? undefined,
     assignedPsicoId: c.assignedPsicoId ?? undefined,
     assignedPsicoName: c.assignedPsico?.name ?? undefined,
-    history: (c.history ?? []).map(mapHistoryLog),
     maxSessions: c.maxSessions,
     completedSessions: c.completedSessions,
     emergencyContactName: decryptField(c.emergencyContactNameEnc),
@@ -85,41 +139,58 @@ export function mapClient(c: any) {
     whatsappAuthorized: c.whatsappAuthorized ?? undefined,
     previouslyAttended: c.previouslyAttended ?? undefined,
     contactMadeByName: c.contactMadeByName ?? undefined,
-    contactDate: c.contactDate ? isoDate(c.contactDate) : undefined,
+    contactDate: c.contactDate ? toISO(c.contactDate) : undefined,
     contactStatus: c.contactStatus ?? undefined,
     defaultRoom: c.defaultRoom ?? undefined,
     defaultTime: c.defaultTime ?? undefined,
-    instruments: (c.instrumentApps ?? []).map(mapInstrumentApplication),
-  };
+    finalizedAt: c.finalizedAt ? toISO(c.finalizedAt) : undefined,
+    retentionUntil: c.retentionUntil ? toDateOnly(c.retentionUntil) : undefined,
+  } as Record<string, any>;
+
+  if (options.includeHistory) {
+    base.history = (c.history ?? []).map(mapHistoryLog);
+  }
+  if (options.includeClinical) {
+    base.instruments = (c.instrumentApps ?? []).map(mapInstrumentApplication);
+  }
+  return base;
 }
 
 export function mapRecordVersion(v: any) {
   return {
     id: v.id,
     oldContent: decryptField(v.oldContentEnc),
-    savedAt: isoDate(v.savedAt),
+    savedAt: toISO(v.savedAt),
   };
 }
 
 export function mapSession(s: any, viewerId?: string) {
+  const isAuthor = !!viewerId && viewerId === s.psicoId;
   return {
     id: s.id,
     clientId: s.clientId,
     psicoId: s.psicoId,
-    date: isoDate(s.date),
+    date: toISO(s.date),
     notes: decryptField(s.notesEnc),
     isDraft: s.isDraft,
     status: s.status ?? undefined,
     groupId: s.groupId ?? undefined,
     appointmentId: s.appointmentId ?? undefined,
     attendance: s.attendance ?? undefined,
-    createdAt: isoDate(s.createdAt),
-    updatedAt: isoDate(s.updatedAt),
+    createdAt: toISO(s.createdAt),
+    updatedAt: toISO(s.updatedAt),
     versions: (s.versions ?? []).map(mapRecordVersion),
-    // Anotação privada: só é decriptada/enviada se quem está pedindo for o
-    // próprio profissional responsável pela sessão — nem Supervisor, nem
-    // Admin recebem esse campo para outra pessoa.
-    privateNotes: viewerId && viewerId === s.psicoId ? decryptField(s.privateNotesEnc) : undefined,
+    /**
+     * ANOTAÇÃO PRIVADA DO TERAPEUTA.
+     * Só é decriptada e enviada para o próprio autor da sessão. Supervisor e
+     * Administrativo NÃO recebem o campo — nem vazio, nem cifrado: ele
+     * simplesmente não existe na resposta.
+     *
+     * `canWritePrivateNotes` diz à interface se deve exibir o editor, para que
+     * o front-end não precise reimplementar essa regra por conta própria.
+     */
+    privateNotes: isAuthor ? decryptField(s.privateNotesEnc) : undefined,
+    canWritePrivateNotes: isAuthor,
   };
 }
 
@@ -131,7 +202,7 @@ export function mapGroup(g: any) {
     methodology: g.methodology ?? undefined,
     frequency: g.frequency ?? undefined,
     criteria: g.criteria ?? undefined,
-    createdAt: isoDate(g.createdAt),
+    createdAt: toISO(g.createdAt),
     isActive: g.isActive,
     psychologistId: g.psychologistId,
     memberIds: (g.members ?? []).map((m: any) => m.clientId),
@@ -142,10 +213,10 @@ export function mapGroupRecord(r: any) {
   return {
     id: r.id,
     content: decryptField(r.contentEnc),
-    sessionDate: dateOnly(r.sessionDate),
+    sessionDate: toDateOnly(r.sessionDate),
     groupId: r.groupId,
     authorId: r.authorId,
-    createdAt: isoDate(r.createdAt),
+    createdAt: toISO(r.createdAt),
     isDraft: r.isDraft,
     attendance: (r.attendances ?? []).map((a: any) => ({ clientId: a.clientId, status: a.status })),
   };
@@ -158,7 +229,7 @@ export function mapAppointment(a: any) {
     groupId: a.groupId ?? undefined,
     psicoId: a.psicoId,
     roomId: a.roomId,
-    date: dateOnly(a.date),
+    date: toDateOnly(a.date),
     time: a.time,
     endTime: a.endTime ?? undefined,
     seriesId: a.seriesId ?? undefined,
@@ -180,7 +251,7 @@ export function mapInstrumentLog(l: any) {
   return {
     id: l.id,
     instrumentId: l.instrumentId,
-    date: isoDate(l.date),
+    date: toISO(l.date),
     type: l.type,
     amount: l.amount,
     newCount: l.newCount,
@@ -204,8 +275,9 @@ export function mapClinicalDocument(d: any) {
     data,
     authorId: d.authorId,
     authorName: d.author?.name ?? "",
-    createdAt: isoDate(d.createdAt),
-    updatedAt: isoDate(d.updatedAt),
+    authorCrp: d.author?.crp ?? undefined,
+    createdAt: toISO(d.createdAt),
+    updatedAt: toISO(d.updatedAt),
   };
 }
 
@@ -216,6 +288,34 @@ export function mapGroupClientNote(n: any) {
     groupId: n.groupId,
     authorId: n.authorId,
     content: decryptField(n.contentEnc),
-    updatedAt: isoDate(n.updatedAt),
+    updatedAt: toISO(n.updatedAt),
+  };
+}
+
+/**
+ * Sessão SEM conteúdo clínico.
+ *
+ * Usado para o perfil Administrativo, que precisa de contagens (sessões
+ * realizadas, pendências, ocupação da agenda) mas NÃO pode ler a evolução.
+ * O texto do prontuário nem sequer é decriptado neste caminho.
+ */
+export function mapSessionMeta(s: any) {
+  return {
+    id: s.id,
+    clientId: s.clientId,
+    psicoId: s.psicoId,
+    date: toISO(s.date),
+    notes: "", // conteúdo clínico jamais sai daqui
+    isDraft: s.isDraft,
+    status: s.status ?? undefined,
+    groupId: s.groupId ?? undefined,
+    appointmentId: s.appointmentId ?? undefined,
+    attendance: s.attendance ?? undefined,
+    createdAt: toISO(s.createdAt),
+    updatedAt: toISO(s.updatedAt),
+    versions: [],
+    privateNotes: undefined,
+    canWritePrivateNotes: false,
+    clinicalContentHidden: true,
   };
 }

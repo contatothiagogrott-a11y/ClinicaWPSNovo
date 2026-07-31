@@ -1,13 +1,19 @@
 /**
  * Seed inicial do banco (Neon/Postgres).
- * Roda com: npx prisma db seed
+ * Roda MANUALMENTE com: npm run db:seed
  *
- * Cria usuários de demonstração com SENHA HASHEADA (nunca em texto puro),
- * itens de configuração padrão e alguns pacientes/grupos de exemplo já
- * com os campos sensíveis criptografados.
+ * MUDANÇA IMPORTANTE: o seed NÃO roda mais automaticamente no build.
+ * Antes ele era executado a cada deploy, o que é arriscado num sistema com
+ * dado real (reintrodução de usuários de demonstração, efeitos colaterais em
+ * produção). Agora é um ato deliberado, executado uma única vez.
  *
- * IMPORTANTE: troque as senhas de demonstração assim que possível em produção
- * (tela "Gerenciar Usuários" já permite isso).
+ * Todos os usuários criados aqui nascem com `mustChangePassword: true`: a
+ * senha inicial é provisória e o sistema obriga a troca no primeiro acesso.
+ * Isso preserva o não-repúdio da assinatura do prontuário — a credencial
+ * precisa ser conhecida apenas pelo titular.
+ *
+ * Pacientes de exemplo só são criados se SEED_DEMO_DATA=true. Em instalação
+ * real, jamais se semeia paciente fictício num banco de prontuários.
  */
 import { PrismaClient } from "@prisma/client";
 import bcrypt from "bcryptjs";
@@ -32,7 +38,10 @@ async function main() {
       email: "roberto@clinica.com",
       passwordHash: await hash(demoPassword),
       role: "SUPERVISOR",
-      crp: "00/00000",
+      // CRP obrigatório: o Supervisor também atende e assina documentos
+      // (Resolução CFP nº 06/2019 — nome e CRP no documento psicológico).
+      crp: "12/00001",
+      mustChangePassword: true,
     },
   });
 
@@ -44,6 +53,9 @@ async function main() {
       email: "ana@clinica.com",
       passwordHash: await hash(demoPassword),
       role: "ADMIN",
+      // Perfil Administrativo não é profissional de psicologia: sem CRP e
+      // sem acesso a conteúdo clínico.
+      mustChangePassword: true,
     },
   });
 
@@ -55,8 +67,9 @@ async function main() {
       email: "carolina@clinica.com",
       passwordHash: await hash(demoPassword),
       role: "PSICO",
-      crp: "01/11111",
+      crp: "12/11111",
       color: "#3b82f6",
+      mustChangePassword: true,
     },
   });
 
@@ -68,12 +81,16 @@ async function main() {
       email: "joao@clinica.com",
       passwordHash: await hash(demoPassword),
       role: "PSICO",
-      crp: "02/22222",
+      crp: "12/22222",
       color: "#f97316",
+      mustChangePassword: true,
     },
   });
 
-  console.log(`Seed: senha de demonstração para todos os usuários acima: "${demoPassword}"`);
+  console.log(
+    `Seed: senha PROVISÓRIA para os usuários acima: "${demoPassword}". ` +
+      "O sistema exigirá a troca no primeiro acesso de cada um."
+  );
 
   console.log("Seed: criando itens de configuração...");
   const configSeed: Array<{ type: "AFFILIATION" | "ALLOCATION" | "ROOM" | "TAG"; names: string[] }> = [
@@ -93,9 +110,14 @@ async function main() {
 
   const rooms = await prisma.configItem.findMany({ where: { type: "ROOM" } });
 
-  console.log("Seed: criando pacientes de exemplo...");
+  // Pacientes fictícios só entram quando explicitamente solicitado.
+  const seedDemoData = process.env.SEED_DEMO_DATA === "true";
   const existingClients = await prisma.client.count();
-  if (existingClients === 0) {
+  if (!seedDemoData) {
+    console.log("Seed: pacientes de exemplo NÃO criados (defina SEED_DEMO_DATA=true para criá-los).");
+  }
+  if (seedDemoData && existingClients === 0) {
+    console.log("Seed: criando pacientes de exemplo...");
     const client1 = await prisma.client.create({
       data: {
         protocolNumber: "PROTO-0001",
@@ -161,7 +183,7 @@ async function main() {
     void ana;
     void client2;
     void group;
-  } else {
+  } else if (seedDemoData) {
     console.log("Seed: já existem pacientes no banco, pulando criação de exemplos.");
   }
 

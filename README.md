@@ -1,4 +1,9 @@
-# Clínica Inteligente — Guia de Instalação e Deploy (100% pelo navegador)
+# Setor de Psicologia ALESC - PWA — Guia de Instalação e Deploy
+
+> 📌 **Já tem o sistema publicado e quer aplicar as alterações mais recentes?**
+> Vá direto para **[COMO-PUBLICAR.md](./COMO-PUBLICAR.md)** — passo a passo detalhado.
+>
+> Este README descreve a instalação do zero.
 
 ## O que mudou em relação ao app original do AI Studio
 
@@ -15,9 +20,17 @@ Isso foi reescrito para ter:
 - **Controle de acesso por papel**: Psicólogo só vê os próprios pacientes;
   Supervisor e Administrativo veem tudo.
 - O antigo seletor "Modo Teste — Alternar Usuário" foi **removido**.
-- **As tabelas do banco e os dados de demonstração são criados automaticamente
-  a cada vez que a Vercel publica o site** — você não precisa instalar Node.js
-  nem rodar nenhum comando no seu computador.
+- **Trilha de auditoria** de tudo que muda num caso, com sigilo do conteúdo
+  clínico preservado (o log registra que houve registro, nunca o que foi escrito).
+- **Estrutura do banco versionada** (migrations): cada mudança fica registrada
+  com data e histórico, em vez de ser aplicada em silêncio na produção.
+
+> ⚠️ **Mudança importante em relação à versão anterior deste guia:** a estrutura
+> do banco não é mais criada automaticamente a cada publicação. O primeiro
+> arquivo de migration precisa ser gerado **uma única vez** — o que exige um
+> terminal (usamos o GitHub Codespaces, que roda no navegador, sem instalar
+> nada). Depois disso, tudo volta a ser feito pelo navegador.
+> Ver **[COMO-PUBLICAR.md](./COMO-PUBLICAR.md)**.
 
 > **Sobre segurança**: nenhum sistema garante 100% de proteção contra qualquer
 > acesso indevido. O que este setup faz é aplicar as práticas corretas (senha
@@ -40,6 +53,14 @@ Isso foi reescrito para ter:
    postgresql://usuario:senha@ep-xxxx-pooler.sa-east-1.aws.neon.tech/neondb?sslmode=require
    ```
    Guarde — é o valor de `DATABASE_URL`.
+4. **Agora desmarque a opção "Connection pooling"** e copie a segunda string,
+   idêntica mas **sem** o `-pooler` no endereço. Guarde — é o valor de
+   `DIRECT_URL`.
+
+   > Por que duas? A aplicação usa a versão *pooled* (necessária em ambiente
+   > serverless, onde cada requisição abre uma conexão). Já as migrations do
+   > Prisma **não funcionam** através do pooler do Neon, que é um PgBouncer em
+   > modo transação — elas precisam da conexão direta.
 
 ---
 
@@ -106,7 +127,8 @@ Guarde as duas em um lugar seguro:
    painel depois de salvo (só dá pra trocar o valor depois, nunca mais
    visualizar o que já foi salvo), mesmo para quem tiver acesso ao seu projeto
    na Vercel:
-   - `DATABASE_URL` → a string do Neon (Passo 1)
+   - `DATABASE_URL` → a string **pooled** do Neon (Passo 1)
+   - `DIRECT_URL` → a string **direta** do Neon, sem `-pooler` (Passo 1)
    - `JWT_SECRET` → a primeira senha longa gerada (Passo 2)
    - `ENCRYPTION_KEY` → a segunda senha longa gerada (Passo 2)
 
@@ -124,29 +146,40 @@ Guarde as duas em um lugar seguro:
 
 Durante o build, a Vercel automaticamente:
 - instala as dependências,
-- cria todas as tabelas no banco do Neon (`prisma db push`),
-- cria 4 usuários de demonstração e 2 pacientes de exemplo (`prisma db seed`),
+- **aplica as migrations pendentes** no banco do Neon (`prisma migrate deploy`),
 - e então publica o site.
 
-Ao final, você recebe uma URL (`https://seu-projeto.vercel.app`). Abra e
-faça login com um destes e-mails, senha `TrocarSenha!123`:
+> O build **não cria mais usuários nem pacientes de exemplo**. Semear um banco
+> de prontuários a cada publicação é arriscado: reintroduz usuários de teste e
+> produz efeitos colaterais em produção. A criação dos usuários iniciais é um
+> ato deliberado, feito uma vez (ver COMO-PUBLICAR.md, passo 2.7).
+
+Ao final, você recebe uma URL (`https://seu-projeto.vercel.app`). Faça login
+com um dos usuários criados pelo seed:
 
 | E-mail | Papel |
 |---|---|
-| `roberto@clinica.com` | Supervisor |
-| `ana@clinica.com` | Administrativo |
+| `roberto@clinica.com` | Supervisor (com CRP — atende pacientes) |
+| `ana@clinica.com` | Administrativo (sem acesso a conteúdo clínico) |
 | `carolina@clinica.com` | Psicólogo |
 | `joao@clinica.com` | Psicólogo |
+
+A senha provisória é exibida no terminal ao rodar o seed. **No primeiro acesso,
+o sistema obriga cada pessoa a trocá-la** antes de liberar qualquer tela.
 
 ---
 
 ## Passo 5 — Depois do primeiro acesso (faça isso já no primeiro dia)
 
-1. Entre com o usuário Supervisor → **Gerenciar Usuários** → troque a senha de
-   cada usuário de demonstração (ou apague os que não for usar e crie os reais
-   da sua equipe — ao criar um usuário novo, o sistema mostra uma senha
-   temporária na tela, anote e repasse com segurança).
-2. Cada pessoa pode trocar a própria senha em **Minhas Configurações**.
+1. Entre com o usuário Supervisor → **Gerenciar Usuários** → apague os usuários
+   de demonstração que não for usar e crie os reais da sua equipe. Ao criar um
+   usuário, o sistema gera uma senha provisória e a exibe **uma única vez** —
+   anote e repasse por um canal seguro.
+2. Cada pessoa troca a própria senha em **Minhas Configurações** (é exigida a
+   senha atual). Enquanto a senha provisória não for trocada, o usuário não
+   consegue registrar nada no sistema.
+3. **Supervisores precisam ter CRP cadastrado** — o perfil passou a atender
+   pacientes e a assinar documentos.
 3. Apague os 2 pacientes de exemplo (`PROTO-0001` / `PROTO-0002`), se não
    precisar deles.
 
@@ -159,13 +192,11 @@ arquivo direto na tela do GitHub (abra o arquivo → ícone de lápis "Edit" →
 salve com "Commit changes"). A Vercel detecta o novo commit e publica sozinha
 de novo, alguns minutos depois — sem precisar reinstalar nada.
 
-> **Atenção**: como a criação/atualização das tabelas do banco (`prisma db push`)
-> roda automaticamente a cada publicação, uma mudança de estrutura malfeita no
-> arquivo `prisma/schema.prisma` pode alterar o banco de produção direto, sem
-> uma etapa extra de revisão. Isso é o preço de não precisar de terminal — em um
-> time maior/mais formal, o ideal seria ter uma etapa de revisão antes de aplicar
-> mudanças de banco em produção. Para o tamanho deste projeto, o trade-off é
-> razoável, mas evite mexer em `prisma/schema.prisma` sem necessidade.
+> **Atenção**: mudanças no arquivo `prisma/schema.prisma` (estrutura do banco)
+> são a **única** exceção a esse fluxo. Elas exigem gerar uma migration nova
+> pelo Codespaces — ver a seção final de **[COMO-PUBLICAR.md](./COMO-PUBLICAR.md)**.
+> Editar o schema direto no GitHub **não** altera o banco: o build vai apenas
+> aplicar as migrations já existentes, e o schema editado ficará dessincronizado.
 
 ---
 
@@ -189,10 +220,12 @@ seguem práticas reconhecidas de mercado para dados sensíveis de saúde.
 **Um ponto que vale reforçar com a equipe**: o cookie de sessão é protegido contra
 scripts maliciosos na página (`httpOnly`), mas se alguém tiver acesso físico (ou
 remoto) a um computador com a sessão de outra pessoa ainda aberta, essa pessoa
-consegue ver esse cookie pelo F12 e, em teoria, usá-lo enquanto ele for válido
-(expira em 12h, ou antes disso ao clicar em "Sair"). Isso vale para praticamente
-qualquer site com login do mundo — o hábito simples que neutraliza isso é sempre
-clicar em **Sair** ao terminar de usar, especialmente em computador compartilhado.
+consegue ver esse cookie pelo F12 e, em teoria, usá-lo enquanto ele for válido.
+A janela agora é bem menor: a sessão expira após **30 minutos de inatividade**
+(com teto de 12h por login), e a tela se desconecta sozinha, avisando antes.
+Isso vale para praticamente qualquer site com login do mundo — o hábito que
+neutraliza o risco continua sendo clicar em **Sair** ao terminar, especialmente
+em computador compartilhado.
 
 ---
 
@@ -200,6 +233,14 @@ clicar em **Sair** ao terminar de usar, especialmente em computador compartilhad
 
 Isso **não é necessário** para publicar (o Passo 4 já cuida de tudo), mas se
 quiser testar localmente: instale o [Node.js](https://nodejs.org) (LTS), copie
-`.env.example` para `.env` preenchendo os mesmos valores, rode `npm install`,
-depois `npx prisma db push` e `npm run db:seed` uma vez, e por fim, em dois
+`.env.example` para `.env` preenchendo os valores, rode `npm install`,
+depois `npx prisma migrate dev` e `npm run db:seed` uma vez, e por fim, em dois
 terminais: `npm run dev:api` e `npm run dev`.
+
+Comandos úteis de verificação:
+
+```bash
+npm run typecheck      # checagem de tipos do front-end
+npm run typecheck:api  # checagem de tipos da API
+npm run verificar      # testes das regras de data, guarda documental e sigilo do log
+```

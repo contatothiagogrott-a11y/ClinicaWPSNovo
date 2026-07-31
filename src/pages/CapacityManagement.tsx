@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useStore } from "../contexts/StoreContext";
 import { Users, AlertCircle, CheckCircle2, TrendingUp, Settings } from "lucide-react";
 import { cn } from "../lib/utils";
+import { clinicians } from "../lib/roles";
 
 export default function CapacityManagement() {
   const { users, clients, updateUser } = useStore();
@@ -14,7 +15,8 @@ export default function CapacityManagement() {
      baixa: 0
   });
 
-  const psicos = users.filter(u => u.role === "PSICO");
+  // O Supervisor atende e entra no quadro clínico com a mesma capacidade padrão.
+  const psicos = clinicians(users);
 
   // Calculate current loads
   const getPsychoLoad = (psicoId: string) => {

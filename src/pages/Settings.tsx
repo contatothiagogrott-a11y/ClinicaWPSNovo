@@ -72,22 +72,16 @@ function ConfigManager({ title, type, items, onAdd, onUpdate }: {
 }
 
 export default function Settings() {
-  const { config, addConfigItem, updateConfigItem, users, addUser, currentUser } = useStore();
-  
-  const [newUser, setNewUser] = useState({ name: "", email: "", role: "PSICO" as any, title: "", crp: "" });
+  const { config, addConfigItem, updateConfigItem, currentUser } = useStore();
 
   if (currentUser?.role !== "SUPERVISOR") {
     return <div className="p-8 text-center text-red-500 font-bold">Acesso restrito ao Supervisor.</div>;
   }
 
-  const handleAddUser = (e: React.FormEvent) => {
-    e.preventDefault();
-    if(!newUser.name || !newUser.email) return;
-    const tempPassword = `Bemvindo${Math.floor(1000 + Math.random() * 9000)}!`;
-    addUser({ ...newUser, password: tempPassword });
-    setNewUser({ name: "", email: "", role: "PSICO", title: "", crp: "" });
-    alert(`Usuário adicionado com sucesso! Senha temporária: ${tempPassword}`);
-  };
+  // O cadastro de equipe vive somente em "Gerenciar Usuários" (/users), onde a
+  // senha provisória gerada pelo servidor é exibida uma única vez. Havia aqui
+  // uma segunda porta de criação de usuário que inventava a senha no navegador
+  // (`Bemvindo1234!`) e a mostrava num alert() — removida.
 
   return (
     <div className="max-w-4xl space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">

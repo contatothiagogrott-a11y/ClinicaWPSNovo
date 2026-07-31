@@ -1,6 +1,7 @@
 import { Client, ClinicalDocument, User } from "../types";
 import { ANAMNESE_RISCO_SECTIONS } from "./clinicalFormSchemas";
 import { letterheadHeader, letterheadFooter, letterheadBackground, PAGE_MARGINS, signatureBlock, renderSectionsToPdfContent, documentStyles } from "./pdfGenerator";
+import { formatDateBR } from "./datetime";
 
 const SUPERVISOR_NAME = "Rafael da Costa Faria";
 const SUPERVISOR_ROLE = "Psicólogo Supervisor";
@@ -41,7 +42,7 @@ export function buildAnamneseRiscoDocDefinition(client: Client, doc: ClinicalDoc
       {
         margin: [0, 16, 0, 0],
         columns: [
-          { text: [{ text: "Data: ", bold: true }, new Date(doc.createdAt).toLocaleDateString("pt-BR")] },
+          { text: [{ text: "Data: ", bold: true }, formatDateBR(doc.createdAt)] },
         ],
       },
       signatureBlock({

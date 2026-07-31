@@ -11,9 +11,11 @@ export interface User {
   capacity?: UserCapacity;
   id: string;
   name: string;
-  email: string;
-  password?: string;
+  /** Só vem preenchido para o próprio usuário logado (minimização de dados). */
+  email?: string;
   role: Role;
+  /** Senha provisória pendente de troca no primeiro acesso. */
+  mustChangePassword?: boolean;
   crp?: string;
   title?: string;
   institutionalLink?: string;
@@ -31,13 +33,37 @@ export type ClientStatus =
 
 export type Priority = "BAIXA" | "MEDIA" | "ALTA" | "URGENTE";
 
+export type HistoryCategory =
+  | "CADASTRO"
+  | "CLINICO"
+  | "DOCUMENTO"
+  | "TRANSFERENCIA"
+  | "FLUXO"
+  | "SISTEMA";
+
 export interface HistoryLog {
   id: string;
   date: string;
   actorId: string;
   actorName: string;
+  actorRole?: Role;
   action: string;
+  category: HistoryCategory;
+  /**
+   * Metainformação apenas. Para entradas da categoria CLINICO este campo é
+   * sempre vazio — conteúdo de prontuário nunca entra na trilha de auditoria.
+   */
   details?: string;
+}
+
+/** Trilha de leitura/exportação de dado sensível. */
+export interface AccessLogEntry {
+  id: string;
+  at: string;
+  actorId: string;
+  actorName: string;
+  action: string;
+  resource: string;
 }
 
 export interface InstrumentApplicationEntry {
@@ -73,7 +99,14 @@ export interface Client {
   priority?: Priority;
   assignedPsicoId?: string;
   assignedPsicoName?: string;
-  history: HistoryLog[];
+  /**
+   * Carregado sob demanda em /api/clients/:id/history (não vem no bootstrap).
+   * Visível apenas para Supervisor e Administrativo.
+   */
+  history?: HistoryLog[];
+  /** Encerramento do caso e prazo de guarda do registro documental. */
+  finalizedAt?: string;
+  retentionUntil?: string;
   maxSessions: number;
   completedSessions: number;
   emergencyContactName: string;
@@ -110,7 +143,12 @@ export interface SessionRecord {
   psicoId: string;
   date: string;
   notes: string;
+  /** Só chega ao navegador do próprio autor da sessão. */
   privateNotes?: string;
+  /** A API informa se este usuário pode escrever a anotação privada. */
+  canWritePrivateNotes?: boolean;
+  /** true quando o conteúdo clínico foi omitido pela API (perfil sem acesso). */
+  clinicalContentHidden?: boolean;
   isDraft: boolean;
   status?: "PENDENTE" | "CONCLUIDO"; // For auto-generated group individual records
   groupId?: string; // If this individual record was generated from a group session

@@ -9,6 +9,7 @@ import { cn } from "../lib/utils";
 import { format, addDays, subDays, differenceInCalendarDays, startOfWeek, endOfWeek, isWithinInterval, parseISO } from "date-fns";
 import { ptBR } from "date-fns/locale";
 import { PieChart, Pie, Cell, ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip } from "recharts";
+import { clinicians, isClinician } from "../lib/roles";
 
 const STATUS_COLORS: Record<string, string> = {
   FILA_ESPERA: "#f59e0b",
@@ -40,7 +41,8 @@ export default function Dashboard() {
 
   if (!currentUser) return null;
 
-  const isPsico = currentUser.role === "PSICO";
+  // O Supervisor tem painel de gestão E carteira de pacientes.
+  const isPsico = isClinician(currentUser);
   const isGestor = currentUser.role === "SUPERVISOR" || currentUser.role === "ADMIN";
 
   // ---------------------------------------------------------------------
@@ -81,7 +83,8 @@ export default function Dashboard() {
   // ---------------------------------------------------------------------
   // Somente Gestor: ocupação da equipe, fila com tempo de espera, status pizza
   // ---------------------------------------------------------------------
-  const psicos = users.filter(u => u.role === "PSICO");
+  // Inclui o Supervisor, que também é responsável por pacientes.
+  const psicos = clinicians(users);
   const teamOccupancy = psicos.map(p => {
     const active = clients.filter(c => c.assignedPsicoId === p.id && c.status === "EM_ATENDIMENTO").length;
     const cap = p.capacity as { urgente?: number; alta?: number; media?: number; baixa?: number } | undefined;

@@ -1,12 +1,12 @@
 {
-  "name": "clinica-inteligente",
+  "name": "setor-psicologia-alesc-pwa",
   "private": true,
   "version": "1.0.0",
   "type": "module",
   "scripts": {
     "dev": "vite --port=3000 --host=0.0.0.0",
     "dev:api": "tsx watch api/dev-server.ts",
-    "build": "prisma generate && prisma db push --accept-data-loss --skip-generate && prisma db seed && vite build",
+    "build": "prisma generate && prisma migrate deploy && vite build",
     "postinstall": "prisma generate",
     "preview": "vite preview",
     "clean": "rm -rf dist",
@@ -14,7 +14,11 @@
     "db:migrate": "prisma migrate deploy",
     "db:migrate:dev": "prisma migrate dev",
     "db:seed": "prisma db seed",
-    "db:studio": "prisma studio"
+    "db:studio": "prisma studio",
+    "db:baseline": "prisma migrate dev --name init",
+    "verificar": "TZ=UTC tsx scripts/verificacao.ts && TZ=America/Sao_Paulo tsx scripts/verificacao.ts",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "typecheck:api": "tsc --noEmit -p tsconfig.api.json"
   },
   "prisma": {
     "seed": "tsx prisma/seed.ts"
@@ -56,5 +60,6 @@
     "tsx": "^4.21.0",
     "typescript": "~5.8.2",
     "vite": "^6.2.3"
-  }
+  },
+  "description": "Setor de Psicologia ALESC - PWA"
 }

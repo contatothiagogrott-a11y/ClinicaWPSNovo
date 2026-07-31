@@ -1,0 +1,41 @@
+{
+  "name": "Setor de Psicologia ALESC - PWA",
+  "short_name": "Psicologia ALESC",
+  "description": "Sistema de gestão do Setor de Psicologia da ALESC: agenda, prontuário eletrônico criptografado, documentos psicológicos e trilha de auditoria conforme LGPD e CFP.",
+  "id": "/",
+  "start_url": "/dashboard",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#f8fafc",
+  "theme_color": "#312e81",
+  "lang": "pt-BR",
+  "dir": "ltr",
+  "categories": ["medical", "productivity"],
+  "prefer_related_applications": false,
+  "icons": [
+    {
+      "src": "/icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icons/maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ],
+  "shortcuts": [
+    { "name": "Agenda", "url": "/agenda" },
+    { "name": "Em atendimento", "url": "/active" },
+    { "name": "Fila de espera", "url": "/waitlist" }
+  ]
+}

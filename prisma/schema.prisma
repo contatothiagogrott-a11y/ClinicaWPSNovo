@@ -9,7 +9,19 @@ generator client {
 
 datasource db {
   provider = "postgresql"
-  url      = env("DATABASE_URL")
+
+  // Conexão POOLED (com "-pooler" no endereço). É a que a aplicação usa no
+  // dia a dia: em ambiente serverless, cada requisição pode abrir uma conexão
+  // nova, e o pooler do Neon evita estourar o limite do banco.
+  url = env("DATABASE_URL")
+
+  // Conexão DIRETA (sem "-pooler"). Usada SOMENTE para migrations.
+  //
+  // Por que isso é obrigatório: o pooler do Neon é um PgBouncer em modo
+  // transação, que não suporta os comandos de bloqueio e as sessões longas de
+  // que o Prisma Migrate precisa. Rodar `prisma migrate deploy` pela conexão
+  // pooled falha — inclusive durante o build na Vercel.
+  directUrl = env("DIRECT_URL")
 }
 
 enum Role {
@@ -46,6 +58,18 @@ enum ClinicalDocumentType {
   ATESTADO
 }
 
+// Categoria da entrada de auditoria. Serve para separar, na leitura, o que é
+// movimentação de cadastro do que é metainformação clínica (que nunca contém
+// conteúdo de prontuário — ver api/_lib/audit.ts).
+enum HistoryCategory {
+  CADASTRO
+  CLINICO
+  DOCUMENTO
+  TRANSFERENCIA
+  FLUXO
+  SISTEMA
+}
+
 enum InstrumentLogType {
   CONSUMPTION
   ADJUSTMENT
@@ -67,6 +91,13 @@ model User {
   color             String?
   capacity          Json?
 
+  // Toda senha criada por terceiro (Supervisor/Admin) nasce provisória: o
+  // titular é obrigado a trocá-la no primeiro acesso. LGPD Art. 46 + boa
+  // prática de não-repúdio: a credencial precisa ser conhecida só pelo titular,
+  // caso contrário a assinatura do prontuário perde valor probatório.
+  mustChangePassword   Boolean   @default(true)
+  lastPasswordChangeAt DateTime?
+
   createdAt         DateTime  @default(now())
   updatedAt         DateTime  @updatedAt
 
@@ -78,6 +109,7 @@ model User {
   instrumentLogs    InstrumentLog[]
   instrumentApps    InstrumentApplication[]
   historyLogs       HistoryLog[]
+  accessLogs        AccessLog[]
   clinicalDocuments ClinicalDocument[]
   groupClientNotes  GroupClientNote[]
 }
@@ -124,10 +156,19 @@ model Client {
   contactDate            DateTime?
   contactStatus          String?
 
+  // TEMPORALIDADE DE GUARDA (Resolução CFP nº 001/2009, art. 4º, §1º):
+  // o registro documental deve ser guardado por no mínimo 5 anos após o
+  // encerramento. Para crianças e adolescentes o prazo é maior — a regra de
+  // cálculo fica em api/_lib/retention.ts e é gravada aqui no encerramento.
+  finalizedAt            DateTime?
+  retentionUntil         DateTime?
+  disposedAt             DateTime?
+
   createdAt              DateTime      @default(now())
   updatedAt              DateTime      @updatedAt
 
   history                HistoryLog[]
+  accessLogs             AccessLog[]
   sessions               SessionRecord[]
   appointments           Appointment[]
   instrumentApps         InstrumentApplication[]
@@ -140,17 +181,45 @@ model Client {
   @@index([assignedPsicoId])
 }
 
+// Trilha de auditoria de ESCRITA. É append-only por decisão de projeto: não
+// existe rota de UPDATE nem de DELETE para este modelo em lugar nenhum da API,
+// nem para o Supervisor. Um log editável não serve como prova.
+//
+// SIGILO: `detailsEnc` nunca recebe conteúdo clínico. Para prontuários grava-se
+// apenas a metainformação ("Prontuário registrado por X em <data>").
 model HistoryLog {
-  id          String   @id @default(uuid())
+  id          String          @id @default(uuid())
   clientId    String
-  client      Client   @relation(fields: [clientId], references: [id], onDelete: Cascade)
-  date        DateTime @default(now())
+  client      Client          @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  date        DateTime        @default(now())
   actorId     String
-  actor       User     @relation(fields: [actorId], references: [id])
+  actor       User            @relation(fields: [actorId], references: [id])
   action      String
+  category    HistoryCategory @default(CADASTRO)
   detailsEnc  String?
 
   @@index([clientId])
+  @@index([category])
+}
+
+// Trilha de auditoria de LEITURA/EXPORTAÇÃO. Responde "quem viu o quê e
+// quando" — exigência prática de prestação de contas da LGPD (Art. 6º, X) e
+// do controle de acesso ao prontuário previsto na Resolução CFP nº 001/2009.
+// O IP é guardado apenas como hash com sal (nunca em claro).
+model AccessLog {
+  id        String   @id @default(uuid())
+  at        DateTime @default(now())
+  actorId   String
+  actor     User     @relation(fields: [actorId], references: [id])
+  clientId  String?
+  client    Client?  @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  action    String
+  resource  String
+  ipHash    String?
+
+  @@index([clientId])
+  @@index([actorId])
+  @@index([at])
 }
 
 model SessionRecord {

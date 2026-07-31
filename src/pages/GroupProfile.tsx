@@ -5,6 +5,7 @@ import { ChevronLeft, Edit2, Users, FileText, Save, UserPlus, X, Calendar } from
 import { cn } from "../lib/utils";
 import { format } from "date-fns";
 import { ptBR } from "date-fns/locale";
+import { clinicians } from "../lib/roles";
 
 export default function GroupProfile() {
   const { id } = useParams();
@@ -27,7 +28,7 @@ export default function GroupProfile() {
 
   if (!group || !editData) return <div className="p-8 text-center">Grupo não encontrado.</div>;
 
-  const psicos = users.filter(u => u.role === "PSICO");
+  const psicos = clinicians(users);
   const psychologist = users.find(u => u.id === group.psychologistId);
 
   const handleSaveInfo = () => {

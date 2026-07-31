@@ -2,6 +2,7 @@ import React, { useState } from "react";
 import { useStore } from "../contexts/StoreContext";
 import { X } from "lucide-react";
 import { cn } from "../lib/utils";
+import { clinicians } from "../lib/roles";
 
 export default function CreateGroupModal({ open, onClose }: { open: boolean; onClose: () => void }) {
   const { addGroup, users } = useStore();
@@ -17,7 +18,8 @@ export default function CreateGroupModal({ open, onClose }: { open: boolean; onC
 
   if (!open) return null;
 
-  const psicos = users.filter(u => u.role === "PSICO");
+  // Supervisor também conduz grupos: usa-se `clinicians`, não role === "PSICO".
+  const psicos = clinicians(users);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();

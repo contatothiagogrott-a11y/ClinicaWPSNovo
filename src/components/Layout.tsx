@@ -1,8 +1,12 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import { Outlet, NavLink, useLocation, Navigate } from "react-router-dom";
 import { LayoutDashboard, Users, UserCog, Settings, Calendar, Clock, LogOut, ChevronDown, ChevronRight, ShieldAlert, Bell, X } from "lucide-react";
 import { useStore } from "../contexts/StoreContext";
 import { cn } from "../lib/utils";
+import { APP_SHORT_NAME } from "../lib/branding";
+import { roleLabel } from "../lib/roles";
+import ChangePasswordGate from "./ChangePasswordGate";
+import { useIdleLogout } from "../hooks/useIdleLogout";
 
 interface ApptNotification {
   id: string;
@@ -13,12 +17,24 @@ interface ApptNotification {
 }
 
 export default function Layout() {
-  const { currentUser, setCurrentUser, users, appointments, clients } = useStore();
+  const { currentUser, setCurrentUser, users, appointments, clients, mustChangePassword } = useStore();
   const location = useLocation();
+  const [idleWarning, setIdleWarning] = useState(0);
   const [isGestaoOpen, setIsGestaoOpen] = useState(true);
   const [isAtendimentosOpen, setIsAtendimentosOpen] = useState(true);
   const [notifications, setNotifications] = useState<ApptNotification[]>([]);
   const [dismissedNotifications, setDismissedNotifications] = useState<Set<string>>(new Set());
+
+  /**
+   * Encerramento automático por inatividade.
+   * Complementa a expiração da sessão no servidor: impede que o prontuário
+   * fique visível numa tela esquecida aberta (sigilo profissional).
+   */
+  useIdleLogout(
+    !!currentUser,
+    useCallback(() => setCurrentUser(null), [setCurrentUser]),
+    useCallback((seconds: number) => setIdleWarning(seconds), [])
+  );
 
   useEffect(() => {
     if (!currentUser) return;
@@ -73,6 +89,9 @@ export default function Layout() {
 
   if (!currentUser) return <Navigate to="/login" replace />;
 
+  // Senha provisória pendente: nada do sistema é exibido até a troca.
+  if (mustChangePassword) return <ChangePasswordGate />;
+
   const atendimentosItems = [
     { name: "Agenda", path: "/agenda" },
     { name: "Fila de Espera", path: "/waitlist" },
@@ -85,7 +104,7 @@ export default function Layout() {
     <div className="flex h-screen w-full bg-slate-50 flex-col md:flex-row font-sans">
       {/* Barra superior com usuário logado e logout real (sessão via cookie httpOnly) */}
       <div className="fixed top-0 inset-x-0 z-[60] bg-indigo-900 text-white text-xs px-4 py-1 flex items-center justify-between shadow-md">
-        <span className="font-medium">{currentUser.name} - {currentUser.role === "PSICO" ? "Psicólogo" : currentUser.role === "SUPERVISOR" ? "Supervisor" : "Administrativo"}</span>
+        <span className="font-medium">{currentUser.name} - {roleLabel(currentUser.role)}</span>
         <div className="flex items-center gap-2">
           <button
             onClick={() => setCurrentUser(null)}
@@ -97,6 +116,19 @@ export default function Layout() {
         </div>
       </div>
 
+      {/* Aviso de sessão prestes a expirar por inatividade */}
+      {idleWarning > 0 && (
+        <div className="fixed top-7 inset-x-0 z-[70] bg-amber-500 text-amber-950 text-xs px-4 py-2 flex items-center justify-between shadow-md">
+          <span className="font-bold">
+            Sua sessão será encerrada por inatividade em instantes. Mexa o mouse ou pressione uma
+            tecla para continuar.
+          </span>
+          <button onClick={() => setIdleWarning(0)} className="font-bold underline">
+            Continuar
+          </button>
+        </div>
+      )}
+
       {/* Sidebar for Desktop */}
       <aside className="hidden md:flex flex-col w-64 border-r border-gray-200 bg-white pt-10 z-50">
         <div className="p-6">
@@ -104,8 +136,8 @@ export default function Layout() {
             <span className="bg-blue-600 text-white p-2 rounded-xl shadow-sm text-sm">
               <Users size={20} />
             </span>
-            <h1 className="text-2xl font-bold text-gray-900">
-               Clínica Admin
+            <h1 className="text-xl font-bold text-gray-900 leading-tight">
+               {APP_SHORT_NAME}
             </h1>
            </NavLink>
         </div>
@@ -262,7 +294,7 @@ export default function Layout() {
             </div>
             <div className="flex-1 min-w-0">
               <p className="text-sm font-bold text-gray-900 truncate">{currentUser.name}</p>
-              <p className="text-[10px] font-bold text-gray-400 tracking-wider uppercase truncate">{currentUser.role === "PSICO" ? "Psicólogo" : currentUser.role === "SUPERVISOR" ? "Supervisor" : "Administrativo"}</p>
+              <p className="text-[10px] font-bold text-gray-400 tracking-wider uppercase truncate">{roleLabel(currentUser.role)}</p>
             </div>
           </div>
         </div>

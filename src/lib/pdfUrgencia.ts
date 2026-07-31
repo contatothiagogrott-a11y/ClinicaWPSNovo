@@ -1,6 +1,7 @@
 import { Client, ClinicalDocument, User } from "../types";
 import { URGENCIA_SECTIONS } from "./clinicalFormSchemas";
 import { letterheadHeader, letterheadFooter, letterheadBackground, PAGE_MARGINS, signatureBlock, renderSectionsToPdfContent, documentStyles } from "./pdfGenerator";
+import { formatDateBR } from "./datetime";
 
 export function buildUrgenciaDocDefinition(client: Client, doc: ClinicalDocument, author?: User) {
   const data = doc.data || {};
@@ -32,7 +33,7 @@ export function buildUrgenciaDocDefinition(client: Client, doc: ClinicalDocument
 
       {
         margin: [0, 16, 0, 0],
-        text: [{ text: "Registrado em: ", bold: true }, new Date(doc.createdAt).toLocaleDateString("pt-BR")],
+        text: [{ text: "Registrado em: ", bold: true }, formatDateBR(doc.createdAt)],
       },
       signatureBlock({
         leftLabel: `Profissional Responsável${author ? ` — ${author.name}${author.crp ? ` — CRP ${author.crp}` : ""}` : ""}`,

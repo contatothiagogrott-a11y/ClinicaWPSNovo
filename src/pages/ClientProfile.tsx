@@ -1,10 +1,9 @@
-import React, { useState } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { useStore } from "../contexts/StoreContext";
-import { ChevronLeft, Edit2, Clock, FileText, UserCircle, Save, Phone, X, FileDown, ShieldAlert, Siren, Download, Lock, Users2 } from "lucide-react";
+import { ChevronLeft, Edit2, Clock, FileText, UserCircle, Save, Phone, X, FileDown, ShieldAlert, Siren, Download, Lock, Users2, ArrowRightLeft, ShieldCheck, History } from "lucide-react";
 import { cn } from "../lib/utils";
-import { format } from "date-fns";
-import { ptBR } from "date-fns/locale";
+
 import ClinicalDocumentForm from "../components/ClinicalDocumentForm";
 import { ANAMNESE_RISCO_SECTIONS, URGENCIA_SECTIONS } from "../lib/clinicalFormSchemas";
 import { buildAnamneseRiscoDocDefinition } from "../lib/pdfAnamneseRisco";
@@ -17,11 +16,32 @@ import type { Client, Group, GroupClientNote, SessionRecord, User } from "../typ
 import { getSessionTier } from "../lib/sessionTiers";
 
 import { TagInput } from "../components/TagInput";
+import TransferPsicoModal from "../components/TransferPsicoModal";
+import { canTransferClient, canViewAuditTrail, roleLabel } from "../lib/roles";
+import { formatDateBR, formatDateTimeBR, formatTimelineBR } from "../lib/datetime";
+import type { HistoryLog } from "../types";
+
+/** Rótulos dos documentos psicológicos, usados na trilha de auditoria. */
+const DOCUMENT_LABELS: Record<string, string> = {
+  ANAMNESE_RISCO: "Anamnese e avaliação de risco",
+  URGENCIA: "Atendimento de urgência",
+  ATESTADO: "Atestado psicológico",
+};
+
+/** Aparência de cada categoria da trilha de auditoria. */
+const HISTORY_CATEGORY_STYLE: Record<string, { label: string; dot: string; ring: string; badge: string }> = {
+  CADASTRO:      { label: "Cadastro",      dot: "bg-blue-400",    ring: "ring-blue-50",    badge: "bg-blue-100 text-blue-700" },
+  CLINICO:       { label: "Clínico",       dot: "bg-emerald-400", ring: "ring-emerald-50", badge: "bg-emerald-100 text-emerald-700" },
+  DOCUMENTO:     { label: "Documento",     dot: "bg-purple-400",  ring: "ring-purple-50",  badge: "bg-purple-100 text-purple-700" },
+  TRANSFERENCIA: { label: "Transferência", dot: "bg-amber-400",   ring: "ring-amber-50",   badge: "bg-amber-100 text-amber-700" },
+  FLUXO:         { label: "Fluxo",         dot: "bg-sky-400",     ring: "ring-sky-50",     badge: "bg-sky-100 text-sky-700" },
+  SISTEMA:       { label: "Sistema",       dot: "bg-gray-400",    ring: "ring-gray-100",   badge: "bg-gray-100 text-gray-600" },
+};
 
 export default function ClientProfile() {
   const { id } = useParams();
   const navigate = useNavigate();
-  const { clients, users, sessions, currentUser, updateClient, reactivateClient, config, addConfigItem, clinicalDocuments, addClinicalDocument, updateClinicalDocument, instruments, groups, groupClientNotes, saveGroupClientNote } = useStore();
+  const { clients, users, sessions, currentUser, updateClient, reactivateClient, config, addConfigItem, clinicalDocuments, addClinicalDocument, updateClinicalDocument, instruments, groups, groupClientNotes, saveGroupClientNote, clinicalClientIds, fetchClientHistory, registerClientAccess, registerDocumentExport } = useStore();
   const client = clients.find(c => c.id === id);
 
   const [activeTab, setActiveTab] = useState<"INFO" | "PRONTUARIO" | "HISTORICO" | "INSTRUMENTOS" | "DOCUMENTOS" | "GRUPO">("INFO");
@@ -31,6 +51,50 @@ export default function ClientProfile() {
   const [openAnamneseForm, setOpenAnamneseForm] = useState<{ id?: string; data?: any } | null>(null);
   const [openUrgenciaForm, setOpenUrgenciaForm] = useState<{ id?: string; data?: any } | null>(null);
   const [openAtestado, setOpenAtestado] = useState<{ id?: string } | null>(null);
+
+  // ATENÇÃO: todos os hooks precisam ficar ANTES de qualquer `return`
+  // condicional. Antes, dois `useState` viviam depois do "Paciente não
+  // encontrado", o que viola as Regras dos Hooks do React e provoca erro de
+  // ordem de hooks assim que o componente renderiza os dois caminhos.
+  const [showExportPrompt, setShowExportPrompt] = useState(false);
+  const [selectedTestIds, setSelectedTestIds] = useState<Set<string>>(new Set());
+  const [isTransferring, setIsTransferring] = useState(false);
+  const [history, setHistory] = useState<HistoryLog[] | null>(null);
+  const [historyError, setHistoryError] = useState("");
+
+  const clientId = client?.id;
+  const canSeeAudit = canViewAuditTrail(currentUser);
+
+  // Trilha de auditoria carregada sob demanda (não vem no bootstrap).
+  useEffect(() => {
+    if (activeTab !== "HISTORICO" || !clientId || !canSeeAudit) return;
+    let cancelled = false;
+    setHistoryError("");
+    fetchClientHistory(clientId)
+      .then((logs) => {
+        if (!cancelled) setHistory(logs);
+      })
+      .catch((err: any) => {
+        if (!cancelled) setHistoryError(err?.message || "Não foi possível carregar a trilha de auditoria.");
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [activeTab, clientId, canSeeAudit, fetchClientHistory]);
+
+  // Registra a abertura do prontuário na trilha de leitura de dado sensível.
+  useEffect(() => {
+    if (activeTab !== "PRONTUARIO" || !clientId) return;
+    registerClientAccess(clientId, "prontuario");
+  }, [activeTab, clientId, registerClientAccess]);
+
+  const exportWithAudit = useCallback(
+    (docDef: any, documentLabel: string) => {
+      if (clientId) registerDocumentExport(clientId, documentLabel);
+      openPdfInNewTab(docDef);
+    },
+    [clientId, registerDocumentExport]
+  );
 
   if (!client || !editData) return <div className="p-8 text-center">Paciente não encontrado.</div>;
 
@@ -43,13 +107,10 @@ export default function ClientProfile() {
   const myGroupsWithClient = groups.filter(g => g.psychologistId === currentUser?.id && g.memberIds.includes(client.id));
   const showGroupTab = myGroupsWithClient.length > 0;
 
-  const [showExportPrompt, setShowExportPrompt] = useState(false);
-  const [selectedTestIds, setSelectedTestIds] = useState<Set<string>>(new Set());
-
   const handleExportProntuario = () => {
     if (!client.instruments || client.instruments.length === 0) {
       const docDef = buildProntuarioDocDefinition(client, sessions, assignedPsico);
-      openPdfInNewTab(docDef);
+      exportWithAudit(docDef, "Prontuário completo");
       return;
     }
     setSelectedTestIds(new Set(client.instruments.map(a => a.id)));
@@ -59,12 +120,18 @@ export default function ClientProfile() {
   const finalizeExportProntuario = (includeTests: boolean) => {
     const includedApps = includeTests ? (client.instruments || []).filter(a => selectedTestIds.has(a.id)) : undefined;
     const docDef = buildProntuarioDocDefinition(client, sessions, assignedPsico, includedApps, instruments);
-    openPdfInNewTab(docDef);
+    exportWithAudit(docDef, "Prontuário completo");
     setShowExportPrompt(false);
   };
 
   const handleSaveInfo = () => {
-    updateClient(client.id, editData, "Informações do paciente atualizadas.");
+    // O responsável NÃO acompanha o formulário: a troca tem rota e regra
+    // próprias (TransferPsicoModal). Removemos o campo explicitamente para que
+    // nenhuma edição de ficha carregue uma transferência silenciosa junto.
+    const { assignedPsicoId, assignedPsicoName, history: _history, ...safeData } = editData as any;
+    void assignedPsicoId;
+    void assignedPsicoName;
+    updateClient(client.id, safeData, "Informações do paciente atualizadas.");
     setIsEditingInfo(false);
   };
 
@@ -73,10 +140,11 @@ export default function ClientProfile() {
      setIsReactivating(false);
   };
 
-  const psicos = users.filter(u => u.role === "PSICO");
 
   // Auth Checks
-  const canViewProntuario = currentUser?.role === "SUPERVISOR" || (currentUser?.role === "PSICO" && client.assignedPsicoId === currentUser?.id);
+  // A API é quem decide o acesso clínico (ver /api/bootstrap -> clinicalClientIds).
+  // Aqui apenas refletimos a decisão dela para não mostrar abas inúteis.
+  const canViewProntuario = clinicalClientIds.includes(client.id);
   const canEditStatus = (currentUser?.role === "SUPERVISOR" || currentUser?.role === "ADMIN" || currentUser?.role === "PSICO") && client.status !== "FINALIZADO";
 
   return (
@@ -110,7 +178,7 @@ export default function ClientProfile() {
         </button>
         <div>
           <h1 className="text-3xl font-bold text-gray-900">{client.fullName}</h1>
-          <p className="text-gray-500 text-sm font-medium mt-1">Matrícula: {client.registrationCode} <span className="mx-2">•</span> Prontuário n.º: <strong className="text-gray-800">{client.protocolNumber}</strong> <span className="mx-2">•</span> Entrou em: {format(new Date(client.dateIncluded), "dd/MM/yyyy")}</p>
+          <p className="text-gray-500 text-sm font-medium mt-1">Matrícula: {client.registrationCode} <span className="mx-2">•</span> Prontuário n.º: <strong className="text-gray-800">{client.protocolNumber}</strong> <span className="mx-2">•</span> Entrou em: {formatDateBR(client.dateIncluded)}</p>
           <div className="flex flex-wrap gap-2 mt-3">
             <span className={cn("text-xs px-2.5 py-1 rounded-md font-bold uppercase tracking-wider", client.signedAgreement ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-700")}>
               {client.signedAgreement ? "Termo de Compromisso Assinado ✓" : "Termo de Compromisso Pendente !"}
@@ -248,7 +316,7 @@ export default function ClientProfile() {
                     {isEditingInfo ? (
                       <input type="date" value={editData.dateIncluded ? editData.dateIncluded.split("T")[0] : ""} onChange={e => setEditData({...editData, dateIncluded: e.target.value})} className="w-full bg-white border border-gray-200 rounded-xl px-4 py-3 outline-none font-medium" />
                     ) : (
-                      <div className="bg-white px-4 py-3 rounded-xl border border-gray-100 font-medium">{client.dateIncluded ? format(new Date(client.dateIncluded), "dd/MM/yyyy") : "—"}</div>
+                      <div className="bg-white px-4 py-3 rounded-xl border border-gray-100 font-medium">{client.dateIncluded ? formatDateBR(client.dateIncluded) : "—"}</div>
                     )}
                   </div>
                   <div>
@@ -314,24 +382,40 @@ export default function ClientProfile() {
                   )}
                 </div>
 
+                {/*
+                  PROFISSIONAL RESPONSÁVEL — não é mais um campo do formulário.
+                  A troca deixou de ser "editar uma ficha" e passou a ser um ATO
+                  com autor, justificativa e trilha (item 4). Por isso saiu do
+                  fluxo de edição e virou ação própria, restrita a Supervisor e
+                  Administrativo. O bloqueio real está na API: mesmo forçando a
+                  chamada, o servidor responde 403.
+                */}
                 <div>
                   <label className="block text-xs font-semibold text-gray-500 mb-1 tracking-wider uppercase">Psicólogo Responsável</label>
-                  {isEditingInfo ? (
-                    <select 
-                      value={editData.assignedPsicoId || ""} 
-                      onChange={e => {
-                        const pid = e.target.value;
-                        const pname = psicos.find(p => p.id === pid)?.name;
-                        setEditData({...editData, assignedPsicoId: pid, assignedPsicoName: pname});
-                      }} 
-                      className="w-full bg-white border border-gray-200 rounded-xl px-4 py-3 outline-none font-medium"
-                    >
-                      <option value="">Não Atribuído</option>
-                      {psicos.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
-                    </select>
-                  ) : (
-                    <div className="bg-white px-4 py-3 rounded-xl border border-gray-100 font-medium">{client.assignedPsicoName || "Não Atribuído"}</div>
-                  )}
+                  <div className="bg-white px-4 py-3 rounded-xl border border-gray-100 font-medium flex items-center justify-between gap-3">
+                    <span className="truncate">
+                      {client.assignedPsicoName || "Não Atribuído"}
+                      {assignedPsico?.crp && (
+                        <span className="text-xs font-mono text-gray-400 ml-2">CRP {assignedPsico.crp}</span>
+                      )}
+                    </span>
+                    {canTransferClient(currentUser) ? (
+                      <button
+                        onClick={() => setIsTransferring(true)}
+                        className="shrink-0 text-blue-600 hover:bg-blue-50 px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-colors"
+                        title="Transferir o paciente para outro profissional"
+                      >
+                        <ArrowRightLeft size={14} /> Transferir
+                      </button>
+                    ) : (
+                      <span
+                        className="shrink-0 text-gray-400 flex items-center gap-1.5 text-[11px] font-semibold"
+                        title="Somente Supervisor e Administrativo podem transferir um paciente."
+                      >
+                        <Lock size={12} /> Restrito
+                      </span>
+                    )}
+                  </div>
                 </div>
 
                 <div>
@@ -520,7 +604,7 @@ export default function ClientProfile() {
                         {client.helpRequest && <p><strong>Como o setor pode ajudar:</strong> {client.helpRequest}</p>}
                         {client.medications && <p><strong>Medicamentos:</strong> {client.medications}</p>}
                         {(client.contactMadeByName || client.contactDate) && (
-                          <p><strong>Contato feito por:</strong> {client.contactMadeByName || "—"} {client.contactDate && `em ${format(new Date(client.contactDate), "dd/MM/yyyy")}`} {client.contactStatus && `— ${client.contactStatus}`}</p>
+                          <p><strong>Contato feito por:</strong> {client.contactMadeByName || "—"} {client.contactDate && `em ${formatDateBR(client.contactDate)}`} {client.contactStatus && `— ${client.contactStatus}`}</p>
                         )}
                         {client.contactObservations && <p><strong>Obs.:</strong> {client.contactObservations}</p>}
                       </div>
@@ -531,27 +615,90 @@ export default function ClientProfile() {
           </div>
         )}
 
-        {/* HISTORICO TAB */}
+        {/* HISTORICO TAB — trilha de auditoria (item 6) */}
         {activeTab === "HISTORICO" && (
            <div className="space-y-6 animate-in fade-in duration-300">
-             <h2 className="text-xl font-bold text-gray-900">Histórico de Fluxo</h2>
-             <div className="space-y-4">
-               {client.history.map(log => (
-                 <div key={log.id} className="flex gap-4">
-                   <div className="flex flex-col items-center">
-                     <div className="w-3 h-3 bg-blue-400 rounded-full mt-1.5 ring-4 ring-blue-50"></div>
-                     <div className="w-0.5 min-h-[40px] bg-gray-100 flex-1 my-1"></div>
-                   </div>
-                   <div className="pb-4">
-                     <p className="text-xs font-bold text-blue-600 mb-0.5">{format(new Date(log.date), "dd 'de' MMM 'às' HH:mm", { locale: ptBR })}</p>
-                     <p className="text-sm font-bold text-gray-900">{log.action}</p>
-                     {log.details && <p className="text-sm text-gray-500 mt-1">{log.details}</p>}
-                     <p className="text-xs text-gray-400 mt-2">Por: {log.actorName}</p>
-                   </div>
-                 </div>
-               ))}
-               {client.history.length === 0 && <p className="text-gray-500">Nenhum registro encontrado.</p>}
+             <div className="flex items-start justify-between gap-4 flex-wrap">
+               <div>
+                 <h2 className="text-xl font-bold text-gray-900 flex items-center gap-2">
+                   <History size={20} className="text-blue-600" /> Trilha de Auditoria
+                 </h2>
+                 <p className="text-sm text-gray-500 mt-1">
+                   Registro de quem alterou o quê e quando, neste caso.
+                 </p>
+               </div>
              </div>
+
+             {!canSeeAudit ? (
+               <div className="p-12 text-center bg-gray-50 rounded-3xl border border-dashed border-gray-200">
+                 <Lock className="mx-auto text-gray-300 mb-3" size={32} />
+                 <h3 className="text-lg font-bold text-gray-900 mb-2">Acesso Restrito</h3>
+                 <p className="text-gray-500 max-w-md mx-auto">
+                   A trilha de auditoria é visível apenas para os perfis Supervisor e
+                   Administrativo.
+                 </p>
+               </div>
+             ) : (
+               <>
+                 {/*
+                   REGRA DE SIGILO ABSOLUTO (item 6).
+                   As entradas de categoria CLINICO trazem apenas metainformação —
+                   "Prontuário registrado por Fulana (Psicólogo) em <data>". O texto
+                   da evolução nunca é gravado na trilha nem enviado a esta tela.
+                   Fundamento: Art. 9º do Código de Ética Profissional do Psicólogo e
+                   Resolução CFP nº 001/2009 (acesso restrito a quem atende).
+                 */}
+                 <div className="bg-blue-50 border border-blue-100 rounded-2xl p-4 flex gap-3">
+                   <ShieldCheck className="text-blue-600 shrink-0 mt-0.5" size={18} />
+                   <p className="text-xs text-blue-900 leading-relaxed">
+                     Registros clínicos aparecem aqui apenas como <strong>metainformação</strong>
+                     {" "}(autor, perfil e data). O conteúdo do prontuário não é gravado nesta
+                     trilha e não pode ser lido a partir dela.
+                   </p>
+                 </div>
+
+                 {historyError && (
+                   <p className="text-sm text-red-600 bg-red-50 border border-red-100 rounded-xl px-4 py-3">
+                     {historyError}
+                   </p>
+                 )}
+
+                 {history === null && !historyError && (
+                   <p className="text-gray-400 text-sm">Carregando trilha de auditoria...</p>
+                 )}
+
+                 {history && (
+                   <div className="space-y-4">
+                     {history.map(log => {
+                       const style = HISTORY_CATEGORY_STYLE[log.category] ?? HISTORY_CATEGORY_STYLE.CADASTRO;
+                       return (
+                         <div key={log.id} className="flex gap-4">
+                           <div className="flex flex-col items-center">
+                             <div className={cn("w-3 h-3 rounded-full mt-1.5 ring-4", style.dot, style.ring)}></div>
+                             <div className="w-0.5 min-h-[40px] bg-gray-100 flex-1 my-1"></div>
+                           </div>
+                           <div className="pb-4 min-w-0">
+                             <div className="flex items-center gap-2 flex-wrap mb-1">
+                               <p className="text-xs font-bold text-blue-600">{formatTimelineBR(log.date)}</p>
+                               <span className={cn("text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-md", style.badge)}>
+                                 {style.label}
+                               </span>
+                             </div>
+                             <p className="text-sm font-bold text-gray-900">{log.action}</p>
+                             {log.details && <p className="text-sm text-gray-500 mt-1">{log.details}</p>}
+                             <p className="text-xs text-gray-400 mt-2">
+                               Por: {log.actorName}
+                               {log.actorRole ? ` (${roleLabel(log.actorRole)})` : ""}
+                             </p>
+                           </div>
+                         </div>
+                       );
+                     })}
+                     {history.length === 0 && <p className="text-gray-500">Nenhum registro encontrado.</p>}
+                   </div>
+                 )}
+               </>
+             )}
            </div>
         )}
 
@@ -645,7 +792,9 @@ export default function ClientProfile() {
                               : doc.type === "URGENCIA"
                               ? buildUrgenciaDocDefinition(client, doc, author)
                               : buildAtestadoDocDefinition(client, doc, author);
-                            openPdfInNewTab(docDef);
+                            // Toda saída de documento psicológico deixa rastro
+                            // (quem exportou, o quê e quando) — LGPD Art. 6º, X.
+                            exportWithAudit(docDef, DOCUMENT_LABELS[doc.type] ?? "Documento psicológico");
                           }}
                           className="p-2 bg-white border border-gray-200 rounded-lg text-gray-600 hover:bg-gray-100 transition-colors"
                           title="Ver / Baixar PDF"
@@ -705,6 +854,15 @@ export default function ClientProfile() {
             </div>
           </div>
         </div>
+      )}
+
+      {/* Transferência de responsável (item 4) — Supervisor e Administrativo */}
+      {isTransferring && (
+        <TransferPsicoModal
+          open
+          onClose={() => setIsTransferring(false)}
+          client={client}
+        />
       )}
 
       {openAtestado && (
@@ -906,7 +1064,7 @@ function InstrumentosView({ clientId }: { clientId: string }) {
                            return (
                               <div key={entry.id} className="bg-gray-50 rounded-2xl p-4 border border-gray-100">
                                  <div className="flex items-center justify-between mb-2">
-                                    <span className="bg-blue-50 text-blue-700 text-xs font-bold px-3 py-1 rounded-full">{format(new Date(entry.date), "dd/MM/yyyy")}</span>
+                                    <span className="bg-blue-50 text-blue-700 text-xs font-bold px-3 py-1 rounded-full">{formatDateBR(entry.date)}</span>
                                     {canEditThis && !isEditingThis && (
                                        <button onClick={() => { setEditingEntry({ appId: app.id, entryId: entry.id }); setEditEntryText(entry.description || ""); }} className="text-gray-400 hover:text-blue-600 transition-colors p-1" title="Editar">
                                           <Edit2 size={14} />
@@ -979,12 +1137,22 @@ function ProntuarioView({ clientId }: { clientId: string }) {
 
    const handleSave = () => {
      if(!notes.trim()) return;
+     /**
+      * BUG CORRIGIDO (item 3): `privateNotesDraft` era preenchido na tela mas
+      * NUNCA era enviado ao servidor. Na prática, era impossível escrever uma
+      * anotação privada durante a redação do prontuário — só depois de salvo,
+      * o que fazia parecer que a funcionalidade não existia.
+      *
+      * A anotação privada é do TERAPEUTA, não do prontuário: fica em coluna
+      * separada, criptografada, e a API só a devolve para o próprio autor.
+      */
      addSession({
        id: writingSessionId || undefined,
        clientId,
        psicoId: currentUser!.id,
        date: writingSessionId ? sessions.find(s => s.id === writingSessionId)!.date : new Date().toISOString(),
        notes,
+       privateNotes: privateNotesDraft,
        isDraft: false,
        attendance
      } as any);
@@ -1061,16 +1229,31 @@ function ProntuarioView({ clientId }: { clientId: string }) {
              className="w-full bg-white border border-blue-100 rounded-2xl p-4 min-h-[200px] outline-none focus:ring-2 focus:ring-blue-500 resize-y mb-4 font-medium text-gray-700"
              placeholder="Escreva os apontamentos e evolução clínica da sessão..."
            />
-           {writingSessionId && sessions.find(s => s.id === writingSessionId)?.privateNotes && (
-             <div className="mb-4">
-               <label className="flex items-center gap-2 text-xs font-bold text-amber-700 uppercase tracking-wide mb-1.5">
-                 <Lock size={12} /> Sua Anotação Privada desta sessão (somente visualização)
-               </label>
-               <p className="w-full bg-amber-50 border border-amber-200 rounded-2xl p-4 font-medium text-gray-700 text-sm whitespace-pre-wrap">
-                 {sessions.find(s => s.id === writingSessionId)?.privateNotes}
-               </p>
-             </div>
-           )}
+           {/*
+             Anotação privada EDITÁVEL durante a redação do prontuário.
+             Antes era só leitura, e apenas se já existisse — por isso a opção
+             "sumia" para quem estava registrando uma sessão nova.
+
+             Sigilo: este texto não compõe o prontuário oficial, não sai em
+             nenhum PDF, não aparece para Supervisor nem para o Administrativo,
+             e não gera entrada na trilha de auditoria clínica.
+           */}
+           <div className="mb-4 bg-amber-50/70 border border-amber-200 rounded-2xl p-4">
+             <label className="flex items-center gap-2 text-xs font-bold text-amber-700 uppercase tracking-wide mb-1.5">
+               <Lock size={12} /> Anotação privada desta sessão — somente você vê
+             </label>
+             <textarea
+               value={privateNotesDraft}
+               onChange={e => setPrivateNotesDraft(e.target.value)}
+               rows={4}
+               className="w-full bg-white border border-amber-200 focus:border-amber-400 rounded-xl p-3 outline-none focus:ring-2 focus:ring-amber-300 resize-y font-medium text-gray-700 text-sm transition-colors"
+               placeholder="Impressões clínicas, hipóteses, lembretes pessoais... Não compõe o prontuário oficial e não sai em nenhum documento."
+             />
+             <p className="text-[11px] text-amber-700/80 mt-1.5">
+               Salva junto com o registro. Invisível para a supervisão, para o
+               administrativo e para qualquer outro profissional.
+             </p>
+           </div>
            <div className="flex items-center justify-end gap-3">
              <button onClick={() => { setIsWritingNew(false); setWritingSessionId(null); setNotes(""); setPrivateNotesDraft(""); setAttendance("PRESENTE"); }} className="px-5 py-2.5 text-gray-500 font-bold hover:bg-gray-100 rounded-xl transition-colors">Cancelar</button>
              <button onClick={handleSave} className="bg-blue-600 text-white px-6 py-2.5 rounded-xl font-bold hover:bg-blue-700 transition-colors">Salvar Registro</button>
@@ -1096,7 +1279,7 @@ function ProntuarioView({ clientId }: { clientId: string }) {
                  </div>
                  <div className="flex items-center gap-2">
                     <p className={cn("text-sm font-bold", s.isDraft ? "text-amber-600/60" : "text-gray-500")}>
-                       {format(new Date(s.date), "dd/MM/yyyy HH:mm")}
+                       {formatDateTimeBR(s.date)}
                     </p>
                     {(!s.isDraft && (s.psicoId === currentUser?.id || currentUser?.role === "SUPERVISOR") && !isEditingThis) && (
                        <button onClick={() => { setEditingRecordId(s.id); setEditNotes(s.notes); }} className="text-gray-400 hover:text-blue-600 transition-colors p-1" title="Editar Prontuário">
@@ -1117,7 +1300,7 @@ function ProntuarioView({ clientId }: { clientId: string }) {
                         )}
                      </div>
 
-                     {s.psicoId === currentUser?.id && (
+                     {(s.canWritePrivateNotes ?? s.psicoId === currentUser?.id) && (
                         <div className="mt-4 pt-4 border-t border-amber-200 border-dashed">
                            <div className="flex items-center justify-between mb-2">
                               <span className="flex items-center gap-1.5 text-xs font-bold text-amber-700 uppercase tracking-wide">
@@ -1172,7 +1355,7 @@ function ProntuarioView({ clientId }: { clientId: string }) {
                         <div className="text-gray-700 whitespace-pre-wrap">{s.notes}</div>
                      )}
 
-                     {!isEditingThis && s.psicoId === currentUser?.id && (
+                     {!isEditingThis && (s.canWritePrivateNotes ?? s.psicoId === currentUser?.id) && (
                         <div className="mt-4 pt-4 border-t border-amber-200 border-dashed">
                            <div className="flex items-center justify-between mb-2">
                               <span className="flex items-center gap-1.5 text-xs font-bold text-amber-700 uppercase tracking-wide">
@@ -1209,7 +1392,7 @@ function ProntuarioView({ clientId }: { clientId: string }) {
                      
                      {!isEditingThis && s.updatedAt && s.updatedAt !== s.createdAt && (
                         <div className="mt-4 pt-4 border-t border-gray-200 border-dashed flex items-center justify-between text-xs text-gray-400 font-medium">
-                           <span>Editado em: {format(new Date(s.updatedAt), "dd/MM/yyyy HH:mm")}</span>
+                           <span>Editado em: {formatDateTimeBR(s.updatedAt)}</span>
                            {s.versions && s.versions.length > 0 && (
                               <button onClick={() => setViewingVersionsId(s.id)} className="flex items-center gap-1 hover:text-blue-500 transition-colors">
                                  <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
@@ -1257,7 +1440,7 @@ function viewViewingVersionsModal(recordId: string | null, sessions: any[], onCl
                
                {session.versions.slice().reverse().map((v: any, i: number) => (
                   <div key={v.id} className="bg-gray-100 p-5 rounded-2xl border border-gray-200 relative">
-                     <span className="absolute top-0 right-4 -translate-y-1/2 bg-gray-200 text-gray-600 text-[10px] font-bold px-2 py-0.5 rounded-md uppercase tracking-wider">Versão de {format(new Date(v.savedAt), "dd/MM/yyyy HH:mm")}</span>
+                     <span className="absolute top-0 right-4 -translate-y-1/2 bg-gray-200 text-gray-600 text-[10px] font-bold px-2 py-0.5 rounded-md uppercase tracking-wider">Versão de {formatDateTimeBR(v.savedAt)}</span>
                      <p className="text-gray-500 whitespace-pre-wrap text-sm line-through decoration-gray-300">{v.oldContent}</p>
                   </div>
                ))}
@@ -1357,7 +1540,7 @@ function GroupTabView({ client, myGroupsWithClient, groupClientNotes, saveGroupC
           <div className="space-y-3">
             {clientSessions.map(s => (
               <div key={s.id} className="bg-gray-50 border border-gray-100 rounded-2xl p-4">
-                <p className="text-xs font-bold text-gray-500 mb-2">{format(new Date(s.date), "dd/MM/yyyy")}</p>
+                <p className="text-xs font-bold text-gray-500 mb-2">{formatDateBR(s.date)}</p>
                 <p className="text-sm text-gray-700 whitespace-pre-wrap">{s.notes || "(sem registro de evolução)"}</p>
               </div>
             ))}

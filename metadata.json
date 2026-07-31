@@ -1,4 +1,4 @@
 {
-  "name": "Clínica Inteligente",
-  "description": "Sistema de gestão para clínica psicológica com níveis de acesso estruturados, prontuários criptografados e banco de dados próprio (Neon/Postgres)."
+  "name": "Setor de Psicologia ALESC - PWA",
+  "description": "Sistema de gestão do Setor de Psicologia da Assembleia Legislativa do Estado de Santa Catarina: agenda, prontuário eletrônico criptografado, documentos psicológicos e trilha de auditoria conforme LGPD e CFP."
 }

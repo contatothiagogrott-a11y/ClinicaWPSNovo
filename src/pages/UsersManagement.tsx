@@ -3,6 +3,7 @@ import { useStore } from "../contexts/StoreContext";
 import { Users, Trash2, KeyRound, Edit2, X, Check } from "lucide-react";
 import { User, Role } from "../types";
 import { cn } from "../lib/utils";
+import { requiresCrp, roleLabel } from "../lib/roles";
 
 // Paleta de cores distintas para sugerir automaticamente a cada novo usuário
 // (evita que todo mundo fique com a mesma cor padrão na agenda até alguém
@@ -10,10 +11,16 @@ import { cn } from "../lib/utils";
 const COLOR_PALETTE = ["#3b82f6", "#f97316", "#10b981", "#8b5cf6", "#ec4899", "#eab308", "#14b8a6", "#ef4444", "#6366f1", "#84cc16"];
 
 export default function UsersManagement() {
-  const { currentUser, users, deleteUser, updateUser, addUser } = useStore();
-  
-  const [editingPasswordId, setEditingPasswordId] = useState<string | null>(null);
-  const [newPassword, setNewPassword] = useState("");
+  const { currentUser, users, deleteUser, addUser, updateUser, resetUserPassword } = useStore();
+
+  /**
+   * Senha provisória gerada pelo SERVIDOR e exibida uma única vez.
+   * Ninguém digita a senha de outra pessoa: isso destruiria o não-repúdio da
+   * assinatura do prontuário (não haveria como sustentar quem escreveu o quê).
+   */
+  const [temporaryCredential, setTemporaryCredential] = useState<{ name: string; password: string } | null>(null);
+  const [formError, setFormError] = useState("");
+  const [actionError, setActionError] = useState("");
 
   const [isAdding, setIsAdding] = useState(false);
   const [editingUser, setEditingUser] = useState<User | null>(null);
@@ -37,18 +44,38 @@ export default function UsersManagement() {
     return <div className="p-8 text-center font-bold text-red-600">Acesso negado.</div>;
   }
 
-  const handleUpdatePassword = (userId: string) => {
-    if (newPassword.trim()) {
-      updateUser(userId, { password: newPassword });
-      setEditingPasswordId(null);
-      setNewPassword("");
+  const handleResetPassword = async (user: User) => {
+    setActionError("");
+    try {
+      const password = await resetUserPassword(user.id);
+      setTemporaryCredential({ name: user.name, password });
+    } catch (err: any) {
+      setActionError(err?.message || "Não foi possível redefinir a senha.");
     }
   };
 
-  const handleCreateOrUpdateUser = () => {
+  const handleDeleteUser = async (user: User) => {
+    setActionError("");
+    try {
+      await deleteUser(user.id);
+    } catch (err: any) {
+      // Ex.: profissional ainda responsável por pacientes (bloqueado na API).
+      setActionError(err?.message || "Não foi possível remover o usuário.");
+    }
+  };
+
+  const handleCreateOrUpdateUser = async () => {
+     setFormError("");
      if (formData.name && formData.email) {
-        if (formData.role === "PSICO" && !formData.crp.trim()) {
-           alert("CRP é obrigatório para Psicólogos.");
+        // CRP obrigatório para Psicólogo E Supervisor: o Supervisor passou a
+        // atender e a assinar documentos, e todo documento psicológico exige
+        // nome e CRP do profissional (Resolução CFP nº 06/2019).
+        if (requiresCrp(formData.role) && !formData.crp.trim()) {
+           setFormError(`CRP é obrigatório para o perfil ${roleLabel(formData.role)}.`);
+           return;
+        }
+        if (requiresCrp(formData.role) && !/^\d{2}\/\d{4,6}$/.test(formData.crp.trim())) {
+           setFormError("Informe o CRP no formato 00/00000.");
            return;
         }
 
@@ -60,21 +87,22 @@ export default function UsersManagement() {
            institutionalLink: formData.institutionalLink,
            birthDate: formData.birthDate,
            matricula: formData.matricula,
-           crp: formData.role === "PSICO" ? formData.crp : "",
+           crp: requiresCrp(formData.role) ? formData.crp.trim() : "",
            color: formData.color,
         };
 
-        if (editingUser) {
-           updateUser(editingUser.id, userData);
-        } else {
-           const tempPassword = `Bemvindo${Math.floor(1000 + Math.random() * 9000)}!`;
-           addUser({
-              ...userData,
-              password: tempPassword
-           });
-           alert(`Usuário criado. Senha temporária (compartilhe com segurança e peça para trocar no primeiro acesso): ${tempPassword}`);
+        try {
+           if (editingUser) {
+              await updateUser(editingUser.id, userData as any);
+           } else {
+              const password = await addUser(userData as any);
+              setTemporaryCredential({ name: formData.name, password });
+           }
+        } catch (err: any) {
+           setFormError(err?.message || "Não foi possível salvar o usuário.");
+           return;
         }
-        
+
         setIsAdding(false);
         setEditingUser(null);
         resetForm();
@@ -123,6 +151,39 @@ export default function UsersManagement() {
          )}
       </div>
 
+      {actionError && (
+         <div className="bg-red-50 border border-red-200 text-red-700 text-sm font-semibold rounded-2xl px-5 py-4">
+            {actionError}
+         </div>
+      )}
+
+      {/* Senha provisória — exibida UMA única vez, nunca reexibível */}
+      {temporaryCredential && (
+         <div className="fixed inset-0 z-[120] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
+            <div className="bg-white rounded-3xl shadow-2xl max-w-md w-full p-6 space-y-4">
+               <h3 className="text-xl font-bold text-gray-900">Senha provisória gerada</h3>
+               <p className="text-sm text-gray-600">
+                  Entregue esta senha a <strong>{temporaryCredential.name}</strong> por um canal
+                  seguro. Ela é exibida <strong>uma única vez</strong> e o sistema exigirá a troca
+                  no primeiro acesso.
+               </p>
+               <div className="bg-gray-900 text-emerald-300 font-mono text-lg tracking-wider rounded-2xl px-5 py-4 text-center select-all break-all">
+                  {temporaryCredential.password}
+               </div>
+               <p className="text-[11px] text-gray-500">
+                  Evite enviar por canais que guardem histórico permanente. Enquanto a troca não
+                  acontecer, o usuário não consegue registrar nada no sistema.
+               </p>
+               <button
+                  onClick={() => setTemporaryCredential(null)}
+                  className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 rounded-xl transition-colors"
+               >
+                  Já anotei, fechar
+               </button>
+            </div>
+         </div>
+      )}
+
       {isAdding && (
          <div className="bg-white p-6 rounded-3xl border border-gray-100 shadow-xl ring-1 ring-black/5 animate-in fade-in slide-in-from-top-4 duration-300">
             <div className="flex items-center justify-between mb-6">
@@ -170,7 +231,7 @@ export default function UsersManagement() {
                   <input type="text" value={formData.matricula} onChange={e => setFormData({...formData, matricula: e.target.value})} className="w-full bg-gray-50 border border-gray-200 focus:border-blue-500 focus:bg-white rounded-xl px-4 py-2.5 outline-none transition-colors" />
                </div>
 
-               {formData.role === "PSICO" && (
+               {requiresCrp(formData.role) && (
                   <div className="sm:col-span-1">
                      <label className="block text-xs font-semibold text-gray-700 mb-1 uppercase flex items-center gap-1">CRP <span className="text-red-500">*</span></label>
                      <input type="text" required placeholder="00/00000" value={formData.crp} onChange={e => setFormData({...formData, crp: e.target.value})} className="w-full bg-gray-50 border border-gray-200 focus:border-blue-500 focus:bg-white rounded-xl px-4 py-2.5 outline-none transition-colors font-mono" />
@@ -185,6 +246,12 @@ export default function UsersManagement() {
                   </div>
                </div>
             </div>
+
+            {formError && (
+               <p className="text-sm text-red-600 bg-red-50 border border-red-100 rounded-xl px-4 py-3 mb-3">
+                  {formError}
+               </p>
+            )}
 
             <div className="flex justify-end gap-3 pt-4 border-t border-gray-100">
                <button onClick={cancelEdit} className="px-5 py-2.5 text-gray-500 font-bold hover:bg-gray-100 rounded-xl transition-colors">Cancelar</button>
@@ -203,14 +270,14 @@ export default function UsersManagement() {
                      <Edit2 size={16} />
                   </button>
                   {u.id !== currentUser.id && (
-                     <button onClick={() => deleteUser(u.id)} className="p-2 bg-gray-50 text-gray-600 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors" title="Remover Usuário">
+                     <button onClick={() => handleDeleteUser(u)} className="p-2 bg-gray-50 text-gray-600 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors" title="Remover Usuário">
                         <Trash2 size={16} />
                      </button>
                   )}
                </div>
 
                <div className="mb-4">
-                  <span className="bg-blue-100 text-blue-800 text-[10px] font-bold px-2 py-0.5 rounded-md uppercase tracking-wider">{u.role}</span>
+                  <span className="bg-blue-100 text-blue-800 text-[10px] font-bold px-2 py-0.5 rounded-md uppercase tracking-wider">{roleLabel(u.role)}</span>
                   <h3 className="text-xl font-bold text-gray-900 mt-2 truncate flex items-center gap-2" title={u.name}>
                      {u.title && <span className="text-sm font-medium text-gray-400">{u.title}</span>}
                      {u.name}
@@ -240,28 +307,17 @@ export default function UsersManagement() {
                </div>
                
                <div className="mt-auto pt-4 border-t border-gray-100 space-y-3">
-                  {editingPasswordId === u.id ? (
-                     <div className="flex items-center gap-2">
-                        <input 
-                           type="text" 
-                           autoFocus
-                           className="flex-1 bg-gray-50 border border-gray-200 focus:border-blue-500 rounded-lg px-3 py-1.5 text-sm outline-none" 
-                           placeholder="Nova senha..."
-                           value={newPassword}
-                           onChange={e => setNewPassword(e.target.value)}
-                        />
-                        <button onClick={() => handleUpdatePassword(u.id)} className="text-emerald-600 font-bold text-sm hover:underline">Salvar</button>
-                        <button onClick={() => setEditingPasswordId(null)} className="text-gray-400 hover:text-gray-600"><X size={16}/></button>
-                     </div>
-                  ) : (
-                     <div className="flex items-center justify-between">
-                        <button 
-                           onClick={() => setEditingPasswordId(u.id)}
-                           className="flex items-center gap-1.5 text-sm font-semibold text-gray-500 hover:text-gray-800 transition-colors"
-                        >
-                           <KeyRound size={16} className="text-gray-400" /> Redefinir Senha
-                        </button>
-                     </div>
+                  <button
+                     onClick={() => handleResetPassword(u)}
+                     className="flex items-center gap-1.5 text-sm font-semibold text-gray-500 hover:text-gray-800 transition-colors"
+                     title="Gera uma senha provisória; o usuário será obrigado a trocá-la no primeiro acesso."
+                  >
+                     <KeyRound size={16} className="text-gray-400" /> Gerar senha provisória
+                  </button>
+                  {u.mustChangePassword && (
+                     <p className="text-[11px] font-bold text-amber-600">
+                        Senha provisória pendente de troca
+                     </p>
                   )}
                </div>
             </div>

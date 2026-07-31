@@ -1,13 +1,36 @@
 <!doctype html>
-<html lang="en">
+<html lang="pt-BR">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>My Google AI Studio App</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+
+    <!-- Identidade do app. Fonte da verdade em src/lib/branding.ts -->
+    <title>Setor de Psicologia ALESC - PWA</title>
+    <meta name="application-name" content="Setor de Psicologia ALESC - PWA" />
+    <meta name="apple-mobile-web-app-title" content="Psicologia ALESC" />
+    <meta
+      name="description"
+      content="Sistema de gestão do Setor de Psicologia da ALESC: agenda, prontuário eletrônico criptografado, documentos psicológicos e trilha de auditoria conforme LGPD e CFP."
+    />
+
+    <!--
+      Sistema interno com dado sensível de saúde: nada deve ser indexado,
+      arquivado ou pré-visualizado por buscadores e integrações.
+      LGPD Art. 46 (medidas de segurança) e Art. 6º, VII (segurança).
+    -->
+    <meta name="robots" content="noindex, nofollow, noarchive, nosnippet, noimageindex" />
+    <meta name="referrer" content="no-referrer" />
+
+    <!-- PWA -->
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <meta name="theme-color" content="#312e81" />
+    <link rel="icon" type="image/png" sizes="32x32" href="/icons/favicon-32.png" />
+    <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   </head>
   <body>
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>
-

@@ -6,9 +6,12 @@ import { cn } from "../lib/utils";
 import { getSessionTier } from "../lib/sessionTiers";
 import { Search, MapPin, User, ChevronRight, Phone } from "lucide-react";
 import { useClientFilters, FilterBar, FilterPanel, filterClients } from "../components/FilterPanel";
+import { isClinician } from "../lib/roles";
 
 export default function ActiveClients() {
   const { clients, currentUser, groups } = useStore();
+  // Psicólogo abre já filtrado nos próprios casos; Supervisor abre na visão
+  // geral, mas pode alternar para os seus (ele também atende).
   const [showOnlyMine, setShowOnlyMine] = useState(currentUser?.role === "PSICO");
   const [modalityFilter, setModalityFilter] = useState<"TODOS" | "INDIVIDUAL" | "GRUPAL">("TODOS");
   const { filters, setFilters, isPanelOpen, setIsPanelOpen } = useClientFilters();
@@ -42,7 +45,7 @@ export default function ActiveClients() {
             <button onClick={() => setModalityFilter("GRUPAL")} className={cn("px-4 py-2 rounded-xl text-sm font-bold transition-all", modalityFilter === "GRUPAL" ? "bg-white shadow-sm text-gray-900" : "text-gray-500 hover:text-gray-700")}>Grupal</button>
           </div>
 
-          {currentUser?.role === "PSICO" && (
+          {isClinician(currentUser) && (
              <div className="flex items-center gap-2 bg-white p-1 rounded-2xl shadow-sm border border-gray-100">
                 <button 
                   onClick={() => setShowOnlyMine(false)} 

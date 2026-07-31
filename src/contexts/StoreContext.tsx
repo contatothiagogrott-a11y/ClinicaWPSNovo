@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useEffect, useState, useCallback } from "react";
-import { User, Client, SessionRecord, AppConfig, ClientStatus, ConfigItem, Appointment, Group, GroupRecord, Instrument, InstrumentLog, ClinicalDocument, ClinicalDocumentType, GroupClientNote } from "../types";
+import { User, Client, SessionRecord, AppConfig, ClientStatus, ConfigItem, Appointment, Group, GroupRecord, Instrument, InstrumentLog, ClinicalDocument, ClinicalDocumentType, GroupClientNote, HistoryLog, AccessLogEntry } from "../types";
 import { api, ApiError } from "../lib/api";
+import { clearAppCache } from "../lib/pwa";
 
 export interface StoreState {
   users: User[];
@@ -15,6 +16,12 @@ export interface StoreState {
   clinicalDocuments: ClinicalDocument[];
   groupClientNotes: GroupClientNote[];
   currentUser: User | null;
+  /**
+   * IDs dos pacientes cujo conteúdo clínico este usuário pode ver.
+   * Quem decide é a API — a interface apenas obedece. Nenhuma tela deve
+   * recalcular essa regra por conta própria.
+   */
+  clinicalClientIds: string[];
 }
 
 const EMPTY_CONFIG: AppConfig = { affiliations: [], allocations: [], rooms: [], tags: [] };
@@ -25,6 +32,20 @@ interface StoreContextType extends StoreState {
   setCurrentUser: (user: User | null) => void; // setCurrentUser(null) = logout
   addClient: (client: Omit<Client, "id" | "history" | "completedSessions">) => Promise<void>;
   updateClient: (id: string, updates: Partial<Client>, logAction?: string) => Promise<void>;
+  /** Transferência de responsável (Supervisor/Administrativo, com justificativa). */
+  transferClient: (clientId: string, newPsicoId: string | null, reason: string) => Promise<void>;
+  /** Trilha de auditoria do paciente, carregada sob demanda. */
+  fetchClientHistory: (clientId: string) => Promise<HistoryLog[]>;
+  fetchClientAccessLog: (clientId: string) => Promise<AccessLogEntry[]>;
+  /** Registra a abertura do prontuário na trilha de leitura. */
+  registerClientAccess: (clientId: string, resource: string) => Promise<void>;
+  /** Registra a exportação de um PDF na trilha de auditoria. */
+  registerDocumentExport: (clientId: string, documentLabel: string) => Promise<void>;
+  /** Troca da própria senha (obrigatória no primeiro acesso). */
+  changeOwnPassword: (currentPassword: string, newPassword: string) => Promise<void>;
+  /** Gera nova senha provisória para outro usuário (Supervisor/Admin). */
+  resetUserPassword: (userId: string) => Promise<string>;
+  mustChangePassword: boolean;
   addSession: (session: Omit<SessionRecord, "id" | "createdAt" | "updatedAt"> & { id?: string }) => Promise<void>;
   updateSession: (id: string, newContent: string) => Promise<void>;
   updatePrivateSessionNotes: (id: string, text: string) => Promise<void>;
@@ -33,13 +54,14 @@ interface StoreContextType extends StoreState {
   addGroupRecord: (record: Omit<GroupRecord, "id" | "createdAt"> & { id?: string }) => Promise<void>;
   reactivateClient: (clientId: string, newStatus: ClientStatus) => Promise<void>;
   addAppointment: (appt: Omit<Appointment, "id">) => Promise<void>;
-  updateAppointment: (id: string, updates: Partial<Appointment>) => Promise<void>;
+  updateAppointment: (id: string, updates: Partial<Appointment>, applyToFuture?: boolean) => Promise<number>;
   deleteAppointment: (id: string, deleteFuture?: boolean) => Promise<void>;
   markAttendance: (appointmentId: string, attendance: "PENDENTE" | "COMPARECEU" | "FALTA_JUSTIFICADA" | "FALTA_INJUSTIFICADA") => Promise<void>;
   updateConfig: (config: AppConfig) => void;
   addConfigItem: (type: "affiliations" | "allocations" | "rooms" | "tags", name: string) => Promise<void>;
   updateConfigItem: (type: "affiliations" | "allocations" | "rooms" | "tags", id: string, updates: Partial<ConfigItem>) => Promise<void>;
-  addUser: (user: Omit<User, "id">) => Promise<void>;
+  /** Cria o usuário e devolve a senha provisória gerada pelo servidor. */
+  addUser: (user: Omit<User, "id"> & { crp?: string }) => Promise<string>;
   updateUser: (id: string, updates: Partial<User>) => Promise<void>;
   deleteUser: (id: string) => Promise<void>;
   logClientHistory: (clientId: string, action: string, details?: string) => Promise<void>;
@@ -68,6 +90,7 @@ interface BootstrapResponse {
   instrumentLogs: InstrumentLog[];
   clinicalDocuments: ClinicalDocument[];
   groupClientNotes: GroupClientNote[];
+  clinicalClientIds: string[];
 }
 
 export function StoreProvider({ children }: { children: React.ReactNode }) {
@@ -84,6 +107,8 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
   const [instrumentLogs, setInstrumentLogs] = useState<InstrumentLog[]>([]);
   const [clinicalDocuments, setClinicalDocuments] = useState<ClinicalDocument[]>([]);
   const [groupClientNotes, setGroupClientNotes] = useState<GroupClientNote[]>([]);
+  const [clinicalClientIds, setClinicalClientIds] = useState<string[]>([]);
+  const [mustChangePassword, setMustChangePassword] = useState(false);
 
   const applyBootstrap = (data: BootstrapResponse) => {
     setUsers(data.users);
@@ -97,6 +122,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     setInstrumentLogs(data.instrumentLogs);
     setClinicalDocuments(data.clinicalDocuments);
     setGroupClientNotes(data.groupClientNotes);
+    setClinicalClientIds(data.clinicalClientIds ?? []);
   };
 
   // Recarrega todos os dados do servidor. Chamado depois de toda operação de
@@ -109,6 +135,11 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
       if (err instanceof ApiError && err.status === 401) {
         setCurrentUserState(null);
       }
+      // 423 = senha provisória pendente de troca. Não é erro: o app mostra a
+      // tela de troca de senha e só libera o restante depois disso.
+      if (err instanceof ApiError && err.status === 423) {
+        setMustChangePassword(true);
+      }
     }
   }, []);
 
@@ -117,7 +148,8 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
       try {
         const { user } = await api.get<{ user: User }>("/api/auth/me");
         setCurrentUserState(user);
-        await refreshAll();
+        setMustChangePassword(!!user.mustChangePassword);
+        if (!user.mustChangePassword) await refreshAll();
       } catch {
         setCurrentUserState(null);
       } finally {
@@ -131,7 +163,8 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     try {
       const { user } = await api.post<{ user: User }>("/api/auth/login", { email, password });
       setCurrentUserState(user);
-      await refreshAll();
+      setMustChangePassword(!!user.mustChangePassword);
+      if (!user.mustChangePassword) await refreshAll();
       return { ok: true };
     } catch (err) {
       const message = err instanceof ApiError ? err.message : "Não foi possível conectar ao servidor.";
@@ -142,6 +175,9 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
   const setCurrentUser = (user: User | null) => {
     if (user === null) {
       api.post("/api/auth/logout").catch(() => {});
+      clearAppCache();
+      setMustChangePassword(false);
+      setClinicalClientIds([]);
       setCurrentUserState(null);
       setUsers([]);
       setClients([]);
@@ -210,9 +246,13 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     await refreshAll();
   };
 
-  const updateAppointment: StoreContextType["updateAppointment"] = async (id, updates) => {
-    await api.patch(`/api/appointments/${id}`, updates);
+  const updateAppointment: StoreContextType["updateAppointment"] = async (id, updates, applyToFuture) => {
+    const result = await api.patch<{ futureUpdated?: number }>(`/api/appointments/${id}`, {
+      ...updates,
+      applyToFuture: !!applyToFuture,
+    });
     await refreshAll();
+    return result?.futureUpdated ?? 0;
   };
 
   const deleteAppointment: StoreContextType["deleteAppointment"] = async (id, deleteFuture) => {
@@ -242,8 +282,14 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
   };
 
   const addUser: StoreContextType["addUser"] = async (user) => {
-    await api.post("/api/users", user);
+    // A senha provisória é gerada NO SERVIDOR e devolvida uma única vez.
+    // O navegador nunca escolhe nem armazena senha de ninguém.
+    const { temporaryPassword } = await api.post<{ user: User; temporaryPassword: string }>(
+      "/api/users",
+      user
+    );
     await refreshAll();
+    return temporaryPassword;
   };
 
   const updateUser: StoreContextType["updateUser"] = async (id, updates) => {
@@ -258,8 +304,60 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
   };
 
   const logClientHistory: StoreContextType["logClientHistory"] = async (clientId, action, details) => {
-    await updateClient(clientId, {}, action);
-    void details; // detalhes adicionais podem ser passados via updateClient(..., logAction) quando necessário
+    await api.patch(`/api/clients/${clientId}`, { logAction: action, logDetails: details });
+    await refreshAll();
+  };
+
+  // -------------------------------------------------------------------------
+  // Auditoria, transferência e credenciais
+  // -------------------------------------------------------------------------
+
+  const transferClient: StoreContextType["transferClient"] = async (clientId, newPsicoId, reason) => {
+    await api.patch(`/api/clients/${clientId}`, {
+      assignedPsicoId: newPsicoId,
+      transferReason: reason,
+    });
+    await refreshAll();
+  };
+
+  const fetchClientHistory: StoreContextType["fetchClientHistory"] = async (clientId) => {
+    const { history } = await api.get<{ history: HistoryLog[] }>(`/api/clients/${clientId}/history`);
+    return history;
+  };
+
+  const fetchClientAccessLog: StoreContextType["fetchClientAccessLog"] = async (clientId) => {
+    const { accessLog } = await api.get<{ accessLog: AccessLogEntry[] }>(
+      `/api/clients/${clientId}/access-log`
+    );
+    return accessLog;
+  };
+
+  const registerClientAccess: StoreContextType["registerClientAccess"] = async (clientId, resource) => {
+    // Falha de trilha não pode impedir o atendimento: registra e segue.
+    await api.post(`/api/clients/${clientId}/register-access`, { resource }).catch(() => {});
+  };
+
+  const registerDocumentExport: StoreContextType["registerDocumentExport"] = async (clientId, documentLabel) => {
+    await api.post(`/api/clients/${clientId}/document-export`, { documentLabel }).catch(() => {});
+  };
+
+  const changeOwnPassword: StoreContextType["changeOwnPassword"] = async (currentPassword, newPassword) => {
+    const { user } = await api.post<{ user: User }>("/api/auth/change-password", {
+      currentPassword,
+      newPassword,
+    });
+    setCurrentUserState(user);
+    setMustChangePassword(false);
+    await refreshAll();
+  };
+
+  const resetUserPassword: StoreContextType["resetUserPassword"] = async (userId) => {
+    const { temporaryPassword } = await api.patch<{ temporaryPassword: string }>(
+      `/api/users/${userId}`,
+      { resetPassword: true }
+    );
+    await refreshAll();
+    return temporaryPassword;
   };
 
   const addInstrument: StoreContextType["addInstrument"] = async (name, initialCount) => {
@@ -325,12 +423,21 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
         instrumentLogs,
         clinicalDocuments,
         groupClientNotes,
+        clinicalClientIds,
         currentUser,
         isLoading,
+        mustChangePassword,
         login,
         setCurrentUser,
         addClient,
         updateClient,
+        transferClient,
+        fetchClientHistory,
+        fetchClientAccessLog,
+        registerClientAccess,
+        registerDocumentExport,
+        changeOwnPassword,
+        resetUserPassword,
         addSession,
         updateSession,
         updatePrivateSessionNotes,

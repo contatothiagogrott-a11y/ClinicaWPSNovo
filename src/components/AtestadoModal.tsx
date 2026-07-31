@@ -4,6 +4,7 @@ import { Client, ClinicalDocument } from "../types";
 import { composeAtestadoBodyText, buildAtestadoDocDefinition } from "../lib/pdfAtestado";
 import { openPdfInNewTab } from "../lib/pdfGenerator";
 import { useStore } from "../contexts/StoreContext";
+import { todayDateOnly } from "../lib/datetime";
 
 export default function AtestadoModal({
   open, onClose, client, existingDoc,
@@ -13,13 +14,13 @@ export default function AtestadoModal({
   client: Client;
   existingDoc?: ClinicalDocument;
 }) {
-  const { currentUser, users, addClinicalDocument, updateClinicalDocument } = useStore();
+  const { currentUser, users, addClinicalDocument, updateClinicalDocument, registerDocumentExport } = useStore();
 
   const [aptoPara, setAptoPara] = useState(existingDoc?.data?.aptoPara || "");
   const [endereco, setEndereco] = useState(existingDoc?.data?.endereco || "");
-  const [acompanhamentoDesde, setAcompanhamentoDesde] = useState(existingDoc?.data?.acompanhamentoDesde || client.dateIncluded?.split("T")[0] || "");
+  const [acompanhamentoDesde, setAcompanhamentoDesde] = useState(existingDoc?.data?.acompanhamentoDesde || client.dateIncluded || "");
   const [motivo, setMotivo] = useState(existingDoc?.data?.motivo || "");
-  const [emissionDate, setEmissionDate] = useState(existingDoc?.data?.emissionDate || new Date().toISOString().split("T")[0]);
+  const [emissionDate, setEmissionDate] = useState(existingDoc?.data?.emissionDate || todayDateOnly());
   const [validadeDias, setValidadeDias] = useState(existingDoc?.data?.validadeDias || 60);
   const [bodyText, setBodyText] = useState(existingDoc?.data?.bodyText || "");
   const [saving, setSaving] = useState(false);
@@ -50,6 +51,8 @@ export default function AtestadoModal({
     const saved = await handleSave();
     const author = users.find(u => u.id === saved.authorId) || currentUser || undefined;
     const docDef = buildAtestadoDocDefinition(client, saved, author);
+    // Emissão de atestado é ato profissional: fica registrado na trilha.
+    registerDocumentExport(client.id, "Atestado psicológico");
     openPdfInNewTab(docDef);
     onClose();
   };

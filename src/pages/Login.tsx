@@ -1,7 +1,8 @@
 import React, { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useStore } from "../contexts/StoreContext";
-import { Users, Lock, Mail, Loader2 } from "lucide-react";
+import { Lock, Mail, Loader2, BrainCircuit } from "lucide-react";
+import { APP_NAME, APP_ORG } from "../lib/branding";
 
 export default function Login() {
   const { login } = useStore();
@@ -28,16 +29,14 @@ export default function Login() {
     <div className="min-h-screen bg-slate-50 flex flex-col justify-center py-12 sm:px-6 lg:px-8 font-sans">
       <div className="sm:mx-auto sm:w-full sm:max-w-md">
         <div className="flex justify-center">
-          <span className="bg-blue-600 text-white p-3 rounded-2xl shadow-lg shadow-blue-500/30">
-            <Users size={32} />
+          <span className="bg-indigo-900 text-white p-3 rounded-2xl shadow-lg shadow-indigo-500/30">
+            <BrainCircuit size={32} />
           </span>
         </div>
-        <h2 className="mt-6 text-center text-3xl font-bold tracking-tight text-gray-900">
-          Acesso ao Sistema
+        <h2 className="mt-6 text-center text-2xl font-bold tracking-tight text-gray-900">
+          {APP_NAME}
         </h2>
-        <p className="mt-2 text-center text-sm text-gray-600">
-          Clínica Inteligente
-        </p>
+        <p className="mt-2 text-center text-sm text-gray-600">{APP_ORG}</p>
       </div>
 
       <div className="mt-8 sm:mx-auto sm:w-full sm:max-w-md">
@@ -54,7 +53,7 @@ export default function Login() {
                   value={email}
                   onChange={e => setEmail(e.target.value)}
                   className="block w-full pl-10 pr-3 py-3 border border-gray-200 rounded-xl bg-gray-50 text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white transition-colors"
-                  placeholder="usuario@clinica.com"
+                  placeholder="usuario@alesc.sc.gov.br"
                   autoComplete="username"
                   required
                 />

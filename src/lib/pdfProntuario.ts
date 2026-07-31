@@ -1,5 +1,6 @@
 import { Client, SessionRecord, User, InstrumentApplication, Instrument } from "../types";
 import { letterheadHeader, letterheadFooter, letterheadBackground, PAGE_MARGINS, documentStyles } from "./pdfGenerator";
+import { formatDateBR, formatDateExtenso, toDate } from "./datetime";
 
 const SUPERVISOR_NAME = "Rafael da Costa Faria";
 const SUPERVISOR_ROLE = "Psicólogo Supervisor";
@@ -14,7 +15,7 @@ export function buildProntuarioDocDefinition(
 ) {
   const nonDraftSessions = sessions
     .filter(s => s.clientId === client.id && !s.isDraft)
-    .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+    .sort((a, b) => (toDate(a.date)?.getTime() ?? 0) - (toDate(b.date)?.getTime() ?? 0));
 
   const firstDate = nonDraftSessions[0]?.date;
   const lastDate = nonDraftSessions[nonDraftSessions.length - 1]?.date;
@@ -26,7 +27,7 @@ export function buildProntuarioDocDefinition(
       table: {
         widths: ["*"],
         body: [
-          [{ text: `DATA: ${new Date(s.date).toLocaleDateString("pt-BR")}`, bold: true, fillColor: "#f1f5f9" }],
+          [{ text: `DATA: ${formatDateBR(s.date)}`, bold: true, fillColor: "#f1f5f9" }],
           [{ text: s.notes || "(sem registro de evolução)", margin: [4, 8, 4, 20], minHeight: 60 }],
         ],
       },
@@ -50,7 +51,7 @@ export function buildProntuarioDocDefinition(
               stack: [
                 ...(app.purpose ? [{ text: [{ text: "Finalidade: ", bold: true }, app.purpose], fontSize: 9, margin: [0, 0, 0, 6] }] : []),
                 ...app.entries.map(entry => ({
-                  text: [{ text: `${new Date(entry.date).toLocaleDateString("pt-BR")}: `, bold: true }, entry.description || "(sem descrição)"],
+                  text: [{ text: `${formatDateBR(entry.date)}: `, bold: true }, entry.description || "(sem descrição)"],
                   fontSize: 9,
                   margin: [0, 2, 0, 2],
                 })),
@@ -84,7 +85,7 @@ export function buildProntuarioDocDefinition(
             [{ text: "Matrícula", bold: true }, { text: client.registrationCode || "—" }, { text: "D.N.", bold: true }, { text: client.birthDate || "—" }],
             [{ text: "Contato", bold: true }, { text: client.whatsapp || "—" }, { text: "Setor", bold: true }, { text: (client as any).sector || "—" }],
             [{ text: "Profissional", bold: true }, { text: psico?.name || "—" }, { text: "CRP", bold: true }, { text: psico?.crp || "—" }],
-            [{ text: "Data de Início", bold: true }, { text: firstDate ? new Date(firstDate).toLocaleDateString("pt-BR") : "—" }, { text: "Data de Término", bold: true }, { text: client.status === "FINALIZADO" && lastDate ? new Date(lastDate).toLocaleDateString("pt-BR") : "Em andamento" }],
+            [{ text: "Data de Início", bold: true }, { text: firstDate ? formatDateBR(firstDate) : "—" }, { text: "Data de Término", bold: true }, { text: client.status === "FINALIZADO" && lastDate ? formatDateBR(lastDate) : "Em andamento" }],
             [{ text: "N° Atendimentos", bold: true }, { text: String(nonDraftSessions.length) }, { text: "", border: [false, false, false, false] }, { text: "", border: [false, false, false, false] }],
             [{ text: "Encaminhamento", bold: true }, { text: client.priority || "—", colSpan: 3 }, {}, {}],
           ],
@@ -95,7 +96,7 @@ export function buildProntuarioDocDefinition(
       ...sessionBlocks,
       ...testBlocks,
 
-      { text: `Prontuário impresso e arquivado no dia ${today.getDate()} de ${today.toLocaleDateString("pt-BR", { month: "long" })} de ${today.getFullYear()}.`, margin: [0, 20, 0, 0], fontSize: 9 },
+      { text: `Prontuário impresso e arquivado no dia ${formatDateExtenso(today)}.`, margin: [0, 20, 0, 0], fontSize: 9 },
       { text: "Florianópolis, SC.", fontSize: 9 },
 
       {

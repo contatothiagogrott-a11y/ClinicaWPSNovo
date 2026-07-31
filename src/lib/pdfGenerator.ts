@@ -55,10 +55,11 @@ export function letterheadFooter(current: number, total: number) {
     margin: [85, 0, 57, 20] as [number, number, number, number],
     stack: [
       { canvas: [{ type: "line", x1: 0, y1: 0, x2: 453, y2: 0, lineWidth: 0.5, lineColor: "#cccccc" }], margin: [0, 0, 0, 4] },
+      { text: "Assembleia Legislativa do Estado de Santa Catarina. Coordenadoria de Saúde e Assistência. Av. Mauro Ramos 300, 2º andar. Florianópolis, Santa Catarina. Contato telefônico — Setor de Psicologia: (48) 3221-2917.", fontSize: 6.5, color: "#888888", alignment: "center", margin: [0, 0, 0, 2] },
       {
         columns: [
-          { text: "Assembleia Legislativa do Estado de Santa Catarina — Setor de Psicologia — Documento gerado pelo sistema, uso restrito à equipe autorizada.", fontSize: 6.5, color: "#888888" },
-          { text: `${current} / ${total}`, fontSize: 6.5, color: "#888888", alignment: "right", width: 40 },
+          { text: "Documento gerado pelo sistema — confidencial, uso restrito à equipe autorizada.", fontSize: 6, color: "#aaaaaa" },
+          { text: `${current} / ${total}`, fontSize: 6, color: "#aaaaaa", alignment: "right", width: 40 },
         ],
       },
     ],

@@ -1,11 +1,13 @@
 import React, { useState } from "react";
 import { useStore } from "../contexts/StoreContext";
-import { X, Clock, Trash2, Repeat, ExternalLink } from "lucide-react";
+import { X, Clock, Trash2, Repeat, ExternalLink, CalendarDays } from "lucide-react";
 import { format } from "date-fns";
 import { ptBR } from "date-fns/locale";
+import { toDate, toDateOnly } from "../lib/datetime";
 import { Appointment } from "../types";
 import { Link } from "react-router-dom";
 import { cn } from "../lib/utils";
+import { clinicians } from "../lib/roles";
 
 const STATUS_LABELS: Record<string, string> = {
   FILA_ESPERA: "Fila de Espera",
@@ -50,7 +52,8 @@ export default function AgendaModal({ open, onClose, initialData, existingAppoin
   };
   const [statusTransition, setStatusTransition] = useState<string>("");
   const [responsiblePsicoId, setResponsiblePsicoId] = useState<string>("");
-  const psicos = users.filter(u => u.role === "PSICO");
+  // Profissionais que atendem = Psicólogos + Supervisores.
+  const psicos = clinicians(users);
   
   const activeGroups = groups.filter(g => g.isActive && (currentUser?.role !== "PSICO" || g.psychologistId === currentUser.id));
 
@@ -66,6 +69,18 @@ export default function AgendaModal({ open, onClose, initialData, existingAppoin
     return `${endH}:${endM}`;
   };
   
+  /**
+   * Edição de dia/horário de um atendimento já marcado (item 15 do diagnóstico).
+   * Antes, mudar de terça para quarta exigia apagar e recriar — e a série de
+   * repetições ficava inconsistente. Agora a data é editável e, quando o
+   * atendimento pertence a uma série, é possível aplicar a mudança às
+   * próximas ocorrências. As sessões passadas nunca são alteradas: agenda
+   * realizada é registro, não se reescreve.
+   */
+  const [appointmentDate, setAppointmentDate] = useState(initialData.date);
+  const [applyToFuture, setApplyToFuture] = useState(false);
+  const [futureFeedback, setFutureFeedback] = useState("");
+
   const [startTime, setStartTime] = useState(initialData.time);
   const [endTime, setEndTime] = useState(defaultEndTime());
   const [errorMsg, setErrorMsg] = useState("");
@@ -141,14 +156,22 @@ export default function AgendaModal({ open, onClose, initialData, existingAppoin
     };
 
     if (existingAppointment) {
-       updateAppointment(existingAppointment.id, { ...baseAppt, date: initialData.date });
+       updateAppointment(
+         existingAppointment.id,
+         { ...baseAppt, date: appointmentDate },
+         applyToFuture
+       ).then((count) => {
+         if (count > 0) setFutureFeedback(`${count} atendimento(s) futuro(s) da série também foram atualizados.`);
+       });
     } else {
        const instances = recurrence === "none" ? 1 : 12; // Generate 12 occurrences for recurring
        for (let i = 0; i < instances; i++) {
-          const d = new Date(`${initialData.date}T12:00:00`);
+          // toDate() interpreta "YYYY-MM-DD" como meio-dia local, então somar
+          // dias nunca "pula" ou "volta" um dia por causa de fuso.
+          const d = toDate(appointmentDate) ?? new Date();
           if (recurrence === "weekly") d.setDate(d.getDate() + (i * 7));
           else if (recurrence === "biweekly") d.setDate(d.getDate() + (i * 14));
-          const dateStr = d.toISOString().split("T")[0];
+          const dateStr = toDateOnly(d);
           
           addAppointment({ ...baseAppt, date: dateStr });
        }
@@ -186,7 +209,7 @@ export default function AgendaModal({ open, onClose, initialData, existingAppoin
     }
   };
 
-  const parsedDate = new Date(`${initialData.date}T12:00:00`); 
+  const parsedDate = toDate(appointmentDate) ?? new Date();
 
   return (
     <div className="fixed inset-0 z-[100] flex justify-end bg-black/40 backdrop-blur-sm animate-in fade-in duration-200">
@@ -210,7 +233,23 @@ export default function AgendaModal({ open, onClose, initialData, existingAppoin
                </select>
              </div>
 
-             <div className="flex gap-4 pt-4 border-t border-gray-200">
+             {/* Data do atendimento — editável também na edição (mudar de terça
+                 para quarta, por exemplo, sem apagar e recriar). */}
+             <div className="pt-4 border-t border-gray-200">
+               <label className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-1 block">Data</label>
+               <div className="relative">
+                 <CalendarDays size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+                 <input
+                   type="date"
+                   value={appointmentDate}
+                   onChange={e => setAppointmentDate(e.target.value)}
+                   required
+                   className="w-full bg-white border border-gray-200 focus:border-blue-500 rounded-xl pl-10 pr-4 py-2 outline-none font-bold text-gray-900 transition-colors"
+                 />
+               </div>
+             </div>
+
+             <div className="flex gap-4">
                <div className="flex-1">
                  <label className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-1 block">Início</label>
                  <div className="relative">
@@ -226,6 +265,32 @@ export default function AgendaModal({ open, onClose, initialData, existingAppoin
                  </div>
                </div>
              </div>
+
+             {existingAppointment?.seriesId && (
+               <div className="bg-blue-50 border border-blue-100 rounded-2xl p-4">
+                 <label className="flex items-start gap-3 cursor-pointer">
+                   <input
+                     type="checkbox"
+                     checked={applyToFuture}
+                     onChange={e => setApplyToFuture(e.target.checked)}
+                     className="mt-0.5 h-4 w-4 accent-blue-600"
+                   />
+                   <span className="text-sm text-blue-900 leading-relaxed">
+                     <strong>Aplicar às próximas ocorrências</strong> desta repetição.
+                     <span className="block text-xs text-blue-700/80 mt-1">
+                       A mudança de dia, horário, sala ou profissional vale para os atendimentos
+                       futuros da série. Os já realizados permanecem como estão.
+                     </span>
+                   </span>
+                 </label>
+               </div>
+             )}
+
+             {futureFeedback && (
+               <p className="text-xs font-bold text-emerald-700 bg-emerald-50 border border-emerald-100 rounded-xl px-4 py-3">
+                 {futureFeedback}
+               </p>
+             )}
           </div>
 
           <div className="flex gap-2 p-1 bg-gray-100 rounded-xl">

@@ -10,6 +10,7 @@ import { Plus, LayoutGrid, Columns3 } from "lucide-react";
 import { cn } from "../lib/utils";
 import AgendaModal from "../components/AgendaModal";
 import { Appointment } from "../types";
+import { isClinician } from "../lib/roles";
 
 const localizer = dateFnsLocalizer({
   format,
@@ -61,7 +62,7 @@ export default function AgendaPage() {
   const [editAppt, setEditAppt] = useState<Appointment | null>(null);
 
   let filteredAppointments = appointments;
-  if (scopeFilter === "MEUS" && currentUser?.role === "PSICO") {
+  if (scopeFilter === "MEUS" && isClinician(currentUser)) {
     filteredAppointments = filteredAppointments.filter(a => a.psicoId === currentUser.id);
   }
   if (viewMode === "geral" && roomFilter) {
@@ -172,7 +173,7 @@ export default function AgendaPage() {
         </div>
 
         <div className="flex flex-wrap items-center gap-3">
-          {currentUser?.role === "PSICO" && (
+          {isClinician(currentUser) && (
             <div className="flex items-center bg-gray-100 p-1 rounded-2xl">
               <button onClick={() => setScopeFilter("GERAL")} className={cn("px-4 py-2 rounded-xl text-sm font-bold transition-all", scopeFilter === "GERAL" ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-700")}>Visão Geral</button>
               <button onClick={() => setScopeFilter("MEUS")} className={cn("px-4 py-2 rounded-xl text-sm font-bold transition-all", scopeFilter === "MEUS" ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-700")}>Meus Atendimentos</button>

@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { useStore } from "../contexts/StoreContext";
 import { BarChart as BarChartIcon, Users, Activity, CheckCircle, Clock, TrendingUp, Tag, History, Layers, Download, ChevronDown } from "lucide-react";
 import { cn } from "../lib/utils";
@@ -7,17 +7,16 @@ import { downloadPdf } from "../lib/pdfGenerator";
 import { buildRelatorioDocDefinition, ReportTableSection } from "../lib/pdfRelatorio";
 import { getSessionTier } from "../lib/sessionTiers";
 import InfoTip from "../components/InfoTip";
+import { clinicians } from "../lib/roles";
+import { todayDateOnly } from "../lib/datetime";
+import { api } from "../lib/api";
 
 export default function Metrics() {
   const { clients, sessions, instruments, instrumentLogs, config, appointments, users } = useStore();
-  const [startDate, setStartDate] = useState(() => {
-     const date = new Date();
-     date.setDate(1); // 1st day of the current month
-     return date.toISOString().split('T')[0];
-  });
-  const [endDate, setEndDate] = useState(() => {
-     return new Date().toISOString().split('T')[0];
-  });
+  // toISOString() devolve o dia em UTC: depois das 21h em Brasília o "hoje"
+  // do filtro pulava para o dia seguinte. todayDateOnly() usa America/Sao_Paulo.
+  const [startDate, setStartDate] = useState(() => `${todayDateOnly().slice(0, 7)}-01`);
+  const [endDate, setEndDate] = useState(() => todayDateOnly());
 
   const isWithinPeriod = (dateStr: string) => {
      if (!dateStr) return false;
@@ -44,7 +43,8 @@ export default function Metrics() {
   const countFaltaJustificada = withAttendance.filter(a => a.attendance === "FALTA_JUSTIFICADA").length;
   const countFaltaInjustificada = withAttendance.filter(a => a.attendance === "FALTA_INJUSTIFICADA").length;
 
-  const psicos = users.filter(u => u.role === "PSICO");
+  // Métricas por profissional incluem o Supervisor, que também atende.
+  const psicos = clinicians(users);
   const psicoPerformance = psicos.map(p => {
      const activeClients = clients.filter(c => c.assignedPsicoId === p.id && c.status === "EM_ATENDIMENTO");
      const myAppts = apptsInPeriod.filter(a => a.psicoId === p.id);
@@ -137,21 +137,31 @@ export default function Metrics() {
   // Quem fez a triagem/classificação de risco no período — derivado do
   // histórico do paciente (cada mudança de status fica registrada lá).
   // -------------------------------------------------------------------------
-  const allHistory = clients.flatMap(c => (c.history || []).map(h => ({ ...h, clientId: c.id, clientName: c.fullName })));
-  const triagemHistory = allHistory.filter(h => isWithinPeriod(h.date) && /TRIAGEM/i.test(h.action));
-  const triadosHistory = allHistory.filter(h => isWithinPeriod(h.date) && /TRIADOS/i.test(h.action));
-  const triagemByPsico = new Map<string, { triagem: number; triados: number }>();
-  triagemHistory.forEach(h => {
-    const cur = triagemByPsico.get(h.actorName) || { triagem: 0, triados: 0 };
-    cur.triagem++;
-    triagemByPsico.set(h.actorName, cur);
-  });
-  triadosHistory.forEach(h => {
-    const cur = triagemByPsico.get(h.actorName) || { triagem: 0, triados: 0 };
-    cur.triados++;
-    triagemByPsico.set(h.actorName, cur);
-  });
-  const triagemRows = Array.from(triagemByPsico.entries()).map(([name, v]) => ({ name, ...v }));
+  /**
+   * Antes, este bloco varria o histórico de TODOS os pacientes no navegador —
+   * o que exigia trafegar a trilha de auditoria inteira no /api/bootstrap.
+   * Agora o servidor devolve apenas o agregado (contagem por profissional),
+   * sem identificar paciente algum. Menos dado no navegador, mesmo resultado.
+   */
+  const [triagemRows, setTriagemRows] = useState<Array<{ name: string; triagem: number; triados: number }>>([]);
+
+  useEffect(() => {
+    let cancelled = false;
+    api
+      .get<{ rows: Array<{ name: string; triagem: number; triados: number }> }>(
+        `/api/metrics/triagem?from=${startDate}&to=${endDate}`
+      )
+      .then(({ rows }) => {
+        if (!cancelled) setTriagemRows(rows);
+      })
+      .catch(() => {
+        // Perfil sem permissão (Psicólogo) ou falha de rede: a seção some.
+        if (!cancelled) setTriagemRows([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [startDate, endDate]);
 
   // -------------------------------------------------------------------------
   // Atendidos no período (pacientes distintos, não sessões brutas) e volume
