@@ -1,12 +1,12 @@
 import React, { useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { useStore } from "../contexts/StoreContext";
 import { ClientStatus, Client } from "../types";
 import { cn } from "../lib/utils";
-import { Plus, ChevronRight, Clock, AlertTriangle, Upload } from "lucide-react";
+import { Plus, ChevronRight, Clock, AlertTriangle, Upload, ClipboardCheck } from "lucide-react";
 import CreateClientModal from "../components/CreateClientModal";
 import { useClientFilters, FilterBar, FilterPanel, filterClients } from "../components/FilterPanel";
-import { format } from "date-fns";
+import { formatDateBR } from "../lib/datetime";
 
 export default function Waitlist() {
   const { clients, currentUser } = useStore();
@@ -14,17 +14,34 @@ export default function Waitlist() {
   const { filters, setFilters, isPanelOpen, setIsPanelOpen } = useClientFilters();
   const [activeTab, setActiveTab] = useState<"FILA_ESPERA" | "TRIAGEM" | "TRIADOS" | "TODOS">("TODOS");
 
+  /**
+   * Filtro "só o que precisa de revisão".
+   * Fica na URL (?revisar=1) para que a tela de importação possa mandar o
+   * usuário direto para a lista do que ela mesma sinalizou.
+   */
+  const [searchParams, setSearchParams] = useSearchParams();
+  const somenteRevisao = searchParams.get("revisar") === "1";
+  const alternarRevisao = () => {
+    const next = new URLSearchParams(searchParams);
+    if (somenteRevisao) next.delete("revisar");
+    else next.set("revisar", "1");
+    setSearchParams(next, { replace: true });
+  };
+
   // Clients that are not yet "EM_ATENDIMENTO"
   let waitlistClients = clients.filter(c => ["FILA_ESPERA", "TRIAGEM", "TRIADOS"].includes(c.status));
   waitlistClients = filterClients(waitlistClients, filters);
 
+  const totalParaRevisar = waitlistClients.filter(c => c.needsReview).length;
+
   const displayedClients = waitlistClients.filter(c => {
+     if (somenteRevisao && !c.needsReview) return false;
      if (activeTab === "TODOS") return true;
      return c.status === activeTab;
   });
 
   const groupedByYear = displayedClients.reduce((acc, client) => {
-    const year = new Date(client.dateIncluded).getFullYear();
+    const year = Number(String(client.dateIncluded).slice(0, 4)) || new Date().getFullYear();
     if (!acc[year]) acc[year] = [];
     acc[year].push(client);
     return acc;
@@ -58,6 +75,41 @@ export default function Waitlist() {
           </div>
         )}
       </header>
+
+      {/*
+        Aviso de cadastros importados pendentes de conferência.
+        Importar planilha de origens diferentes sempre gera dado duvidoso —
+        aqui ele fica visível em vez de se perder no meio da fila.
+      */}
+      {totalParaRevisar > 0 && (
+        <button
+          onClick={alternarRevisao}
+          className={cn(
+            "w-full flex items-center gap-3 rounded-2xl px-5 py-4 border text-left transition-colors",
+            somenteRevisao
+              ? "bg-amber-500 border-amber-500 text-white"
+              : "bg-amber-50 border-amber-200 text-amber-900 hover:bg-amber-100"
+          )}
+        >
+          <ClipboardCheck size={20} className="shrink-0" />
+          <span className="flex-1 min-w-0">
+            <span className="block font-bold text-sm">
+              {totalParaRevisar} cadastro(s) importado(s) precisam de revisão
+            </span>
+            <span className={cn("block text-xs mt-0.5", somenteRevisao ? "text-amber-50" : "text-amber-700")}>
+              {somenteRevisao
+                ? "Mostrando apenas estes. Toque para ver a fila completa."
+                : "Dados incompletos, possíveis duplicatas ou colunas deslocadas. Toque para revisar."}
+            </span>
+          </span>
+          <span className={cn(
+            "text-[11px] font-bold px-3 py-1.5 rounded-full shrink-0",
+            somenteRevisao ? "bg-white/20" : "bg-amber-200"
+          )}>
+            {somenteRevisao ? "Ver todos" : "Revisar"}
+          </span>
+        </button>
+      )}
 
       {/* TABS por status — facilita achar quem está em cada etapa do fluxo */}
       <div className="flex gap-2 border-b border-gray-200 pb-2 overflow-x-auto">
@@ -157,7 +209,12 @@ const WaitlistCard: React.FC<{ client: Client }> = ({ client }) => {
       <div className="mt-4 pt-4 border-t border-gray-50 flex flex-col gap-2">
         <div className="flex items-center justify-between text-xs font-semibold">
            <span className="text-gray-500 font-medium">
-             Entrou em: {format(new Date(client.dateIncluded), "dd/MM/yyyy")}
+             Entrou em: {formatDateBR(client.dateIncluded)}
+             {client.needsReview && (
+               <span className="ml-2 inline-flex items-center gap-1 bg-amber-100 text-amber-800 text-[10px] font-bold px-2 py-0.5 rounded-md align-middle">
+                 <AlertTriangle size={10} /> REVISAR
+               </span>
+             )}
            </span>
            <span className="text-gray-700 bg-gray-100 px-2 py-1 rounded-full">{statusLabel[client.status as keyof typeof statusLabel]}</span>
         </div>

@@ -143,6 +143,12 @@ export function mapClient(c: any, options: ClientMapOptions = {}) {
     contactStatus: c.contactStatus ?? undefined,
     defaultRoom: c.defaultRoom ?? undefined,
     defaultTime: c.defaultTime ?? undefined,
+    diagnosis: decryptField(c.diagnosisEnc),
+    extension: c.extension ?? undefined,
+    alescEntryDate: c.alescEntryDate ? toDateOnly(c.alescEntryDate) : undefined,
+    needsReview: c.needsReview ?? false,
+    reviewNotes: c.reviewNotes ?? undefined,
+    importBatchId: c.importBatchId ?? undefined,
     finalizedAt: c.finalizedAt ? toISO(c.finalizedAt) : undefined,
     retentionUntil: c.retentionUntil ? toDateOnly(c.retentionUntil) : undefined,
   } as Record<string, any>;

@@ -72,7 +72,9 @@ interface StoreContextType extends StoreState {
   updateInstrumentApplication: (applicationId: string, updates: { purpose?: string; entry?: { id: string; date?: string; description?: string } }) => Promise<void>;
   addClinicalDocument: (clientId: string, type: ClinicalDocumentType, data: Record<string, any>) => Promise<ClinicalDocument>;
   updateClinicalDocument: (id: string, data: Record<string, any>) => Promise<void>;
-  importClients: (rows: Record<string, any>[]) => Promise<{ created: number; errors: { row: number; error: string }[] }>;
+  importClients: (rows: Record<string, any>[], sourceLabel?: string) => Promise<{ created: number; flagged: number; errors: { row: number; error: string }[]; importBatchId: string }>;
+  /** Marca um cadastro importado como conferido. */
+  markClientReviewed: (clientId: string) => Promise<void>;
   saveGroupClientNote: (clientId: string, groupId: string, content: string) => Promise<void>;
 }
 
@@ -396,8 +398,13 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     await refreshAll();
   };
 
-  const importClients: StoreContextType["importClients"] = async (rows) => {
-    const result = await api.post<{ created: number; errors: { row: number; error: string }[] }>("/api/clients/import", { rows });
+  const markClientReviewed: StoreContextType["markClientReviewed"] = async (clientId) => {
+    await api.post(`/api/clients/${clientId}/mark-reviewed`);
+    await refreshAll();
+  };
+
+  const importClients: StoreContextType["importClients"] = async (rows, sourceLabel) => {
+    const result = await api.post<{ created: number; flagged: number; errors: { row: number; error: string }[]; importBatchId: string }>("/api/clients/import", { rows, sourceLabel });
     await refreshAll();
     return result;
   };
@@ -464,6 +471,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
         addClinicalDocument,
         updateClinicalDocument,
         importClients,
+        markClientReviewed,
         saveGroupClientNote,
       }}
     >

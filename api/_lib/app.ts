@@ -544,6 +544,7 @@ app.post(
     const session = requireSession(req, res, ["SUPERVISOR", "ADMIN"]);
     if (!session) return;
     const rows: any[] = Array.isArray(req.body?.rows) ? req.body.rows : [];
+    const sourceLabel = String(req.body?.sourceLabel ?? "planilha").slice(0, 120);
     if (rows.length === 0) {
       res.status(400).json({ error: "Nenhuma linha para importar." });
       return;
@@ -553,28 +554,66 @@ app.post(
       return;
     }
 
+    // Identifica o lote: permite desfazer a importação inteira se o
+    // mapeamento de colunas tiver saído errado.
+    const importBatchId = crypto.randomUUID();
+
+    // Carrega os cadastros existentes UMA vez para detectar duplicatas sem
+    // fazer uma consulta por linha.
+    const existentes = await prisma.client.findMany({
+      select: { id: true, registrationCode: true, fullNameEnc: true, protocolNumber: true },
+    });
+    const porMatricula = new Map<string, string>();
+    const porNome = new Map<string, string>();
+    for (const c of existentes) {
+      if (c.registrationCode) porMatricula.set(String(c.registrationCode).trim(), c.protocolNumber);
+      const nome = decryptField(c.fullNameEnc);
+      if (nome) porNome.set(normalizeName(nome), c.protocolNumber);
+    }
+
     const existingAffiliations = await prisma.configItem.findMany({ where: { type: "AFFILIATION" } });
     const affiliationNames = new Set(existingAffiliations.map((a: any) => a.name.toLowerCase()));
 
     let created = 0;
+    let flagged = 0;
     const errors: Array<{ row: number; error: string }> = [];
 
     for (let i = 0; i < rows.length; i++) {
-      const b = rows[i];
+      const b = rows[i] ?? {};
       try {
         if (!b.fullName) {
-          errors.push({ row: i + 1, error: "Nome é obrigatório." });
+          errors.push({ row: b.sourceRowNumber ?? i + 1, error: "Nome é obrigatório." });
           continue;
         }
+
+        // Motivos de revisão calculados no navegador + os detectados aqui.
+        const reasons: string[] = Array.isArray(b.reviewReasons) ? [...b.reviewReasons] : [];
+
+        // Duplicata: registramos e sinalizamos, mas NUNCA descartamos a linha —
+        // pode ser reingresso legítimo, e sumir com alguém da fila é pior do
+        // que ter um cadastro a mais para conferir.
+        const matricula = b.registrationCode ? String(b.registrationCode).trim() : "";
+        const nomeNorm = normalizeName(String(b.fullName));
+        if (matricula && porMatricula.has(matricula)) {
+          reasons.push(`Já existe cadastro com esta matrícula (protocolo ${porMatricula.get(matricula)}).`);
+        } else if (porNome.has(nomeNorm)) {
+          reasons.push(`Já existe cadastro com este nome (protocolo ${porNome.get(nomeNorm)}).`);
+        }
+
         if (b.affiliation && !affiliationNames.has(String(b.affiliation).toLowerCase())) {
-          await prisma.configItem.create({ data: { type: "AFFILIATION", name: b.affiliation, isActive: true } });
+          await prisma.configItem.create({
+            data: { type: "AFFILIATION", name: String(b.affiliation), isActive: true },
+          });
           affiliationNames.add(String(b.affiliation).toLowerCase());
         }
 
-        const created_ = await prisma.client.create({
+        const needsReview = reasons.length > 0;
+        if (needsReview) flagged++;
+
+        const novo = await prisma.client.create({
           data: {
             protocolNumber: b.protocolNumber || "Pendente",
-            registrationCode: b.registrationCode || "",
+            registrationCode: matricula,
             fullNameEnc: encryptField(b.fullName),
             whatsappEnc: encryptField(b.whatsapp),
             birthDateEnc: encryptField(b.birthDate),
@@ -584,9 +623,14 @@ app.post(
             residenceCityNeighborhoodEnc: encryptField(b.residenceCityNeighborhood),
             helpRequestEnc: encryptField(b.helpRequest),
             medicationsEnc: encryptField(b.medications),
+            // Diagnóstico/CID é dado de saúde: criptografado como o restante.
+            diagnosisEnc: encryptField(b.diagnosis),
             contactObservationsEnc: encryptField(b.contactObservations),
             affiliation: b.affiliation || "",
             allocation: b.allocation || "",
+            dependencyType: b.dependencyType,
+            extension: b.extension,
+            alescEntryDate: parseDateInput(b.alescEntryDate) ?? undefined,
             dateIncluded: parseDateInput(b.dateIncluded) ?? new Date(),
             status: "FILA_ESPERA",
             sector: b.sector,
@@ -596,21 +640,86 @@ app.post(
             contactMadeByName: b.contactMadeByName,
             contactDate: parseDateInput(b.contactDate) ?? undefined,
             contactStatus: b.contactStatus,
+            needsReview,
+            reviewNotes: needsReview ? reasons.join(" ") : null,
+            importBatchId,
           },
         });
+
+        // Atualiza os índices para que duplicatas DENTRO da mesma planilha
+        // também sejam detectadas.
+        if (matricula) porMatricula.set(matricula, novo.protocolNumber);
+        porNome.set(nomeNorm, novo.protocolNumber);
+
         await writeHistory({
-          clientId: created_.id,
+          clientId: novo.id,
           actor: actorOf(session),
           category: "FLUXO",
-          action: "Caso criado via importação de planilha",
+          action: "Caso criado por importação de planilha",
+          details: `Origem: ${sourceLabel}. Linha ${b.sourceRowNumber ?? i + 1}.` +
+            (needsReview ? ` Marcado para revisão: ${reasons.join(" ")}` : ""),
         });
         created++;
       } catch (err: any) {
-        errors.push({ row: i + 1, error: err?.message || "Erro desconhecido." });
+        errors.push({ row: b.sourceRowNumber ?? i + 1, error: err?.message || "Erro desconhecido." });
       }
     }
 
-    res.json({ created, errors });
+    res.json({ created, flagged, errors, importBatchId });
+  })
+);
+
+function normalizeName(name: string): string {
+  return String(name)
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toUpperCase()
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/** Desfaz uma importação inteira (só o que aquele lote criou). */
+app.delete(
+  "/api/clients/import/:batchId",
+  asyncHandler(async (req, res) => {
+    const session = requireSession(req, res, ["SUPERVISOR", "ADMIN"]);
+    if (!session) return;
+    const batchId = req.params.batchId;
+
+    // Trava de segurança: se algum paciente do lote já recebeu atendimento,
+    // apagar destruiria registro clínico. Nesse caso, recusamos.
+    const comProntuario = await prisma.sessionRecord.count({
+      where: { client: { importBatchId: batchId }, isDraft: false },
+    });
+    if (comProntuario > 0) {
+      res.status(409).json({
+        error: `Não é possível desfazer: ${comProntuario} atendimento(s) já foram registrados para pacientes deste lote.`,
+      });
+      return;
+    }
+    const result = await prisma.client.deleteMany({ where: { importBatchId: batchId } });
+    res.json({ deleted: result.count });
+  })
+);
+
+/** Marca um cadastro importado como revisado. */
+app.post(
+  "/api/clients/:id/mark-reviewed",
+  asyncHandler(async (req, res) => {
+    const session = requireSession(req, res, ["SUPERVISOR", "ADMIN"]);
+    if (!session) return;
+    const client = await prisma.client.update({
+      where: { id: req.params.id },
+      data: { needsReview: false, reviewNotes: null },
+      include: { assignedPsico: true, instrumentApps: { include: { entries: true } } },
+    });
+    await writeHistory({
+      clientId: client.id,
+      actor: actorOf(session),
+      category: "CADASTRO",
+      action: "Cadastro importado conferido e liberado",
+    });
+    res.json({ client: mapClient(client) });
   })
 );
 
@@ -724,6 +833,7 @@ app.patch(
       previouslyAttended: "previouslyAttended",
       contactMadeByName: "contactMadeByName",
       contactStatus: "contactStatus",
+      extension: "extension",
     };
     for (const key of Object.keys(plain)) {
       if (key in b) data[key] = b[key];
@@ -740,6 +850,9 @@ app.patch(
     if ("helpRequest" in b) data.helpRequestEnc = encryptField(b.helpRequest);
     if ("medications" in b) data.medicationsEnc = encryptField(b.medications);
     if ("contactObservations" in b) data.contactObservationsEnc = encryptField(b.contactObservations);
+    // Diagnóstico/CID: dado de saúde, criptografado como os demais sensíveis.
+    if ("diagnosis" in b) data.diagnosisEnc = encryptField(b.diagnosis);
+    if ("alescEntryDate" in b) data.alescEntryDate = parseDateInput(b.alescEntryDate);
 
     // Encerramento do caso: registra a data e calcula o prazo de guarda.
     let retentionNote: string | null = null;

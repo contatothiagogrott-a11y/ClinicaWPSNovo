@@ -104,6 +104,17 @@ export interface Client {
    * Visível apenas para Supervisor e Administrativo.
    */
   history?: HistoryLog[];
+  /** Diagnóstico/CID informado no formulário (dado sensível, criptografado). */
+  diagnosis?: string;
+  /** Ramal institucional. */
+  extension?: string;
+  /** Mês/ano de ingresso na ALESC. */
+  alescEntryDate?: string;
+  /** Cadastro importado que precisa de conferência humana. */
+  needsReview?: boolean;
+  reviewNotes?: string;
+  /** Lote de importação (permite desfazer uma importação inteira). */
+  importBatchId?: string;
   /** Encerramento do caso e prazo de guarda do registro documental. */
   finalizedAt?: string;
   retentionUntil?: string;

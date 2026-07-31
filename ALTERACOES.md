@@ -199,3 +199,58 @@ O schema foi escrito com cuidado, mas **não foi validado pelo parser do Prisma 
 3. **Supervisor lê todos os prontuários** (supervisão clínica). Correto para supervisão; se o setor preferir restringir a casos sob supervisão formal, é ajustável.
 4. **Bundle de 3,7 MB** num único arquivo. Não mexi (fora do escopo), mas `pdfmake` e o calendário pesam bastante e poderiam ser carregados sob demanda.
 5. **Chave de criptografia única, sem rotação.** Hoje, trocá-la inutiliza os dados. Uma rotação versionada seria o próximo passo de maturidade.
+
+---
+
+## 7. IMPORTAÇÃO DE PLANILHAS DE FILA DE ESPERA
+
+Construída a partir da análise dos arquivos reais do setor (3 arquivos, 17 abas).
+
+### Escopo definido
+Importar apenas: `Lista Geral 2026`, `Lista Geral 2025.`, `Espera Geral` e
+`Lista Geral - Estagiarios`. As abas de organização de atendimentos, prontuário
+e triagem de risco ficam de fora.
+
+**233 linhas → 155 pessoas distintas → 53 sinalizadas para revisão.**
+
+### Armadilhas dos arquivos reais, todas tratadas
+| Problema encontrado | Tratamento |
+|---|---|
+| Telefone gravado **como data** (`48999216836`) | Leitura em bruto; o tipo é decidido pelo campo de destino, não pelo que o Excel acha que a célula é |
+| Matrícula como decimal (`13230.0`) | Convertida para `13230` |
+| Hora como fração de dia (`0.4166`) | Convertida para `10:00` |
+| Cabeçalho na **linha 2** (`Espera Geral`) | Usuário escolhe a linha do cabeçalho |
+| Coluna sem título (`Matutino`) | Nomeada pela letra, continua mapeável |
+| Colunas deslocadas (telefone em "Programa"; setor em "Matrícula") | Detectado e marcado para revisão |
+| `Dependente` na coluna Matrícula | Convertido para o campo Tipo de dependência |
+| Turno em texto livre (12 variações) | Importado como está, marcado para revisão |
+
+### Como funciona
+Arquivo → escolher aba → escolher linha do cabeçalho → **conferir de onde vem
+cada campo** (com correção manual) → pré-visualizar → importar.
+
+- **Nomes, setor e contato de emergência em CAIXA ALTA**
+- **Diagnóstico/CID** em campo próprio criptografado (dado de saúde, LGPD Art. 5º, II)
+- **Ramal** e **Data de ingresso na ALESC**: campos novos
+- E-mail, plano de saúde, acompanhamento profissional, terapia regular e
+  interesse em grupo → concatenados em Observações, rotulados
+- Agendamento que constava na planilha → preservado em Observações
+  (*"Consta agendamento anterior... redistribuir manualmente"*), sem migrar
+  para a agenda: todos entram como **Fila de Espera sem psicólogo atribuído**
+
+### Revisão pós-importação
+Nenhuma linha com nome é descartada, e nada duvidoso entra em silêncio.
+O que precisa de conferência é marcado (`needsReview` + motivo) e aparece:
+- numa **faixa laranja** no topo da Fila de Espera, com filtro "ver só estes";
+- com selo **REVISAR** no cartão do paciente;
+- numa faixa dentro da ficha, com o motivo exato e botão "Marcar como revisado".
+
+Motivos automáticos: duplicata de matrícula ou nome, telefone ausente/inválido,
+telefone em campo de texto (coluna deslocada), matrícula sem dígito, turno fora
+do padrão, data não reconhecida, nome com um só termo.
+
+### Desfazer
+Cada importação recebe um `importBatchId`. A rota
+`DELETE /api/clients/import/:batchId` remove o lote inteiro — **exceto** se
+algum paciente já tiver prontuário registrado, caso em que a operação é
+recusada (apagar destruiria registro clínico).

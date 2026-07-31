@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { useStore } from "../contexts/StoreContext";
-import { ChevronLeft, Edit2, Clock, FileText, UserCircle, Save, Phone, X, FileDown, ShieldAlert, Siren, Download, Lock, Users2, ArrowRightLeft, ShieldCheck, History } from "lucide-react";
+import { ChevronLeft, Edit2, Clock, FileText, UserCircle, Save, Phone, X, FileDown, ShieldAlert, Siren, Download, Lock, Users2, ArrowRightLeft, ShieldCheck, History, AlertTriangle } from "lucide-react";
 import { cn } from "../lib/utils";
 
 import ClinicalDocumentForm from "../components/ClinicalDocumentForm";
@@ -41,7 +41,7 @@ const HISTORY_CATEGORY_STYLE: Record<string, { label: string; dot: string; ring:
 export default function ClientProfile() {
   const { id } = useParams();
   const navigate = useNavigate();
-  const { clients, users, sessions, currentUser, updateClient, reactivateClient, config, addConfigItem, clinicalDocuments, addClinicalDocument, updateClinicalDocument, instruments, groups, groupClientNotes, saveGroupClientNote, clinicalClientIds, fetchClientHistory, registerClientAccess, registerDocumentExport } = useStore();
+  const { clients, users, sessions, currentUser, updateClient, reactivateClient, config, addConfigItem, clinicalDocuments, addClinicalDocument, updateClinicalDocument, instruments, groups, groupClientNotes, saveGroupClientNote, clinicalClientIds, markClientReviewed, fetchClientHistory, registerClientAccess, registerDocumentExport } = useStore();
   const client = clients.find(c => c.id === id);
 
   const [activeTab, setActiveTab] = useState<"INFO" | "PRONTUARIO" | "HISTORICO" | "INSTRUMENTOS" | "DOCUMENTOS" | "GRUPO">("INFO");
@@ -612,6 +612,32 @@ export default function ClientProfile() {
                  </div>
               </div>
             </div>
+          </div>
+        )}
+
+        {/*
+          Cadastro importado pendente de conferência.
+          O aviso fica no topo da ficha, com o motivo exato — sem isso, o
+          usuário teria de adivinhar o que revisar.
+        */}
+        {client.needsReview && (
+          <div className="mb-6 bg-amber-50 border border-amber-200 rounded-2xl p-5 flex flex-col sm:flex-row sm:items-start gap-4">
+            <AlertTriangle className="text-amber-600 shrink-0 mt-0.5" size={20} />
+            <div className="flex-1 min-w-0">
+              <p className="font-bold text-amber-900">Cadastro importado — precisa de conferência</p>
+              <p className="text-sm text-amber-800 mt-1 whitespace-pre-wrap">{client.reviewNotes}</p>
+              <p className="text-xs text-amber-700/80 mt-2">
+                Confira os dados acima, corrija o que for necessário e libere o cadastro.
+              </p>
+            </div>
+            {canViewAuditTrail(currentUser) && (
+              <button
+                onClick={() => markClientReviewed(client.id)}
+                className="shrink-0 bg-amber-600 hover:bg-amber-700 text-white font-bold text-sm px-5 py-2.5 rounded-xl transition-colors"
+              >
+                Marcar como revisado
+              </button>
+            )}
           </div>
         )}
 

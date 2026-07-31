@@ -156,6 +156,34 @@ model Client {
   contactDate            DateTime?
   contactStatus          String?
 
+  // --- Campos vindos dos formulários de fila de espera (importação) ---
+
+  // Diagnóstico/CID informado pelo próprio paciente no formulário.
+  // Criptografado: é dado de saúde, a categoria mais sensível da LGPD
+  // (Art. 5º, II — "dado pessoal sensível"). Fica em campo próprio, e não
+  // diluído em observações, justamente para poder ser tratado com regra
+  // de acesso distinta no futuro.
+  diagnosisEnc           String?
+
+  // Ramal institucional (existe separado do celular em várias listas).
+  extension              String?
+
+  // Mês/ano de ingresso na ALESC (não obrigatório).
+  alescEntryDate         DateTime?
+
+  // --- Sinalização de revisão pós-importação ---
+  //
+  // Importar planilha de origens diferentes gera cadastro incompleto ou
+  // duplicado. Em vez de recusar a linha (o que faria perder gente da fila)
+  // ou aceitar em silêncio (o que espalha erro pelo prontuário), o registro
+  // entra marcado e aparece filtrado na Fila de Espera até alguém conferir.
+  needsReview            Boolean       @default(false)
+  reviewNotes            String?
+
+  // Identifica o lote de importação, permitindo desfazer uma importação
+  // inteira caso o mapeamento de colunas tenha saído errado.
+  importBatchId          String?
+
   // TEMPORALIDADE DE GUARDA (Resolução CFP nº 001/2009, art. 4º, §1º):
   // o registro documental deve ser guardado por no mínimo 5 anos após o
   // encerramento. Para crianças e adolescentes o prazo é maior — a regra de
@@ -179,6 +207,8 @@ model Client {
 
   @@index([status])
   @@index([assignedPsicoId])
+  @@index([needsReview])
+  @@index([importBatchId])
 }
 
 // Trilha de auditoria de ESCRITA. É append-only por decisão de projeto: não

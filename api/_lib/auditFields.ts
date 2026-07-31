@@ -37,6 +37,9 @@ export const PLAIN_FIELD_LABELS: Record<string, string> = {
   contactMadeByName: "Responsável pelo contato",
   contactStatus: "Status do contato",
   dateIncluded: "Data de inclusão",
+  extension: "Ramal",
+  alescEntryDate: "Data de ingresso na ALESC",
+  needsReview: "Sinalização de revisão",
   contactDate: "Data do contato",
 };
 
@@ -55,6 +58,7 @@ export const ENCRYPTED_FIELD_LABELS: Record<string, { label: string; column: str
   helpRequest: { label: "Pedido de ajuda", column: "helpRequestEnc" },
   medications: { label: "Medicações em uso", column: "medicationsEnc" },
   contactObservations: { label: "Observações de contato", column: "contactObservationsEnc" },
+  diagnosis: { label: "Diagnóstico/CID", column: "diagnosisEnc" },
 };
 
 const ASSIGNMENT_LABEL = "Profissional responsável";
