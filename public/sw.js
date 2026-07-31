@@ -104,3 +104,54 @@ self.addEventListener("fetch", (event) => {
     })
   );
 });
+
+/* ==========================================================================
+   NOTIFICAÇÕES PUSH
+   ==========================================================================
+   O conteúdo chega criptografado de ponta a ponta — o servidor de push do
+   Google/Apple não consegue lê-lo. Ainda assim, o texto exibido aparece na
+   tela de bloqueio, então ele nunca identifica paciente (ver api/_lib/push.ts).
+   ========================================================================== */
+
+self.addEventListener("push", (event) => {
+  let dados = {};
+  try {
+    dados = event.data ? event.data.json() : {};
+  } catch {
+    dados = {};
+  }
+
+  const titulo = dados.title || "Setor de Psicologia ALESC";
+  const opcoes = {
+    body: dados.body || "",
+    icon: "/icons/icon-192.png",
+    badge: "/icons/icon-192.png",
+    // Agrupa avisos do mesmo assunto em vez de empilhar repetidos.
+    tag: dados.tag || "geral",
+    renotify: false,
+    data: { url: dados.url || "/dashboard" },
+    // Sem vibração agressiva: pode tocar durante um atendimento.
+    vibrate: [80, 40, 80],
+  };
+
+  event.waitUntil(self.registration.showNotification(titulo, opcoes));
+});
+
+self.addEventListener("notificationclick", (event) => {
+  event.notification.close();
+  const destino = (event.notification.data && event.notification.data.url) || "/dashboard";
+
+  event.waitUntil(
+    self.clients.matchAll({ type: "window", includeUncontrolled: true }).then((janelas) => {
+      // Se o app já está aberto, aproveita a janela existente em vez de abrir
+      // outra — evita várias abas do sistema empilhadas.
+      for (const janela of janelas) {
+        if (janela.url.includes(self.location.origin)) {
+          janela.focus();
+          return janela.navigate(destino).catch(() => undefined);
+        }
+      }
+      return self.clients.openWindow(destino);
+    })
+  );
+});

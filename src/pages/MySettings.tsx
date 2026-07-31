@@ -1,7 +1,10 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useStore } from "../contexts/StoreContext";
 import { Lock } from "lucide-react";
+import { cn } from "../lib/utils";
 import { roleLabel } from "../lib/roles";
+import { verificarEstado, ativarNotificacoes, desativarNotificacoes, enviarTeste, type EstadoPush } from "../lib/push";
+import { Bell, BellOff, Smartphone } from "lucide-react";
 
 export default function MySettings() {
   const { currentUser, changeOwnPassword } = useStore();
@@ -12,6 +15,34 @@ export default function MySettings() {
   // Hooks). O `if (!currentUser) return null` estava acima deste useState.
   const [errorMsg, setErrorMsg] = useState("");
   const [currentPassword, setCurrentPassword] = useState("");
+
+  // --- Notificações push ---
+  const [estadoPush, setEstadoPush] = useState<EstadoPush | null>(null);
+  const [ocupadoPush, setOcupadoPush] = useState(false);
+  const [avisoPush, setAvisoPush] = useState("");
+
+  useEffect(() => {
+    verificarEstado().then(setEstadoPush).catch(() => setEstadoPush("nao_suportado"));
+  }, []);
+
+  const alternarPush = async () => {
+    setOcupadoPush(true);
+    setAvisoPush("");
+    try {
+      const novo = estadoPush === "ativado" ? await desativarNotificacoes() : await ativarNotificacoes();
+      setEstadoPush(novo);
+      if (novo === "ativado") {
+        const enviados = await enviarTeste();
+        setAvisoPush(enviados > 0
+          ? "Pronto. Enviamos uma notificação de teste para este aparelho."
+          : "Ativado, mas o teste não chegou. Verifique as permissões do navegador.");
+      }
+    } catch (err: any) {
+      setAvisoPush(err?.message || "Não foi possível alterar as notificações.");
+    } finally {
+      setOcupadoPush(false);
+    }
+  };
 
   const handleSave = async () => {
     if (!newPassword.trim()) return;
@@ -73,6 +104,75 @@ export default function MySettings() {
          </h3>
          
          <div className="space-y-4">
+            {/* NOTIFICAÇÕES ------------------------------------------------ */}
+            <div className="border border-gray-200 rounded-2xl p-5 space-y-3">
+               <div className="flex items-start gap-3">
+                  {estadoPush === "ativado"
+                    ? <Bell className="text-emerald-600 shrink-0 mt-0.5" size={20} />
+                    : <BellOff className="text-gray-400 shrink-0 mt-0.5" size={20} />}
+                  <div className="flex-1 min-w-0">
+                     <p className="font-bold text-gray-900">Notificações no celular</p>
+                     <p className="text-sm text-gray-500 mt-0.5">
+                        Avisos de atendimento e de pendências, mesmo com o aplicativo fechado.
+                        Por sigilo, a mensagem <strong>nunca mostra o nome do paciente</strong> —
+                        ela aparece na tela de bloqueio do aparelho.
+                     </p>
+                  </div>
+               </div>
+
+               {estadoPush === "precisa_instalar_ios" && (
+                  <div className="bg-blue-50 border border-blue-100 rounded-xl p-4 flex gap-3">
+                     <Smartphone className="text-blue-600 shrink-0 mt-0.5" size={18} />
+                     <p className="text-xs text-blue-900 leading-relaxed">
+                        No iPhone, as notificações só funcionam com o aplicativo instalado na tela
+                        de início. Toque no botão <strong>Compartilhar</strong> do Safari e escolha
+                        <strong> "Adicionar à Tela de Início"</strong>. Depois abra o app por lá e
+                        volte aqui. É necessário iOS 16.4 ou mais recente.
+                     </p>
+                  </div>
+               )}
+
+               {estadoPush === "bloqueado" && (
+                  <p className="text-xs text-amber-800 bg-amber-50 border border-amber-100 rounded-xl px-4 py-3">
+                     As notificações foram bloqueadas para este site. Libere nas configurações do
+                     navegador (cadeado ao lado do endereço) e tente de novo.
+                  </p>
+               )}
+
+               {estadoPush === "nao_configurado" && (
+                  <p className="text-xs text-gray-600 bg-gray-50 border border-gray-200 rounded-xl px-4 py-3">
+                     Recurso ainda não configurado no servidor. Fale com quem administra o sistema.
+                  </p>
+               )}
+
+               {estadoPush === "nao_suportado" && (
+                  <p className="text-xs text-gray-600 bg-gray-50 border border-gray-200 rounded-xl px-4 py-3">
+                     Este navegador não oferece notificações.
+                  </p>
+               )}
+
+               {(estadoPush === "ativado" || estadoPush === "desativado") && (
+                  <button
+                     onClick={alternarPush}
+                     disabled={ocupadoPush}
+                     className={cn(
+                        "w-full font-bold py-3 rounded-xl transition-colors disabled:opacity-60",
+                        estadoPush === "ativado"
+                           ? "bg-white border border-gray-200 text-gray-700 hover:bg-gray-50"
+                           : "bg-blue-600 hover:bg-blue-700 text-white"
+                     )}
+                  >
+                     {ocupadoPush
+                        ? "Aguarde..."
+                        : estadoPush === "ativado"
+                        ? "Desativar notificações neste aparelho"
+                        : "Ativar notificações neste aparelho"}
+                  </button>
+               )}
+
+               {avisoPush && <p className="text-xs text-gray-600">{avisoPush}</p>}
+            </div>
+
             <div>
                <label className="block text-sm font-medium text-gray-700">Senha Atual</label>
                <input

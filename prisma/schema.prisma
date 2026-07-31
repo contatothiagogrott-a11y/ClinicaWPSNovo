@@ -110,6 +110,7 @@ model User {
   instrumentApps    InstrumentApplication[]
   historyLogs       HistoryLog[]
   accessLogs        AccessLog[]
+  pushSubscriptions PushSubscription[]
   clinicalDocuments ClinicalDocument[]
   groupClientNotes  GroupClientNote[]
 }
@@ -230,6 +231,36 @@ model HistoryLog {
 
   @@index([clientId])
   @@index([category])
+}
+
+// Inscrição de um DISPOSITIVO para receber notificações push.
+//
+// Uma pessoa pode ter várias (celular + computador), por isso a chave é o
+// endpoint, não o usuário.
+//
+// Sobre o conteúdo: a mensagem enviada é criptografada de ponta a ponta pelo
+// protocolo Web Push (VAPID + aes128gcm). O servidor do Google/Apple entrega
+// o pacote sem conseguir lê-lo. Ainda assim, o TEXTO EXIBIDO aparece na tela
+// de bloqueio do aparelho — por isso ele nunca identifica paciente
+// (ver api/_lib/push.ts).
+model PushSubscription {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  // URL opaca gerada pelo navegador. Guardada em claro porque é a chave de
+  // busca e de deduplicação; não contém dado de paciente.
+  endpoint  String   @unique
+  p256dh    String
+  auth      String
+
+  userAgent String?
+  createdAt DateTime @default(now())
+  lastUsedAt DateTime?
+  // Inscrições que falham repetidamente são removidas automaticamente.
+  failureCount Int    @default(0)
+
+  @@index([userId])
 }
 
 // Trilha de auditoria de LEITURA/EXPORTAÇÃO. Responde "quem viu o quê e
@@ -361,7 +392,12 @@ model Appointment {
   seriesId      String?
   recurrence    String?
   sessionNumber Int?
-  attendance    String? @default("PENDENTE")
+  attendance    String?   @default("PENDENTE")
+
+  // Momento em que o lembrete por push foi enviado.
+  // Existe para IDEMPOTÊNCIA: o disparador externo bate na rota a cada 15
+  // minutos, e sem esta marca o mesmo lembrete sairia várias vezes.
+  reminderSentAt DateTime?
 
   @@index([date])
   @@index([psicoId])

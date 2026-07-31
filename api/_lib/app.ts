@@ -13,6 +13,10 @@ import {
   type AppRole,
 } from "./auth.js";
 import { securityHeaders, clientIp } from "./security.js";
+import {
+  isPushConfigured, getPublicKey, sendToUser,
+  lembreteDeAtendimento, resumoDoDia, pacienteAtribuido,
+} from "./push.js";
 import { checkRateLimit, registerFailure, registerSuccess, rateLimitKey } from "./rateLimit.js";
 import { parseDateInput, parseLocalDateTime, startOfDayBRT } from "./datetime.js";
 import { computeRetentionUntil, describeRetention } from "./retention.js";
@@ -2078,6 +2082,260 @@ app.get(
     res.json({ rows: Array.from(byPsico.values()) });
   })
 );
+
+// ---------------------------------------------------------------------------
+// NOTIFICAÇÕES PUSH
+// ---------------------------------------------------------------------------
+
+app.get(
+  "/api/push/public-key",
+  asyncHandler(async (req, res) => {
+    const session = requireSession(req, res);
+    if (!session) return;
+    res.json({ publicKey: getPublicKey(), enabled: isPushConfigured() });
+  })
+);
+
+/** Registra um dispositivo. Uma pessoa pode ter vários (celular + computador). */
+app.post(
+  "/api/push/subscribe",
+  asyncHandler(async (req, res) => {
+    const session = requireSession(req, res);
+    if (!session) return;
+    const { endpoint, keys } = req.body ?? {};
+    if (!endpoint || !keys?.p256dh || !keys?.auth) {
+      res.status(400).json({ error: "Inscrição inválida." });
+      return;
+    }
+    // upsert pelo endpoint: reinstalar o app no mesmo aparelho não duplica.
+    await prisma.pushSubscription.upsert({
+      where: { endpoint: String(endpoint) },
+      update: {
+        userId: session.userId,
+        p256dh: String(keys.p256dh),
+        auth: String(keys.auth),
+        userAgent: String(req.headers["user-agent"] ?? "").slice(0, 200),
+        failureCount: 0,
+      },
+      create: {
+        userId: session.userId,
+        endpoint: String(endpoint),
+        p256dh: String(keys.p256dh),
+        auth: String(keys.auth),
+        userAgent: String(req.headers["user-agent"] ?? "").slice(0, 200),
+      },
+    });
+    res.json({ ok: true });
+  })
+);
+
+app.post(
+  "/api/push/unsubscribe",
+  asyncHandler(async (req, res) => {
+    const session = requireSession(req, res);
+    if (!session) return;
+    const endpoint = String(req.body?.endpoint ?? "");
+    if (endpoint) {
+      await prisma.pushSubscription.deleteMany({ where: { endpoint, userId: session.userId } });
+    }
+    res.json({ ok: true });
+  })
+);
+
+/** Envio de teste para o próprio usuário, para conferir se chegou. */
+app.post(
+  "/api/push/test",
+  asyncHandler(async (req, res) => {
+    const session = requireSession(req, res);
+    if (!session) return;
+    const enviados = await sendToUser(session.userId, {
+      title: "Notificações ativadas",
+      body: "É assim que os avisos do Setor de Psicologia vão aparecer.",
+      url: "/dashboard",
+      tag: "teste",
+    });
+    res.json({ enviados });
+  })
+);
+
+// ---------------------------------------------------------------------------
+// DISPARADOR DE LEMBRETES (chamado por agendador EXTERNO)
+// ---------------------------------------------------------------------------
+//
+// O plano gratuito da Vercel permite apenas um agendamento por dia, o que não
+// serve para lembretes por horário. A solução é um serviço externo gratuito
+// (cron-job.org, Upstash QStash) batendo nesta rota a cada 15 minutos.
+//
+// Como a rota fica exposta na internet, ela exige um segredo. A comparação é
+// feita em TEMPO CONSTANTE: comparar strings com === vaza, pelo tempo de
+// resposta, quantos caracteres iniciais estavam certos, o que permite
+// descobrir o segredo caractere a caractere.
+//
+// IDEMPOTÊNCIA: como o disparador bate de 15 em 15 minutos e a janela de
+// lembrete é maior que isso, o mesmo atendimento cairia na busca várias vezes.
+// Por isso gravamos `reminderSentAt` e ignoramos quem já foi avisado.
+app.post(
+  "/api/cron/reminders",
+  asyncHandler(async (req, res) => {
+    if (!verifyCronSecret(req)) {
+      res.status(401).json({ error: "Não autorizado." });
+      return;
+    }
+    if (!isPushConfigured()) {
+      res.json({ skipped: "VAPID não configurado." });
+      return;
+    }
+
+    const agora = new Date();
+    const hoje = toDateOnlyBRT(agora);
+    const inicioDoDia = startOfDayBRT(hoje);
+    const fimDoDia = inicioDoDia ? new Date(inicioDoDia.getTime() + 24 * 3600 * 1000) : null;
+    if (!inicioDoDia || !fimDoDia) {
+      res.status(500).json({ error: "Falha ao calcular o dia." });
+      return;
+    }
+
+    const agendamentos = await prisma.appointment.findMany({
+      where: { date: { gte: inicioDoDia, lt: fimDoDia }, reminderSentAt: null },
+    });
+
+    const minutosAgora = minutesOfDayBRT(agora);
+    let enviados = 0;
+    const avisados: string[] = [];
+
+    /**
+     * COMO A JANELA É CALCULADA
+     * -------------------------
+     * `avisoMinimo`  = com quanta antecedência a pessoa precisa ser avisada.
+     * `intervalo`    = de quanto em quanto tempo o disparador externo bate aqui.
+     *
+     * A janela é `0 < faltam <= avisoMinimo + intervalo`. O motivo: como cada
+     * agendamento só é avisado UMA vez (reminderSentAt), o aviso sai na
+     * primeira batida em que o tempo restante cabe na janela. Somando o
+     * intervalo ao aviso mínimo, garantimos que ninguém receba com MENOS
+     * antecedência do que o combinado, mesmo no pior caso.
+     *
+     * Consequência prática: quanto mais frequente o disparador, mais preciso
+     * o aviso. Com aviso mínimo de 30 min:
+     *   disparador a cada 30 min -> chega entre 30 e 60 min antes
+     *   disparador a cada 15 min -> chega entre 30 e 45 min antes
+     *   disparador a cada  5 min -> chega entre 30 e 35 min antes
+     */
+    const avisoMinimo = Number(process.env.REMINDER_MINUTES_BEFORE ?? 30);
+    const intervalo = Number(process.env.CRON_INTERVAL_MINUTES ?? 30);
+    const limiteSuperior = avisoMinimo + intervalo;
+
+    for (const a of agendamentos) {
+      const [h, m] = String(a.time ?? "").split(":").map(Number);
+      if (isNaN(h) || isNaN(m)) continue;
+      const minutosDoAtendimento = h * 60 + m;
+      const faltam = minutosDoAtendimento - minutosAgora;
+
+      if (faltam <= 0 || faltam > limiteSuperior) continue;
+
+      const n = await sendToUser(
+        a.psicoId,
+        lembreteDeAtendimento(a.time, a.roomId ?? undefined)
+      );
+      enviados += n;
+      avisados.push(a.id);
+    }
+
+    if (avisados.length > 0) {
+      await prisma.appointment.updateMany({
+        where: { id: { in: avisados } },
+        data: { reminderSentAt: new Date() },
+      });
+    }
+
+    res.json({
+      verificados: agendamentos.length,
+      avisados: avisados.length,
+      enviados,
+      janela: `0 a ${limiteSuperior} minutos antes`,
+    });
+  })
+);
+
+/** Resumo matinal — cabe no agendamento único do plano gratuito da Vercel. */
+app.post(
+  "/api/cron/daily-summary",
+  asyncHandler(async (req, res) => {
+    if (!verifyCronSecret(req)) {
+      res.status(401).json({ error: "Não autorizado." });
+      return;
+    }
+    if (!isPushConfigured()) {
+      res.json({ skipped: "VAPID não configurado." });
+      return;
+    }
+
+    const hoje = toDateOnlyBRT(new Date());
+    const inicio = startOfDayBRT(hoje);
+    const fim = inicio ? new Date(inicio.getTime() + 24 * 3600 * 1000) : null;
+    if (!inicio || !fim) {
+      res.status(500).json({ error: "Falha ao calcular o dia." });
+      return;
+    }
+
+    const agendamentos = await prisma.appointment.findMany({
+      where: { date: { gte: inicio, lt: fim } },
+      orderBy: { time: "asc" },
+    });
+
+    const porPsico = new Map<string, string[]>();
+    for (const a of agendamentos) {
+      const lista = porPsico.get(a.psicoId) ?? [];
+      lista.push(a.time);
+      porPsico.set(a.psicoId, lista);
+    }
+
+    let enviados = 0;
+    for (const [psicoId, horarios] of porPsico) {
+      enviados += await sendToUser(psicoId, resumoDoDia(horarios.length, horarios[0]));
+    }
+    res.json({ profissionais: porPsico.size, enviados });
+  })
+);
+
+/**
+ * Comparação em tempo constante do segredo do disparador.
+ * O segredo vai no cabeçalho, não na URL: parâmetros de query aparecem em
+ * logs de servidor, de proxy e no histórico do navegador.
+ */
+function verifyCronSecret(req: Request): boolean {
+  const expected = process.env.CRON_SECRET;
+  if (!expected) return false;
+  const header = req.headers["authorization"];
+  const provided = typeof header === "string" && header.startsWith("Bearer ")
+    ? header.slice(7)
+    : String(req.headers["x-cron-secret"] ?? "");
+  if (!provided) return false;
+  const a = Buffer.from(provided);
+  const b = Buffer.from(expected);
+  if (a.length !== b.length) return false;
+  return crypto.timingSafeEqual(a, b);
+}
+
+function toDateOnlyBRT(d: Date): string {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/Sao_Paulo",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(d);
+}
+
+function minutesOfDayBRT(d: Date): number {
+  const partes = new Intl.DateTimeFormat("pt-BR", {
+    timeZone: "America/Sao_Paulo",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).formatToParts(d);
+  const get = (t: string) => Number(partes.find((p) => p.type === t)?.value ?? "0");
+  return get("hour") * 60 + get("minute");
+}
 
 app.get("/api/health", (_req, res) => res.json({ ok: true, time: new Date().toISOString() }));
 
