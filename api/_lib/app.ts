@@ -545,21 +545,31 @@ app.post(
     if (!session) return;
     const rows: any[] = Array.isArray(req.body?.rows) ? req.body.rows : [];
     const sourceLabel = String(req.body?.sourceLabel ?? "planilha").slice(0, 120);
+    // O navegador envia a planilha em pedaços e reaproveita o mesmo lote,
+    // para que "desfazer importação" continue apagando tudo de uma vez.
+    const importBatchId = String(req.body?.importBatchId || crypto.randomUUID());
+
     if (rows.length === 0) {
       res.status(400).json({ error: "Nenhuma linha para importar." });
       return;
     }
-    if (rows.length > 500) {
-      res.status(400).json({ error: "Máximo de 500 linhas por importação." });
+    if (rows.length > 200) {
+      res.status(400).json({ error: "Envie no máximo 200 linhas por requisição." });
       return;
     }
 
-    // Identifica o lote: permite desfazer a importação inteira se o
-    // mapeamento de colunas tiver saído errado.
-    const importBatchId = crypto.randomUUID();
-
-    // Carrega os cadastros existentes UMA vez para detectar duplicatas sem
-    // fazer uma consulta por linha.
+    /**
+     * DESEMPENHO — por que aqui usamos createMany
+     * -------------------------------------------
+     * A versão anterior fazia, para CADA linha, um `client.create` seguido de
+     * um `historyLog.create`. Com 233 linhas isso vira ~470 idas e voltas
+     * sequenciais até o Neon, o que estourava o limite de tempo da função
+     * (erro 504 na Vercel).
+     *
+     * Agora os IDs são gerados aqui e tudo entra em DUAS operações em lote,
+     * independentemente do número de linhas. A trilha de auditoria continua
+     * completa: cada paciente importado gera sua entrada de histórico.
+     */
     const existentes = await prisma.client.findMany({
       select: { id: true, registrationCode: true, fullNameEnc: true, protocolNumber: true },
     });
@@ -571,101 +581,116 @@ app.post(
       if (nome) porNome.set(normalizeName(nome), c.protocolNumber);
     }
 
+    // Vínculos novos: coletados e criados de uma vez só.
     const existingAffiliations = await prisma.configItem.findMany({ where: { type: "AFFILIATION" } });
     const affiliationNames = new Set(existingAffiliations.map((a: any) => a.name.toLowerCase()));
+    const novasAfiliacoes = new Set<string>();
 
-    let created = 0;
-    let flagged = 0;
+    const clientesParaCriar: any[] = [];
+    const historicoParaCriar: any[] = [];
     const errors: Array<{ row: number; error: string }> = [];
+    let flagged = 0;
 
     for (let i = 0; i < rows.length; i++) {
       const b = rows[i] ?? {};
+      const linha = b.sourceRowNumber ?? i + 1;
       try {
         if (!b.fullName) {
-          errors.push({ row: b.sourceRowNumber ?? i + 1, error: "Nome é obrigatório." });
+          errors.push({ row: linha, error: "Nome é obrigatório." });
           continue;
         }
 
-        // Motivos de revisão calculados no navegador + os detectados aqui.
         const reasons: string[] = Array.isArray(b.reviewReasons) ? [...b.reviewReasons] : [];
-
-        // Duplicata: registramos e sinalizamos, mas NUNCA descartamos a linha —
-        // pode ser reingresso legítimo, e sumir com alguém da fila é pior do
-        // que ter um cadastro a mais para conferir.
         const matricula = b.registrationCode ? String(b.registrationCode).trim() : "";
         const nomeNorm = normalizeName(String(b.fullName));
+
+        // Duplicata: sinalizada, nunca descartada — pode ser reingresso
+        // legítimo, e sumir com alguém da fila é pior que ter um cadastro a
+        // mais para conferir.
         if (matricula && porMatricula.has(matricula)) {
           reasons.push(`Já existe cadastro com esta matrícula (protocolo ${porMatricula.get(matricula)}).`);
         } else if (porNome.has(nomeNorm)) {
           reasons.push(`Já existe cadastro com este nome (protocolo ${porNome.get(nomeNorm)}).`);
         }
 
-        if (b.affiliation && !affiliationNames.has(String(b.affiliation).toLowerCase())) {
-          await prisma.configItem.create({
-            data: { type: "AFFILIATION", name: String(b.affiliation), isActive: true },
-          });
-          affiliationNames.add(String(b.affiliation).toLowerCase());
+        const afiliacao = b.affiliation ? String(b.affiliation) : "";
+        if (afiliacao && !affiliationNames.has(afiliacao.toLowerCase())) {
+          novasAfiliacoes.add(afiliacao);
+          affiliationNames.add(afiliacao.toLowerCase());
         }
 
         const needsReview = reasons.length > 0;
         if (needsReview) flagged++;
 
-        const novo = await prisma.client.create({
-          data: {
-            protocolNumber: b.protocolNumber || "Pendente",
-            registrationCode: matricula,
-            fullNameEnc: encryptField(b.fullName),
-            whatsappEnc: encryptField(b.whatsapp),
-            birthDateEnc: encryptField(b.birthDate),
-            emergencyContactNameEnc: encryptField(b.emergencyContactName),
-            emergencyContactPhoneEnc: encryptField(b.emergencyContactPhone),
-            emergencyContactRelationshipEnc: encryptField(b.emergencyContactRelationship),
-            residenceCityNeighborhoodEnc: encryptField(b.residenceCityNeighborhood),
-            helpRequestEnc: encryptField(b.helpRequest),
-            medicationsEnc: encryptField(b.medications),
-            // Diagnóstico/CID é dado de saúde: criptografado como o restante.
-            diagnosisEnc: encryptField(b.diagnosis),
-            contactObservationsEnc: encryptField(b.contactObservations),
-            affiliation: b.affiliation || "",
-            allocation: b.allocation || "",
-            dependencyType: b.dependencyType,
-            extension: b.extension,
-            alescEntryDate: parseDateInput(b.alescEntryDate) ?? undefined,
-            dateIncluded: parseDateInput(b.dateIncluded) ?? new Date(),
-            status: "FILA_ESPERA",
-            sector: b.sector,
-            workShift: b.workShift,
-            whatsappAuthorized: b.whatsappAuthorized,
-            previouslyAttended: b.previouslyAttended,
-            contactMadeByName: b.contactMadeByName,
-            contactDate: parseDateInput(b.contactDate) ?? undefined,
-            contactStatus: b.contactStatus,
-            needsReview,
-            reviewNotes: needsReview ? reasons.join(" ") : null,
-            importBatchId,
-          },
+        const id = crypto.randomUUID();
+        const protocolNumber = b.protocolNumber || "Pendente";
+
+        clientesParaCriar.push({
+          id,
+          protocolNumber,
+          registrationCode: matricula,
+          fullNameEnc: encryptField(b.fullName),
+          whatsappEnc: encryptField(b.whatsapp),
+          birthDateEnc: encryptField(b.birthDate),
+          emergencyContactNameEnc: encryptField(b.emergencyContactName),
+          emergencyContactPhoneEnc: encryptField(b.emergencyContactPhone),
+          emergencyContactRelationshipEnc: encryptField(b.emergencyContactRelationship),
+          residenceCityNeighborhoodEnc: encryptField(b.residenceCityNeighborhood),
+          helpRequestEnc: encryptField(b.helpRequest),
+          medicationsEnc: encryptField(b.medications),
+          diagnosisEnc: encryptField(b.diagnosis),
+          contactObservationsEnc: encryptField(b.contactObservations),
+          affiliation: afiliacao,
+          allocation: b.allocation || "",
+          dependencyType: b.dependencyType,
+          extension: b.extension,
+          alescEntryDate: parseDateInput(b.alescEntryDate) ?? undefined,
+          dateIncluded: parseDateInput(b.dateIncluded) ?? new Date(),
+          status: "FILA_ESPERA",
+          sector: b.sector,
+          workShift: b.workShift,
+          whatsappAuthorized: b.whatsappAuthorized,
+          previouslyAttended: b.previouslyAttended,
+          contactMadeByName: b.contactMadeByName,
+          contactDate: parseDateInput(b.contactDate) ?? undefined,
+          contactStatus: b.contactStatus,
+          needsReview,
+          reviewNotes: needsReview ? reasons.join(" ") : null,
+          importBatchId,
         });
 
-        // Atualiza os índices para que duplicatas DENTRO da mesma planilha
-        // também sejam detectadas.
-        if (matricula) porMatricula.set(matricula, novo.protocolNumber);
-        porNome.set(nomeNorm, novo.protocolNumber);
-
-        await writeHistory({
-          clientId: novo.id,
-          actor: actorOf(session),
+        historicoParaCriar.push({
+          clientId: id,
+          actorId: session.userId,
           category: "FLUXO",
           action: "Caso criado por importação de planilha",
-          details: `Origem: ${sourceLabel}. Linha ${b.sourceRowNumber ?? i + 1}.` +
-            (needsReview ? ` Marcado para revisão: ${reasons.join(" ")}` : ""),
+          detailsEnc: encryptField(
+            `Origem: ${sourceLabel}. Linha ${linha}.` +
+              (needsReview ? ` Marcado para revisão: ${reasons.join(" ")}` : "")
+          ),
         });
-        created++;
+
+        // Permite detectar duplicatas DENTRO da própria planilha.
+        if (matricula) porMatricula.set(matricula, protocolNumber);
+        porNome.set(nomeNorm, protocolNumber);
       } catch (err: any) {
-        errors.push({ row: b.sourceRowNumber ?? i + 1, error: err?.message || "Erro desconhecido." });
+        errors.push({ row: linha, error: err?.message || "Erro desconhecido." });
       }
     }
 
-    res.json({ created, flagged, errors, importBatchId });
+    if (novasAfiliacoes.size > 0) {
+      await prisma.configItem.createMany({
+        data: Array.from(novasAfiliacoes).map((name) => ({ type: "AFFILIATION" as any, name, isActive: true })),
+        skipDuplicates: true,
+      });
+    }
+
+    if (clientesParaCriar.length > 0) {
+      await prisma.client.createMany({ data: clientesParaCriar });
+      await prisma.historyLog.createMany({ data: historicoParaCriar });
+    }
+
+    res.json({ created: clientesParaCriar.length, flagged, errors, importBatchId });
   })
 );
 

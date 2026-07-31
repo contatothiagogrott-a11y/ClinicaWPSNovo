@@ -26,7 +26,7 @@ type Etapa = "arquivo" | "aba" | "cabecalho" | "mapeamento" | "resultado";
  * para revisão e aparece filtrado na Fila de Espera.
  */
 export default function WaitlistImport() {
-  const { importClients } = useStore();
+  const { importClients, undoImport } = useStore();
   const navigate = useNavigate();
 
   const [etapa, setEtapa] = useState<Etapa>("arquivo");
@@ -39,7 +39,10 @@ export default function WaitlistImport() {
   const [columnMap, setColumnMap] = useState<Record<string, number>>({});
   const [erro, setErro] = useState("");
   const [importando, setImportando] = useState(false);
-  const [resultado, setResultado] = useState<{ created: number; flagged: number; errors: any[] } | null>(null);
+  const [resultado, setResultado] = useState<{ created: number; flagged: number; errors: any[]; importBatchId: string } | null>(null);
+  const [progresso, setProgresso] = useState({ enviadas: 0, total: 0 });
+  const [desfazendo, setDesfazendo] = useState(false);
+  const [desfeito, setDesfeito] = useState(0);
 
   const linhas: ImportRow[] = useMemo(
     () => (sheetData ? buildImportRows(sheetData, columnMap) : []),
@@ -85,7 +88,10 @@ export default function WaitlistImport() {
         reviewReasons: l.reviewReasons,
         sourceRowNumber: l.sourceRowNumber,
       }));
-      const res = await importClients(payload, `${fileName} › ${sheetName}`);
+      setProgresso({ enviadas: 0, total: payload.length });
+      const res = await importClients(payload, `${fileName} › ${sheetName}`, (enviadas, total) =>
+        setProgresso({ enviadas, total })
+      );
       setResultado(res as any);
       setEtapa("resultado");
     } catch (e: any) {
@@ -283,7 +289,9 @@ export default function WaitlistImport() {
               className="flex-1 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white font-bold py-3 rounded-xl flex items-center justify-center gap-2"
             >
               {importando && <Loader2 size={16} className="animate-spin" />}
-              Importar {linhas.length} pessoas para a fila
+              {importando && progresso.total > 0
+                ? `Importando ${progresso.enviadas} de ${progresso.total}...`
+                : `Importar ${linhas.length} pessoas para a fila`}
             </button>
           </div>
         </div>
@@ -311,9 +319,40 @@ export default function WaitlistImport() {
               </ul>
             </div>
           )}
+          {/*
+            Desfazer: existe porque importação é fácil de fazer e difícil de
+            reverter à mão. A API recusa apagar se algum paciente do lote já
+            tiver prontuário registrado.
+          */}
+          {desfeito > 0 ? (
+            <p className="text-sm font-bold text-gray-700 bg-gray-100 border border-gray-200 rounded-2xl px-5 py-4">
+              Importação desfeita: {desfeito} cadastro(s) removido(s).
+            </p>
+          ) : (
+            <button
+              onClick={async () => {
+                if (!resultado.importBatchId) return;
+                setDesfazendo(true);
+                setErro("");
+                try {
+                  setDesfeito(await undoImport(resultado.importBatchId));
+                } catch (e: any) {
+                  setErro(e?.message || "Não foi possível desfazer.");
+                } finally {
+                  setDesfazendo(false);
+                }
+              }}
+              disabled={desfazendo}
+              className="w-full text-sm font-bold text-red-700 bg-red-50 hover:bg-red-100 border border-red-200 rounded-2xl px-5 py-3 disabled:opacity-60 flex items-center justify-center gap-2"
+            >
+              {desfazendo && <Loader2 size={14} className="animate-spin" />}
+              Desfazer esta importação (remover as {resultado.created} pessoas)
+            </button>
+          )}
+
           <div className="flex gap-3">
             <button
-              onClick={() => { setEtapa("arquivo"); setResultado(null); setWorkbook(null); }}
+              onClick={() => { setEtapa("arquivo"); setResultado(null); setWorkbook(null); setDesfeito(0); }}
               className="px-5 py-3 rounded-xl border border-gray-200 font-bold text-gray-700 hover:bg-gray-50"
             >
               Importar outra planilha

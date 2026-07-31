@@ -7,6 +7,8 @@ import { APP_SHORT_NAME } from "../lib/branding";
 import { roleLabel } from "../lib/roles";
 import ChangePasswordGate from "./ChangePasswordGate";
 import { useIdleLogout } from "../hooks/useIdleLogout";
+import { setUpdateHandler, applyUpdate } from "../lib/pwa";
+import { todayDateOnly } from "../lib/datetime";
 
 interface ApptNotification {
   id: string;
@@ -20,6 +22,7 @@ export default function Layout() {
   const { currentUser, setCurrentUser, users, appointments, clients, mustChangePassword } = useStore();
   const location = useLocation();
   const [idleWarning, setIdleWarning] = useState(0);
+  const [temVersaoNova, setTemVersaoNova] = useState(false);
   const [isGestaoOpen, setIsGestaoOpen] = useState(true);
   const [isAtendimentosOpen, setIsAtendimentosOpen] = useState(true);
   const [notifications, setNotifications] = useState<ApptNotification[]>([]);
@@ -36,6 +39,15 @@ export default function Layout() {
     useCallback((seconds: number) => setIdleWarning(seconds), [])
   );
 
+  /**
+   * Aviso de versão nova publicada.
+   * Sem isto, o navegador só troca de versão quando todas as abas são
+   * fechadas — motivo pelo qual um F5 comum não bastava.
+   */
+  useEffect(() => {
+    setUpdateHandler(() => setTemVersaoNova(true));
+  }, []);
+
   useEffect(() => {
     if (!currentUser) return;
 
@@ -45,7 +57,10 @@ export default function Layout() {
        const currentHours = now.getHours();
        const currentMinutes = now.getMinutes();
        
-       const todayStr = now.toISOString().split('T')[0];
+       // toISOString() devolve o dia em UTC: depois das 21h em Florianópolis
+       // isso já apontava para o dia seguinte, e o aviso procurava os
+       // agendamentos do dia errado. todayDateOnly() usa America/Sao_Paulo.
+       const todayStr = todayDateOnly();
        
        const upcomingAppts = appointments.filter(a => {
           if (a.date !== todayStr) return false;
@@ -115,6 +130,31 @@ export default function Layout() {
           </button>
         </div>
       </div>
+
+      {/* Nova versão do app disponível */}
+      {temVersaoNova && (
+        <div className="fixed bottom-4 inset-x-4 sm:inset-x-auto sm:right-6 sm:w-96 z-[80] bg-gray-900 text-white rounded-2xl shadow-2xl px-5 py-4 flex items-center gap-4">
+          <div className="flex-1 min-w-0">
+            <p className="font-bold text-sm">Nova versão disponível</p>
+            <p className="text-xs text-gray-300 mt-0.5">
+              Atualize quando terminar o que está fazendo.
+            </p>
+          </div>
+          <button
+            onClick={applyUpdate}
+            className="shrink-0 bg-white text-gray-900 font-bold text-xs px-4 py-2 rounded-xl hover:bg-gray-100 transition-colors"
+          >
+            Atualizar
+          </button>
+          <button
+            onClick={() => setTemVersaoNova(false)}
+            className="shrink-0 text-gray-400 hover:text-white"
+            aria-label="Depois"
+          >
+            <X size={16} />
+          </button>
+        </div>
+      )}
 
       {/* Aviso de sessão prestes a expirar por inatividade */}
       {idleWarning > 0 && (

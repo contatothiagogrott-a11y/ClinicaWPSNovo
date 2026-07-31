@@ -29,11 +29,12 @@ const CACHE_VERSION = "alesc-psi-v1";
 const APP_SHELL = ["/", "/index.html", "/manifest.webmanifest", "/icons/icon-192.png", "/icons/icon-512.png"];
 
 self.addEventListener("install", (event) => {
+  // NÃO chamamos skipWaiting aqui de propósito. Trocar a versão embaixo de
+  // alguém que está escrevendo um prontuário causaria recarga no meio da
+  // digitação. A versão nova fica esperando e o app avisa: quem decide a
+  // hora de atualizar é o usuário (ver src/lib/pwa.ts).
   event.waitUntil(
-    caches
-      .open(CACHE_VERSION)
-      .then((cache) => cache.addAll(APP_SHELL).catch(() => undefined))
-      .then(() => self.skipWaiting())
+    caches.open(CACHE_VERSION).then((cache) => cache.addAll(APP_SHELL).catch(() => undefined))
   );
 });
 
@@ -51,6 +52,11 @@ self.addEventListener("activate", (event) => {
  * do "casco" fique associado à sessão anterior.
  */
 self.addEventListener("message", (event) => {
+  // A tela pediu para ativar a versão nova agora.
+  if (event.data === "ATIVAR_AGORA") {
+    self.skipWaiting();
+    return;
+  }
   if (event.data === "LIMPAR_CACHE") {
     event.waitUntil(caches.keys().then((keys) => Promise.all(keys.map((k) => caches.delete(k)))));
   }

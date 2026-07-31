@@ -46,6 +46,10 @@ interface StoreContextType extends StoreState {
   /** Gera nova senha provisória para outro usuário (Supervisor/Admin). */
   resetUserPassword: (userId: string) => Promise<string>;
   mustChangePassword: boolean;
+  /** Momento da última sincronização com o servidor. */
+  lastSyncedAt: Date | null;
+  /** Força uma sincronização imediata. */
+  syncNow: () => Promise<void>;
   addSession: (session: Omit<SessionRecord, "id" | "createdAt" | "updatedAt"> & { id?: string }) => Promise<void>;
   updateSession: (id: string, newContent: string) => Promise<void>;
   updatePrivateSessionNotes: (id: string, text: string) => Promise<void>;
@@ -72,7 +76,13 @@ interface StoreContextType extends StoreState {
   updateInstrumentApplication: (applicationId: string, updates: { purpose?: string; entry?: { id: string; date?: string; description?: string } }) => Promise<void>;
   addClinicalDocument: (clientId: string, type: ClinicalDocumentType, data: Record<string, any>) => Promise<ClinicalDocument>;
   updateClinicalDocument: (id: string, data: Record<string, any>) => Promise<void>;
-  importClients: (rows: Record<string, any>[], sourceLabel?: string) => Promise<{ created: number; flagged: number; errors: { row: number; error: string }[]; importBatchId: string }>;
+  importClients: (
+    rows: Record<string, any>[],
+    sourceLabel?: string,
+    onProgress?: (enviadas: number, total: number) => void
+  ) => Promise<{ created: number; flagged: number; errors: { row: number; error: string }[]; importBatchId: string }>;
+  /** Desfaz uma importação inteira pelo identificador do lote. */
+  undoImport: (batchId: string) => Promise<number>;
   /** Marca um cadastro importado como conferido. */
   markClientReviewed: (clientId: string) => Promise<void>;
   saveGroupClientNote: (clientId: string, groupId: string, content: string) => Promise<void>;
@@ -110,6 +120,9 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
   const [clinicalDocuments, setClinicalDocuments] = useState<ClinicalDocument[]>([]);
   const [groupClientNotes, setGroupClientNotes] = useState<GroupClientNote[]>([]);
   const [clinicalClientIds, setClinicalClientIds] = useState<string[]>([]);
+  /** Evita duas cargas simultâneas quando foco e timer disparam juntos. */
+  const isRefreshingRef = React.useRef(false);
+  const [lastSyncedAt, setLastSyncedAt] = useState<Date | null>(null);
   const [mustChangePassword, setMustChangePassword] = useState(false);
 
   const applyBootstrap = (data: BootstrapResponse) => {
@@ -125,6 +138,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     setClinicalDocuments(data.clinicalDocuments);
     setGroupClientNotes(data.groupClientNotes);
     setClinicalClientIds(data.clinicalClientIds ?? []);
+    setLastSyncedAt(new Date());
   };
 
   // Recarrega todos os dados do servidor. Chamado depois de toda operação de
@@ -160,6 +174,54 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  /**
+   * SINCRONIZAÇÃO AUTOMÁTICA
+   * ------------------------
+   * Antes, os dados só eram recarregados depois de uma ação do próprio
+   * usuário. Quem deixasse a tela aberta — ou estivesse vendo a agenda
+   * enquanto um colega marcava um atendimento — via informação velha e
+   * precisava apertar F5.
+   *
+   * Agora recarrega quando a aba volta ao foco (o caso mais comum: alternar
+   * entre janelas) e a cada 90 segundos com a aba visível. Nada roda em aba
+   * escondida, para não gastar bateria nem banda à toa.
+   *
+   * O rascunho de prontuário NÃO é afetado: ele vive no estado local da tela,
+   * não no store.
+   */
+  const syncIfIdle = useCallback(async () => {
+    if (isRefreshingRef.current) return;
+    if (document.visibilityState !== "visible") return;
+    isRefreshingRef.current = true;
+    try {
+      await refreshAll();
+    } catch {
+      // Falha de rede aqui é silenciosa de propósito: é atualização de fundo,
+      // não pode interromper o que a pessoa está fazendo.
+    } finally {
+      isRefreshingRef.current = false;
+    }
+  }, [refreshAll]);
+
+  useEffect(() => {
+    if (!currentUser || mustChangePassword) return;
+
+    const onFocus = () => { void syncIfIdle(); };
+    const onVisible = () => {
+      if (document.visibilityState === "visible") void syncIfIdle();
+    };
+
+    window.addEventListener("focus", onFocus);
+    document.addEventListener("visibilitychange", onVisible);
+    const timer = window.setInterval(() => { void syncIfIdle(); }, 90_000);
+
+    return () => {
+      window.removeEventListener("focus", onFocus);
+      document.removeEventListener("visibilitychange", onVisible);
+      window.clearInterval(timer);
+    };
+  }, [currentUser, mustChangePassword, syncIfIdle]);
 
   const login = async (email: string, password: string) => {
     try {
@@ -403,10 +465,47 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     await refreshAll();
   };
 
-  const importClients: StoreContextType["importClients"] = async (rows, sourceLabel) => {
-    const result = await api.post<{ created: number; flagged: number; errors: { row: number; error: string }[]; importBatchId: string }>("/api/clients/import", { rows, sourceLabel });
+  /**
+   * Importa em PEDAÇOS de 50 linhas.
+   *
+   * Uma planilha inteira numa única requisição estourava o tempo limite da
+   * função na Vercel (erro 504). Fatiar resolve de duas formas: cada
+   * requisição é curta, e o usuário vê o progresso em vez de uma tela parada.
+   *
+   * Todos os pedaços compartilham o mesmo `importBatchId`, então "desfazer
+   * importação" continua apagando a planilha inteira de uma vez.
+   */
+  const importClients: StoreContextType["importClients"] = async (rows, sourceLabel, onProgress) => {
+    const TAMANHO_DO_LOTE = 50;
+    let importBatchId = "";
+    let created = 0;
+    let flagged = 0;
+    const errors: { row: number; error: string }[] = [];
+
+    for (let i = 0; i < rows.length; i += TAMANHO_DO_LOTE) {
+      const pedaco = rows.slice(i, i + TAMANHO_DO_LOTE);
+      const res = await api.post<{
+        created: number;
+        flagged: number;
+        errors: { row: number; error: string }[];
+        importBatchId: string;
+      }>("/api/clients/import", { rows: pedaco, sourceLabel, importBatchId: importBatchId || undefined });
+
+      importBatchId = res.importBatchId;
+      created += res.created;
+      flagged += res.flagged;
+      if (res.errors?.length) errors.push(...res.errors);
+      onProgress?.(Math.min(i + TAMANHO_DO_LOTE, rows.length), rows.length);
+    }
+
     await refreshAll();
-    return result;
+    return { created, flagged, errors, importBatchId };
+  };
+
+  const undoImport: StoreContextType["undoImport"] = async (batchId) => {
+    const res = await api.delete<{ deleted: number }>(`/api/clients/import/${batchId}`);
+    await refreshAll();
+    return res.deleted;
   };
 
   const saveGroupClientNote: StoreContextType["saveGroupClientNote"] = async (clientId, groupId, content) => {
@@ -434,6 +533,8 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
         currentUser,
         isLoading,
         mustChangePassword,
+        lastSyncedAt,
+        syncNow: syncIfIdle,
         login,
         setCurrentUser,
         addClient,
@@ -471,6 +572,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
         addClinicalDocument,
         updateClinicalDocument,
         importClients,
+        undoImport,
         markClientReviewed,
         saveGroupClientNote,
       }}
