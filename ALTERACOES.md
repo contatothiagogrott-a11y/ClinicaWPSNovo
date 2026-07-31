@@ -254,3 +254,69 @@ Cada importação recebe um `importBatchId`. A rota
 `DELETE /api/clients/import/:batchId` remove o lote inteiro — **exceto** se
 algum paciente já tiver prontuário registrado, caso em que a operação é
 recusada (apagar destruiria registro clínico).
+
+---
+
+## 8. NUMERAÇÃO DE PRONTUÁRIO E FLEXÃO DE TÍTULO
+
+### Numeração de prontuário — dois defeitos corrigidos
+
+**Regra do setor:** quem está na fila de espera **não tem prontuário aberto**,
+logo não tem número. O número nasce quando o caso passa a ser atendido
+(Triagem, Triado, Em Atendimento ou Finalizado).
+
+| Defeito | Antes | Agora |
+|---|---|---|
+| Importação | gravava o texto `"Pendente"` no campo | campo fica **nulo** |
+| Cadastro manual | `clients.length + 1` **no navegador** | gerado no **servidor**, em sequência |
+
+O cálculo no navegador quebrava de três formas: duas pessoas cadastrando ao
+mesmo tempo recebiam o mesmo número; apagar um paciente fazia o próximo repetir
+um número já usado; e um psicólogo, que só enxerga os próprios pacientes,
+geraria um número baixíssimo, colidindo com prontuário antigo.
+
+A geração agora acontece numa **única instrução SQL** (`assignProtocolNumber`),
+em que cálculo e gravação são atômicos — dois pedidos simultâneos não podem
+receber o mesmo número. A cláusula `WHERE "protocolNumber" IS NULL` torna a
+operação idempotente.
+
+**Formato:** zeros à esquerda até 3 dígitos (`001`), crescendo naturalmente
+depois do 999 (`1000`). Sequência **contínua**, sem reiniciar a cada ano,
+partindo do maior número já existente no banco — assim continua de onde a
+numeração histórica do setor parou.
+
+**Limpeza:** `POST /api/manutencao/limpar-prontuarios-da-fila` remove o número
+de quem ainda está em fila de espera (só desses; quem é atendido mantém).
+
+### Flexão de gênero no título profissional
+
+Documentos psicológicos são assinados com título e CRP (Resolução CFP
+nº 06/2019). Um atestado que diz "Psicólogo Maria Silva" identifica errado quem
+o emitiu.
+
+Foi criado o campo `gender` no usuário, com três opções — **Feminino**,
+**Masculino** e **Prefiro não informar**. Ninguém é obrigado a declarar gênero:
+sem informar, os documentos usam a forma neutra.
+
+| Papel | Feminino | Masculino | Não informado |
+|---|---|---|---|
+| Psicólogo | Psicóloga | Psicólogo | Psicólogo(a) |
+| Supervisor | Supervisora | Supervisor | Supervisor(a) |
+| Administrativo | Administrativa | Administrativo | Administrativo(a) |
+
+Cada pessoa escolhe em **Minhas Configurações**, com prévia de como a
+assinatura vai sair. O Supervisor assina os documentos como **psicólogo**, não
+como supervisor: quem responde pelo documento é o profissional inscrito no CRP;
+"Supervisora" é função interna, não título profissional.
+
+### ⚠️ Achado que precisa de decisão
+
+`pdfAnamneseRisco.ts` e `pdfProntuario.ts` têm **nome e CRP de supervisor fixos
+no código** (`Rafael da Costa Faria — CRP-SC 25613`). Todo documento sai
+assinado com essa pessoa, independentemente de quem supervisiona o caso.
+
+Se ela sair do setor, ou se outro profissional assumir a supervisão, os
+documentos continuarão saindo com a assinatura errada — atribuindo a um
+profissional a responsabilidade por um ato que não foi dele. Marquei o trecho
+com um aviso no código, mas a correção depende de definir **como escolher o
+supervisor de cada documento**.

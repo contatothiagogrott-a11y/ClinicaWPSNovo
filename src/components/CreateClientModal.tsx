@@ -12,7 +12,6 @@ export default function CreateClientModal({ open, onClose }: { open: boolean; on
   const activeTags = config.tags?.filter(x => x.isActive).map(x => x.name) || [];
 
   const [formData, setFormData] = useState<{
-    protocolNumber: string;
     signedAgreement: boolean;
     fullName: string;
     whatsapp: string;
@@ -27,7 +26,7 @@ export default function CreateClientModal({ open, onClose }: { open: boolean; on
     dependencySponsor: string;
     dateIncluded: string;
   }>({
-    protocolNumber: String(clients.length + 1),
+
     signedAgreement: false,
     fullName: "",
     whatsapp: "",
@@ -62,7 +61,7 @@ export default function CreateClientModal({ open, onClose }: { open: boolean; on
       fullName: formData.fullName,
       whatsapp: formData.whatsapp,
       birthDate: formData.birthDate,
-      protocolNumber: formData.protocolNumber || "Pendente",
+
       signedAgreement: formData.signedAgreement,
       registrationCode: `MAT-${Math.floor(Math.random() * 10000)}`,
       affiliation: formData.affiliation,
@@ -78,7 +77,7 @@ export default function CreateClientModal({ open, onClose }: { open: boolean; on
       emergencyContactRelationship: formData.emergencyContactRelationship,
     });
     setFormData({
-      protocolNumber: String(clients.length + 2), signedAgreement: false, dateIncluded: new Date().toISOString().split("T")[0],
+      signedAgreement: false, dateIncluded: new Date().toISOString().split("T")[0],
       fullName: "", whatsapp: "", birthDate: "",
       affiliation: activeAffiliations[0] || "", allocation: activeAllocations[0] || "",
       tags: [],
@@ -102,10 +101,13 @@ export default function CreateClientModal({ open, onClose }: { open: boolean; on
 
         <form onSubmit={handleSubmit} className="p-6 space-y-4 max-h-[70vh] overflow-y-auto">
           <div className="grid grid-cols-2 gap-4">
-            <div>
-               <label className="block text-sm font-semibold text-gray-700 mb-1">Nº Prontuário</label>
-               <input type="text" value={formData.protocolNumber} onChange={e => setFormData({...formData, protocolNumber: e.target.value})} className="w-full bg-gray-100 border-2 border-transparent focus:bg-white focus:border-blue-500 rounded-xl px-4 py-3 outline-none transition-all font-mono" placeholder="Ex: 4" />
-            </div>
+               {/*
+                 O campo de número de prontuário foi REMOVIDO daqui.
+                 Quem entra no sistema entra na fila de espera, e caso em fila
+                 não tem prontuário aberto — logo, não tem número. Ele é
+                 atribuído pelo servidor, em sequência, quando o caso passa a
+                 ser atendido.
+               */}
             <div>
                <label className="block text-sm font-semibold text-gray-700 mb-1">Entrou na fila em</label>
                <input type="date" value={formData.dateIncluded} onChange={e => setFormData({...formData, dateIncluded: e.target.value})} className="w-full bg-gray-100 border-2 border-transparent focus:bg-white focus:border-blue-500 rounded-xl px-4 py-3 outline-none transition-all" />

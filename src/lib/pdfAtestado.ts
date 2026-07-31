@@ -1,6 +1,7 @@
 import { Client, ClinicalDocument, User } from "../types";
 import { letterheadHeader, letterheadFooter, letterheadBackground, PAGE_MARGINS, signatureBlock, documentStyles } from "./pdfGenerator";
 import { formatDateBR, formatDateExtenso } from "./datetime";
+import { signatureTitle } from "./roles";
 
 export function buildAtestadoDocDefinition(client: Client, doc: ClinicalDocument, author?: User) {
   const data = doc.data || {};
@@ -37,7 +38,10 @@ export function buildAtestadoDocDefinition(client: Client, doc: ClinicalDocument
       signatureBlock({
         leftLabel: "",
         rightName: author?.name || "",
-        rightRole: "PROFISSIONAL",
+        // Título flexionado conforme o gênero informado pelo profissional
+        // ("Psicóloga" / "Psicólogo" / "Psicólogo(a)"). Documento psicológico
+        // é assinado com título e CRP — Resolução CFP nº 06/2019.
+        rightRole: signatureTitle(author as any),
         rightCrp: author?.crp ? `CRP ${author.crp}` : "CRP",
       }),
 

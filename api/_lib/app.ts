@@ -495,7 +495,8 @@ app.post(
 
     const client = await prisma.client.create({
       data: {
-        protocolNumber: b.protocolNumber,
+        // Nunca aceita número vindo do navegador: quem numera é o servidor.
+        protocolNumber: null,
         signedAgreement: !!b.signedAgreement,
         fullNameEnc: encryptField(b.fullName),
         whatsappEnc: encryptField(b.whatsapp),
@@ -577,12 +578,20 @@ app.post(
     const existentes = await prisma.client.findMany({
       select: { id: true, registrationCode: true, fullNameEnc: true, protocolNumber: true },
     });
+    /**
+     * Índices de duplicata.
+     *
+     * A referência mostrada ao usuário passou a ser o NOME, não o número de
+     * prontuário: quem está na fila de espera ainda não tem número, então
+     * "protocolo null" não ajudaria ninguém a localizar o cadastro existente.
+     */
     const porMatricula = new Map<string, string>();
     const porNome = new Map<string, string>();
     for (const c of existentes) {
-      if (c.registrationCode) porMatricula.set(String(c.registrationCode).trim(), c.protocolNumber);
       const nome = decryptField(c.fullNameEnc);
-      if (nome) porNome.set(normalizeName(nome), c.protocolNumber);
+      const referencia = c.protocolNumber ? `prontuário ${c.protocolNumber}` : nome || "cadastro existente";
+      if (c.registrationCode) porMatricula.set(String(c.registrationCode).trim(), referencia);
+      if (nome) porNome.set(normalizeName(nome), referencia);
     }
 
     // Vínculos novos: coletados e criados de uma vez só.
@@ -612,9 +621,9 @@ app.post(
         // legítimo, e sumir com alguém da fila é pior que ter um cadastro a
         // mais para conferir.
         if (matricula && porMatricula.has(matricula)) {
-          reasons.push(`Já existe cadastro com esta matrícula (protocolo ${porMatricula.get(matricula)}).`);
+          reasons.push(`Já existe cadastro com esta matrícula (${porMatricula.get(matricula)}).`);
         } else if (porNome.has(nomeNorm)) {
-          reasons.push(`Já existe cadastro com este nome (protocolo ${porNome.get(nomeNorm)}).`);
+          reasons.push(`Já existe cadastro com este nome (${porNome.get(nomeNorm)}).`);
         }
 
         const afiliacao = b.affiliation ? String(b.affiliation) : "";
@@ -627,7 +636,9 @@ app.post(
         if (needsReview) flagged++;
 
         const id = crypto.randomUUID();
-        const protocolNumber = b.protocolNumber || "Pendente";
+        // Importado entra na FILA DE ESPERA: sem prontuário aberto, sem número.
+        // (A versão anterior gravava o texto "Pendente" aqui.)
+        const protocolNumber: string | null = null;
 
         clientesParaCriar.push({
           id,
@@ -675,8 +686,10 @@ app.post(
         });
 
         // Permite detectar duplicatas DENTRO da própria planilha.
-        if (matricula) porMatricula.set(matricula, protocolNumber);
-        porNome.set(nomeNorm, protocolNumber);
+        // Permite detectar duplicatas DENTRO da própria planilha.
+        const referencia = String(b.fullName).slice(0, 40);
+        if (matricula) porMatricula.set(matricula, referencia);
+        porNome.set(nomeNorm, referencia);
       } catch (err: any) {
         errors.push({ row: linha, error: err?.message || "Erro desconhecido." });
       }
@@ -842,7 +855,6 @@ app.patch(
     }
 
     const plain: Record<string, string> = {
-      protocolNumber: "protocolNumber",
       registrationCode: "registrationCode",
       affiliation: "affiliation",
       allocation: "allocation",
@@ -900,11 +912,30 @@ app.patch(
     // Diferença ANTES de gravar — precisamos do estado anterior para comparar.
     const changedLabels = diffChangedFieldLabels(existing, b);
 
+    // O caso está saindo da fila de espera? Então abre-se o prontuário.
+    const saiuDaFila =
+      typeof data.status === "string" &&
+      STATUS_COM_PRONTUARIO.includes(data.status) &&
+      !existing.protocolNumber;
+
     const client = await prisma.client.update({
       where: { id: req.params.id },
       data,
       include: { assignedPsico: true, instrumentApps: { include: { entries: true } } },
     });
+
+    // Numeração do prontuário: atribuída na saída da fila de espera.
+    if (saiuDaFila) {
+      const numero = await assignProtocolNumber(client.id);
+      if (numero) {
+        await writeHistory({
+          clientId: client.id,
+          actor: actorOf(session),
+          category: "CADASTRO",
+          action: `Prontuário aberto sob o número ${numero}`,
+        });
+      }
+    }
 
     // --------------------------- AUDITORIA ---------------------------------
     if (transfer) {
@@ -959,11 +990,66 @@ app.patch(
       });
     }
 
+    const clientFinal = saiuDaFila
+      ? await prisma.client.findUnique({
+          where: { id: client.id },
+          include: { assignedPsico: true, instrumentApps: { include: { entries: true } } },
+        })
+      : client;
+
     res.json({
-      client: mapClient(client, { includeClinical: await hasClinicalAccess(session, client.id) }),
+      client: mapClient(clientFinal, { includeClinical: await hasClinicalAccess(session, client.id) }),
     });
   })
 );
+
+/**
+ * NUMERAÇÃO DE PRONTUÁRIO
+ * =======================
+ *
+ * Regra do setor: quem está na FILA DE ESPERA não tem prontuário aberto, logo
+ * não tem número. O número nasce quando o caso passa a ser atendido — seja via
+ * triagem, seja direto em atendimento.
+ *
+ * POR QUE ISTO É UMA ÚNICA INSTRUÇÃO SQL
+ * --------------------------------------
+ * A versão anterior gerava o número no NAVEGADOR, com `clients.length + 1`.
+ * Isso quebrava de três formas:
+ *   - duas pessoas cadastrando ao mesmo tempo recebiam o MESMO número;
+ *   - apagar um paciente fazia o próximo REPETIR um número já usado;
+ *   - um psicólogo, que só enxerga os próprios pacientes, geraria um número
+ *     baixíssimo, colidindo com prontuário antigo.
+ *
+ * Ler o maior número e depois gravar em dois passos teria o mesmo problema de
+ * concorrência. Aqui o cálculo e a gravação acontecem na MESMA instrução, e o
+ * banco garante que dois pedidos simultâneos não recebam o mesmo número.
+ *
+ * O `WHERE "protocolNumber" IS NULL` também torna a operação idempotente: se
+ * for chamada duas vezes para o mesmo paciente, a segunda não altera nada.
+ *
+ * Formato: zeros à esquerda até 3 dígitos ("001"), crescendo naturalmente
+ * depois do 999 ("1000"). A sequência é contínua, sem reiniciar a cada ano, e
+ * continua de onde a numeração histórica do setor parou.
+ */
+async function assignProtocolNumber(clientId: string): Promise<string | null> {
+  const linhas = await prisma.$queryRaw<Array<{ protocolNumber: string }>>`
+    UPDATE "Client"
+    SET "protocolNumber" = (
+      SELECT LPAD(
+        (COALESCE(MAX(CAST("protocolNumber" AS BIGINT)), 0) + 1)::text,
+        3, '0'
+      )
+      FROM "Client"
+      WHERE "protocolNumber" ~ '^[0-9]+$'
+    )
+    WHERE id = ${clientId} AND "protocolNumber" IS NULL
+    RETURNING "protocolNumber";
+  `;
+  return linhas[0]?.protocolNumber ?? null;
+}
+
+/** Status em que o caso já é considerado atendido e, portanto, tem prontuário. */
+const STATUS_COM_PRONTUARIO = ["TRIAGEM", "TRIADOS", "EM_ATENDIMENTO", "FINALIZADO"];
 
 function startOfToday(): Date {
   const now = new Date();
@@ -1649,6 +1735,7 @@ app.post(
         role: b.role,
         crp: b.crp ? String(b.crp).trim() : null,
         title: b.title,
+        gender: b.gender ?? "NAO_INFORMADO",
         institutionalLink: b.institutionalLink,
         birthDate: parseDateInput(b.birthDate) ?? undefined,
         matricula: b.matricula,
@@ -1679,7 +1766,7 @@ app.patch(
 
     const b = req.body ?? {};
     const data: any = {};
-    for (const key of ["name", "email", "title", "institutionalLink", "matricula", "color", "capacity"]) {
+    for (const key of ["name", "email", "title", "institutionalLink", "matricula", "color", "capacity", "gender"]) {
       if (key in b) data[key] = b[key];
     }
     if ("birthDate" in b) data.birthDate = parseDateInput(b.birthDate);
@@ -2336,6 +2423,46 @@ function minutesOfDayBRT(d: Date): number {
   const get = (t: string) => Number(partes.find((p) => p.type === t)?.value ?? "0");
   return get("hour") * 60 + get("minute");
 }
+
+/**
+ * Limpeza única: remove número de prontuário de quem ainda está na fila.
+ *
+ * Necessária por causa de dois defeitos corrigidos:
+ *   - a importação gravava o texto "Pendente" no campo;
+ *   - o cadastro manual gerava número no navegador com `clients.length + 1`,
+ *     produzindo números repetidos e colidindo com a numeração histórica.
+ *
+ * Só mexe em quem está em FILA_ESPERA. Quem já é atendido mantém o número.
+ */
+app.post(
+  "/api/manutencao/limpar-prontuarios-da-fila",
+  asyncHandler(async (req, res) => {
+    const session = requireSession(req, res, ["SUPERVISOR", "ADMIN"]);
+    if (!session) return;
+
+    const alvos = await prisma.client.findMany({
+      where: { status: "FILA_ESPERA", NOT: { protocolNumber: null } },
+      select: { id: true, protocolNumber: true },
+    });
+
+    const result = await prisma.client.updateMany({
+      where: { status: "FILA_ESPERA", NOT: { protocolNumber: null } },
+      data: { protocolNumber: null },
+    });
+
+    for (const alvo of alvos.slice(0, 200)) {
+      await writeHistory({
+        clientId: alvo.id,
+        actor: actorOf(session),
+        category: "CADASTRO",
+        action: "Número de prontuário removido (caso ainda em fila de espera)",
+        details: `Valor anterior: ${alvo.protocolNumber}. Correção de numeração indevida.`,
+      });
+    }
+
+    res.json({ limpos: result.count });
+  })
+);
 
 app.get("/api/health", (_req, res) => res.json({ ok: true, time: new Date().toISOString() }));
 

@@ -2,12 +2,12 @@ import { useState, useEffect } from "react";
 import { useStore } from "../contexts/StoreContext";
 import { Lock } from "lucide-react";
 import { cn } from "../lib/utils";
-import { roleLabel } from "../lib/roles";
+import { roleLabel, GENDER_OPTIONS, signatureTitle } from "../lib/roles";
 import { verificarEstado, ativarNotificacoes, desativarNotificacoes, enviarTeste, type EstadoPush } from "../lib/push";
 import { Bell, BellOff, Smartphone } from "lucide-react";
 
 export default function MySettings() {
-  const { currentUser, changeOwnPassword } = useStore();
+  const { currentUser, changeOwnPassword, updateUser } = useStore();
   const [newPassword, setNewPassword] = useState("");
   const [successMsg, setSuccessMsg] = useState("");
 
@@ -104,6 +104,29 @@ export default function MySettings() {
          </h3>
          
          <div className="space-y-4">
+            {/* TÍTULO NOS DOCUMENTOS ---------------------------------------- */}
+            <div className="border border-gray-200 rounded-2xl p-5 space-y-3">
+               <div>
+                  <p className="font-bold text-gray-900">Como seu título aparece nos documentos</p>
+                  <p className="text-sm text-gray-500 mt-0.5">
+                     Atestados e relatórios são assinados com seu título e CRP. Sem informar,
+                     sai a forma neutra.
+                  </p>
+               </div>
+               <select
+                  value={currentUser.gender || "NAO_INFORMADO"}
+                  onChange={e => updateUser(currentUser.id, { gender: e.target.value as any })}
+                  className="w-full bg-gray-50 border border-gray-200 rounded-xl px-4 py-3 outline-none focus:bg-white focus:border-blue-500"
+               >
+                  {GENDER_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+               </select>
+               <p className="text-xs text-gray-600">
+                  Seus documentos sairão assinados como{" "}
+                  <strong>{signatureTitle(currentUser)} {currentUser.name}</strong>
+                  {currentUser.crp ? ` — CRP ${currentUser.crp}` : ""}.
+               </p>
+            </div>
+
             {/* NOTIFICAÇÕES ------------------------------------------------ */}
             <div className="border border-gray-200 rounded-2xl p-5 space-y-3">
                <div className="flex items-start gap-3">

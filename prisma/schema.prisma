@@ -61,6 +61,20 @@ enum ClinicalDocumentType {
 // Categoria da entrada de auditoria. Serve para separar, na leitura, o que é
 // movimentação de cadastro do que é metainformação clínica (que nunca contém
 // conteúdo de prontuário — ver api/_lib/audit.ts).
+// Flexão de gênero do título profissional.
+//
+// Não é preciosismo: documentos psicológicos são assinados com o título e o
+// CRP do profissional (Resolução CFP nº 06/2019), e um atestado que diz
+// "Psicólogo Maria Silva" está identificando errado quem o emitiu.
+//
+// Quando não informado, os documentos usam a forma neutra "Psicólogo(a)" —
+// ninguém é obrigado a declarar gênero para usar o sistema.
+enum Gender {
+  FEMININO
+  MASCULINO
+  NAO_INFORMADO
+}
+
 enum HistoryCategory {
   CADASTRO
   CLINICO
@@ -84,6 +98,7 @@ model User {
   role              Role      @default(PSICO)
 
   title             String?
+  gender            Gender    @default(NAO_INFORMADO)
   institutionalLink String?
   birthDate         DateTime?
   matricula         String?
@@ -117,7 +132,15 @@ model User {
 
 model Client {
   id                     String        @id @default(uuid())
-  protocolNumber         String
+  /**
+   * Número do prontuário.
+   *
+   * NULO enquanto o caso está na fila de espera: quem ainda não foi atendido
+   * não tem prontuário aberto, logo não tem número. É atribuído pelo servidor,
+   * de forma sequencial e atômica, quando o caso sai da fila (ver
+   * `assignProtocolNumber` em api/_lib/app.ts).
+   */
+  protocolNumber         String?
   signedAgreement        Boolean       @default(false)
 
   // Dados pessoais sensíveis (LGPD) - criptografados em repouso

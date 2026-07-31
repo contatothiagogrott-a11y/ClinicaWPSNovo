@@ -201,7 +201,7 @@ const WaitlistCard: React.FC<{ client: Client }> = ({ client }) => {
         </div>
         {client.status !== "FILA_ESPERA" && (
           <div className="bg-blue-50 text-blue-700 rounded-full px-3 py-1.5 font-bold shrink-0 ml-4 text-xs whitespace-nowrap">
-            Nº {client.protocolNumber}
+            {client.protocolNumber ? `Nº ${client.protocolNumber}` : "Sem prontuário"}
           </div>
         )}
       </div>

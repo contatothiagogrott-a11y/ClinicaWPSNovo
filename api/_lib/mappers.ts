@@ -25,6 +25,7 @@ export function mapUser(u: any) {
     role: u.role,
     crp: u.crp ?? undefined,
     title: u.title ?? undefined,
+    gender: u.gender ?? "NAO_INFORMADO",
     institutionalLink: u.institutionalLink ?? undefined,
     birthDate: u.birthDate ? toDateOnly(u.birthDate) : undefined,
     matricula: u.matricula ?? undefined,
@@ -48,6 +49,7 @@ export function mapUserPublic(u: any) {
     role: u.role,
     crp: u.crp ?? undefined,
     title: u.title ?? undefined,
+    gender: u.gender ?? "NAO_INFORMADO",
     color: u.color ?? undefined,
     capacity: u.capacity ?? undefined,
   };
@@ -109,7 +111,7 @@ export interface ClientMapOptions {
 export function mapClient(c: any, options: ClientMapOptions = {}) {
   const base = {
     id: c.id,
-    protocolNumber: c.protocolNumber,
+    protocolNumber: c.protocolNumber ?? undefined,
     signedAgreement: c.signedAgreement,
     fullName: decryptField(c.fullNameEnc),
     whatsapp: decryptField(c.whatsappEnc),

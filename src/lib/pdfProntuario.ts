@@ -2,6 +2,19 @@ import { Client, SessionRecord, User, InstrumentApplication, Instrument } from "
 import { letterheadHeader, letterheadFooter, letterheadBackground, PAGE_MARGINS, documentStyles } from "./pdfGenerator";
 import { formatDateBR, formatDateExtenso, toDate } from "./datetime";
 
+/**
+ * ATENÇÃO — identidade do supervisor.
+ *
+ * Estes valores estavam FIXOS NO CÓDIGO: todo documento saía assinado com o
+ * mesmo nome e CRP, independentemente de quem supervisiona o caso. Se essa
+ * pessoa sair do setor, ou se outro profissional assumir a supervisão, os
+ * documentos continuariam saindo com a assinatura errada — o que, num
+ * documento psicológico, é atribuir a um profissional a responsabilidade por
+ * um ato que não foi dele (Resolução CFP nº 06/2019).
+ *
+ * Enquanto a escolha do supervisor por documento não estiver implementada,
+ * estes valores servem apenas de PADRÃO e devem ser conferidos.
+ */
 const SUPERVISOR_NAME = "Rafael da Costa Faria";
 const SUPERVISOR_ROLE = "Psicólogo Supervisor";
 const SUPERVISOR_CRP = "CRP-SC 25613";

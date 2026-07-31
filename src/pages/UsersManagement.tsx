@@ -3,7 +3,7 @@ import { useStore } from "../contexts/StoreContext";
 import { Users, Trash2, KeyRound, Edit2, X, Check } from "lucide-react";
 import { User, Role } from "../types";
 import { cn } from "../lib/utils";
-import { requiresCrp, roleLabel } from "../lib/roles";
+import { requiresCrp, roleLabel, GENDER_OPTIONS } from "../lib/roles";
 
 // Paleta de cores distintas para sugerir automaticamente a cada novo usuário
 // (evita que todo mundo fique com a mesma cor padrão na agenda até alguém
@@ -36,8 +36,11 @@ export default function UsersManagement() {
      matricula: string;
      crp: string;
      color: string;
+     /** Flexão do título nos documentos ("Psicóloga" vs "Psicólogo"). */
+     gender: "FEMININO" | "MASCULINO" | "NAO_INFORMADO";
   }>({
-     name: "", email: "", role: "PSICO", title: "", institutionalLink: "", birthDate: "", matricula: "", crp: "", color: "#3b82f6"
+     name: "", email: "", role: "PSICO" as Role, title: "", institutionalLink: "", birthDate: "", matricula: "", crp: "", color: "#3b82f6",
+     gender: "NAO_INFORMADO" as "FEMININO" | "MASCULINO" | "NAO_INFORMADO"
   });
 
   if (currentUser?.role !== "SUPERVISOR") {
@@ -88,6 +91,7 @@ export default function UsersManagement() {
            birthDate: formData.birthDate,
            matricula: formData.matricula,
            crp: requiresCrp(formData.role) ? formData.crp.trim() : "",
+           gender: formData.gender,
            color: formData.color,
         };
 
@@ -120,6 +124,7 @@ export default function UsersManagement() {
         birthDate: user.birthDate || "",
         matricula: user.matricula || "",
         crp: user.crp || "",
+        gender: (user.gender || "NAO_INFORMADO") as "FEMININO" | "MASCULINO" | "NAO_INFORMADO",
         color: user.color || "#3b82f6"
      });
      setIsAdding(true);
@@ -128,7 +133,8 @@ export default function UsersManagement() {
   const resetForm = () => {
      const nextColor = COLOR_PALETTE[users.length % COLOR_PALETTE.length];
      setFormData({
-        name: "", email: "", role: "PSICO", title: "", institutionalLink: "", birthDate: "", matricula: "", crp: "", color: nextColor
+        name: "", email: "", role: "PSICO", title: "", institutionalLink: "", birthDate: "", matricula: "", crp: "", color: nextColor,
+        gender: "NAO_INFORMADO"
      });
   };
 
@@ -229,6 +235,29 @@ export default function UsersManagement() {
                <div>
                   <label className="block text-xs font-semibold text-gray-500 mb-1 uppercase">Matrícula Interna</label>
                   <input type="text" value={formData.matricula} onChange={e => setFormData({...formData, matricula: e.target.value})} className="w-full bg-gray-50 border border-gray-200 focus:border-blue-500 focus:bg-white rounded-xl px-4 py-2.5 outline-none transition-colors" />
+               </div>
+
+               {/*
+                 Flexão do título nos documentos: "Psicóloga Maria Silva" em
+                 vez de "Psicólogo Maria Silva". Opcional — sem informar, os
+                 documentos usam a forma neutra "Psicólogo(a)".
+               */}
+               <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                     Como flexionar o título nos documentos
+                  </label>
+                  <select
+                     value={formData.gender}
+                     onChange={e => setFormData({ ...formData, gender: e.target.value as any })}
+                     className="w-full bg-gray-50 border border-gray-200 rounded-xl px-4 py-3 outline-none focus:bg-white focus:border-blue-500"
+                  >
+                     {GENDER_OPTIONS.map(o => (
+                        <option key={o.value} value={o.value}>{o.label}</option>
+                     ))}
+                  </select>
+                  <p className="text-[11px] text-gray-500 mt-1">
+                     Define se o documento sai como "{roleLabel(formData.role, formData.gender as any)}".
+                  </p>
                </div>
 
                {requiresCrp(formData.role) && (

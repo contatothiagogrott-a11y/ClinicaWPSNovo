@@ -41,6 +41,7 @@ async function main() {
       // CRP obrigatório: o Supervisor também atende e assina documentos
       // (Resolução CFP nº 06/2019 — nome e CRP no documento psicológico).
       crp: "12/00001",
+      gender: "MASCULINO",
       mustChangePassword: true,
     },
   });
@@ -68,6 +69,7 @@ async function main() {
       passwordHash: await hash(demoPassword),
       role: "PSICO",
       crp: "12/11111",
+      gender: "FEMININO",
       color: "#3b82f6",
       mustChangePassword: true,
     },
@@ -82,6 +84,7 @@ async function main() {
       passwordHash: await hash(demoPassword),
       role: "PSICO",
       crp: "12/22222",
+      gender: "MASCULINO",
       color: "#f97316",
       mustChangePassword: true,
     },

@@ -14,6 +14,8 @@ export interface User {
   /** Só vem preenchido para o próprio usuário logado (minimização de dados). */
   email?: string;
   role: Role;
+  /** Flexão do título profissional em documentos ("Psicóloga" vs "Psicólogo"). */
+  gender?: "FEMININO" | "MASCULINO" | "NAO_INFORMADO";
   /** Senha provisória pendente de troca no primeiro acesso. */
   mustChangePassword?: boolean;
   crp?: string;
@@ -83,7 +85,8 @@ export interface InstrumentApplication {
 
 export interface Client {
   id: string;
-  protocolNumber: string;
+  /** Nulo enquanto o caso está na fila de espera (ainda não há prontuário aberto). */
+  protocolNumber?: string;
   signedAgreement?: boolean;
   fullName: string;
   whatsapp: string;

@@ -14,14 +14,59 @@ import type { Role, User } from "../types";
  * (sigilo profissional — Art. 9º do Código de Ética Profissional do Psicólogo).
  */
 
-export const ROLE_LABELS: Record<Role, string> = {
-  SUPERVISOR: "Supervisor",
-  PSICO: "Psicólogo",
-  ADMIN: "Administrativo",
+export type Gender = "FEMININO" | "MASCULINO" | "NAO_INFORMADO";
+
+/**
+ * Título profissional flexionado.
+ *
+ * Importa de verdade nos documentos: um atestado assinado como
+ * "Psicólogo Maria Silva" identifica errado quem o emitiu, e documento
+ * psicológico é assinado com título e CRP (Resolução CFP nº 06/2019).
+ *
+ * Sem gênero informado, usa-se a forma neutra — ninguém é obrigado a declarar
+ * gênero para usar o sistema.
+ */
+const ROLE_LABELS_BY_GENDER: Record<Role, Record<Gender, string>> = {
+  PSICO: {
+    FEMININO: "Psicóloga",
+    MASCULINO: "Psicólogo",
+    NAO_INFORMADO: "Psicólogo(a)",
+  },
+  SUPERVISOR: {
+    FEMININO: "Supervisora",
+    MASCULINO: "Supervisor",
+    NAO_INFORMADO: "Supervisor(a)",
+  },
+  ADMIN: {
+    FEMININO: "Administrativa",
+    MASCULINO: "Administrativo",
+    NAO_INFORMADO: "Administrativo(a)",
+  },
 };
 
-export function roleLabel(role: Role | undefined | null): string {
-  return role ? ROLE_LABELS[role] ?? role : "";
+/** Rótulo do papel, flexionado quando o gênero for conhecido. */
+export function roleLabel(role: Role | undefined | null, gender?: Gender | null): string {
+  if (!role) return "";
+  const porGenero = ROLE_LABELS_BY_GENDER[role];
+  if (!porGenero) return role;
+  return porGenero[gender ?? "NAO_INFORMADO"] ?? porGenero.NAO_INFORMADO;
+}
+
+/**
+ * Título usado na ASSINATURA de documentos psicológicos.
+ *
+ * O Supervisor assina como psicólogo, não como supervisor: quem responde pelo
+ * documento é o profissional inscrito no CRP. "Supervisora" é função interna,
+ * não título profissional.
+ */
+export function signatureTitle(
+  user: Pick<User, "role" | "gender" | "title"> | null | undefined
+): string {
+  if (!user) return "";
+  // Título personalizado (ex.: "Psicóloga Organizacional") tem precedência.
+  if (user.title && user.title.trim()) return user.title.trim();
+  if (!isClinician(user)) return roleLabel(user.role, user.gender);
+  return roleLabel("PSICO", user.gender);
 }
 
 /** Profissionais que atendem pacientes e assinam documentos: PSICO e SUPERVISOR. */
@@ -48,3 +93,9 @@ export function canTransferClient(user: Pick<User, "role"> | null | undefined): 
 export function canViewAuditTrail(user: Pick<User, "role"> | null | undefined): boolean {
   return user?.role === "SUPERVISOR" || user?.role === "ADMIN";
 }
+
+export const GENDER_OPTIONS: Array<{ value: Gender; label: string }> = [
+  { value: "NAO_INFORMADO", label: "Prefiro não informar" },
+  { value: "FEMININO", label: "Feminino" },
+  { value: "MASCULINO", label: "Masculino" },
+];

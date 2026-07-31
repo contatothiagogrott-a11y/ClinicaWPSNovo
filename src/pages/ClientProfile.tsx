@@ -178,7 +178,7 @@ export default function ClientProfile() {
         </button>
         <div>
           <h1 className="text-3xl font-bold text-gray-900">{client.fullName}</h1>
-          <p className="text-gray-500 text-sm font-medium mt-1">Matrícula: {client.registrationCode} <span className="mx-2">•</span> Prontuário n.º: <strong className="text-gray-800">{client.protocolNumber}</strong> <span className="mx-2">•</span> Entrou em: {formatDateBR(client.dateIncluded)}</p>
+          <p className="text-gray-500 text-sm font-medium mt-1">Matrícula: {client.registrationCode} <span className="mx-2">•</span> Prontuário n.º: <strong className="text-gray-800">{client.protocolNumber || "não atribuído"}</strong> <span className="mx-2">•</span> Entrou em: {formatDateBR(client.dateIncluded)}</p>
           <div className="flex flex-wrap gap-2 mt-3">
             <span className={cn("text-xs px-2.5 py-1 rounded-md font-bold uppercase tracking-wider", client.signedAgreement ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-700")}>
               {client.signedAgreement ? "Termo de Compromisso Assinado ✓" : "Termo de Compromisso Pendente !"}
@@ -303,9 +303,11 @@ export default function ClientProfile() {
                   <div>
                      <label className="block text-xs font-semibold text-gray-500 mb-1 tracking-wider uppercase">Prontuário</label>
                      {isEditingInfo ? (
-                        <input type="text" value={editData.protocolNumber || ""} onChange={e => setEditData({...editData, protocolNumber: e.target.value})} className="w-full bg-white border border-gray-200 rounded-xl px-4 py-3 outline-none font-medium text-gray-900" />
+                        <div className="bg-gray-50 px-4 py-3 rounded-xl border border-gray-100 font-medium text-gray-500" title="A numeração é gerada pelo sistema, em sequência, quando o caso passa a ser atendido.">
+                          {client.protocolNumber || "Atribuído ao sair da fila de espera"}
+                        </div>
                      ) : (
-                        <div className="bg-white px-4 py-3 rounded-xl border border-gray-100 font-medium text-gray-900">{client.protocolNumber || "Pendente"}</div>
+                        <div className="bg-white px-4 py-3 rounded-xl border border-gray-100 font-medium text-gray-900">{client.protocolNumber || "Atribuído ao sair da fila de espera"}</div>
                      )}
                   </div>
                 </div>

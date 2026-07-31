@@ -112,7 +112,7 @@ const ActiveCard: React.FC<{ client: Client }> = ({ client }) => {
           </div>
           <div className="flex flex-col items-end gap-1.5 shrink-0 ml-4">
             <div className="bg-blue-50 text-blue-700 rounded-full px-3 py-1.5 font-bold text-xs whitespace-nowrap">
-              Nº {client.protocolNumber}
+              {client.protocolNumber ? `Nº ${client.protocolNumber}` : "Sem prontuário"}
             </div>
             <div className="flex items-center gap-1 text-[11px] font-bold px-2.5 py-1 rounded-full whitespace-nowrap" style={{ backgroundColor: getSessionTier(client.completedSessions).bgColor, color: getSessionTier(client.completedSessions).textColor }}>
               <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: getSessionTier(client.completedSessions).dotColor }} />
