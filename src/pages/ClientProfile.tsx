@@ -292,6 +292,63 @@ export default function ClientProfile() {
                    </div>
                 )}
 
+                {/*
+                  IDENTIFICAÇÃO — nome, telefone e nascimento.
+                  Estes campos NÃO existiam na tela: eram gravados na
+                  importação e no cadastro inicial, mas depois não havia como
+                  corrigi-los. Numa fila alimentada por planilha, erro de
+                  digitação em nome e telefone é o mais comum de todos.
+                */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div className="sm:col-span-2">
+                    <label className="block text-xs font-semibold text-gray-500 mb-1 tracking-wider uppercase">Nome completo</label>
+                    {isEditingInfo ? (
+                      <input
+                        type="text"
+                        value={editData.fullName || ""}
+                        onChange={e => setEditData({ ...editData, fullName: e.target.value })}
+                        onBlur={e => setEditData({ ...editData, fullName: e.target.value.replace(/\s+/g, " ").trim().toLocaleUpperCase("pt-BR") })}
+                        className="w-full bg-white border border-gray-200 rounded-xl px-4 py-3 outline-none font-medium uppercase"
+                        placeholder="NOME COMPLETO"
+                      />
+                    ) : (
+                      <div className="bg-white px-4 py-3 rounded-xl border border-gray-100 font-medium uppercase">{client.fullName}</div>
+                    )}
+                    {isEditingInfo && (
+                      <p className="text-[11px] text-gray-500 mt-1">Padronizado em caixa alta ao sair do campo.</p>
+                    )}
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-gray-500 mb-1 tracking-wider uppercase">Telefone / WhatsApp</label>
+                    {isEditingInfo ? (
+                      <input
+                        type="tel"
+                        value={editData.whatsapp || ""}
+                        onChange={e => setEditData({ ...editData, whatsapp: e.target.value })}
+                        className="w-full bg-white border border-gray-200 rounded-xl px-4 py-3 outline-none font-medium"
+                        placeholder="(48) 99999-9999"
+                      />
+                    ) : (
+                      <div className="bg-white px-4 py-3 rounded-xl border border-gray-100 font-medium">{client.whatsapp || "Sem telefone"}</div>
+                    )}
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-gray-500 mb-1 tracking-wider uppercase">Data de nascimento</label>
+                    {isEditingInfo ? (
+                      <input
+                        type="date"
+                        value={(editData.birthDate || "").split("T")[0]}
+                        onChange={e => setEditData({ ...editData, birthDate: e.target.value })}
+                        className="w-full bg-white border border-gray-200 rounded-xl px-4 py-3 outline-none font-medium"
+                      />
+                    ) : (
+                      <div className="bg-white px-4 py-3 rounded-xl border border-gray-100 font-medium">
+                        {client.birthDate ? formatDateBR(client.birthDate) : "Não informada"}
+                      </div>
+                    )}
+                  </div>
+                </div>
+
                 <div className="grid grid-cols-2 gap-4">
                   <div>
                     <label className="block text-xs font-semibold text-gray-500 mb-1 tracking-wider uppercase">Matrícula</label>
@@ -462,10 +519,23 @@ export default function ClientProfile() {
                     <label className="block text-xs font-semibold text-gray-500 mb-1 tracking-wider uppercase">Vínculo</label>
                     {isEditingInfo ? (
                       <select value={editData.affiliation || ""} onChange={e => setEditData({...editData, affiliation: e.target.value})} className="w-full bg-white border border-gray-200 rounded-xl px-4 py-3 outline-none font-medium mb-3">
+                         <option value="">— não informado —</option>
+                         {/*
+                           O vínculo do paciente pode ter vindo de uma planilha
+                           com um valor que ainda não está cadastrado nas
+                           configurações. Sem esta opção extra, o <select> não
+                           encontraria correspondência e apareceria VAZIO — dando
+                           a impressão de que o dado não foi importado, quando na
+                           verdade ele está gravado.
+                         */}
+                         {editData.affiliation &&
+                           !config.affiliations.some(a => a.name === editData.affiliation) && (
+                             <option value={editData.affiliation}>{editData.affiliation} (não cadastrado)</option>
+                           )}
                          {config.affiliations.filter(a => a.isActive).map(a => <option key={a.id} value={a.name}>{a.name}</option>)}
                       </select>
                     ) : (
-                      <div className="bg-gray-50 px-4 py-3 rounded-xl text-gray-900 font-medium mb-3">{client.affiliation}</div>
+                      <div className="bg-gray-50 px-4 py-3 rounded-xl text-gray-900 font-medium mb-3">{client.affiliation || "Não informado"}</div>
                     )}
                     
                     {(isEditingInfo ? editData.affiliation : client.affiliation) === "Dependente" && (
@@ -577,6 +647,19 @@ export default function ClientProfile() {
                           <label className="block text-xs font-semibold text-gray-600 mb-1">Medicamentos em uso</label>
                           <input type="text" value={editData.medications || ""} onChange={e => setEditData({...editData, medications: e.target.value})} className="w-full bg-white border border-gray-200 rounded-lg px-3 py-2 outline-none text-sm" />
                         </div>
+                        {/*
+                          Diagnóstico/CID informado pelo próprio paciente no
+                          formulário de entrada. Dado de saúde: criptografado no
+                          banco e restrito a quem tem acesso clínico.
+                        */}
+                        <div>
+                          <label className="block text-xs font-semibold text-gray-600 mb-1">Diagnóstico / CID informado</label>
+                          <input type="text" value={editData.diagnosis || ""} onChange={e => setEditData({...editData, diagnosis: e.target.value})} className="w-full bg-white border border-gray-200 rounded-lg px-3 py-2 outline-none text-sm" placeholder="Ex.: F41.1 — informado pelo paciente" />
+                        </div>
+                        <div>
+                          <label className="block text-xs font-semibold text-gray-600 mb-1">Ramal institucional</label>
+                          <input type="text" value={editData.extension || ""} onChange={e => setEditData({...editData, extension: e.target.value})} className="w-full bg-white border border-gray-200 rounded-lg px-3 py-2 outline-none text-sm" />
+                        </div>
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2 border-t border-gray-200">
                           <div>
                             <label className="block text-xs font-semibold text-gray-600 mb-1">Contato feito por</label>
@@ -602,6 +685,8 @@ export default function ClientProfile() {
                       </div>
                     ) : (
                       <div className="bg-gray-50 px-4 py-3 rounded-xl border border-gray-100 text-sm text-gray-700 space-y-1.5">
+                        {client.diagnosis && <p><strong>Diagnóstico / CID informado:</strong> {client.diagnosis}</p>}
+                        {client.extension && <p><strong>Ramal:</strong> {client.extension}</p>}
                         <p><strong>WhatsApp autorizado:</strong> {client.whatsappAuthorized === true ? "Sim" : client.whatsappAuthorized === false ? "Não" : "—"} <span className="mx-2">•</span> <strong>Já atendido antes:</strong> {client.previouslyAttended === true ? "Sim" : client.previouslyAttended === false ? "Não" : "—"}</p>
                         {client.residenceCityNeighborhood && <p><strong>Cidade/bairro:</strong> {client.residenceCityNeighborhood}</p>}
                         {client.helpRequest && <p><strong>Como o setor pode ajudar:</strong> {client.helpRequest}</p>}
