@@ -189,7 +189,24 @@ const WaitlistCard: React.FC<{ client: Client }> = ({ client }) => {
       <div className="flex items-start justify-between">
         <div>
           <h4 className="font-bold text-gray-900 group-hover:text-blue-600 transition-colors text-lg">{client.fullName}</h4>
-          <p className="text-sm text-gray-500 mt-1">{client.affiliation} • {client.allocation}</p>
+          {/*
+            Cadastro reduzido (psicólogo vendo a fila de quem ainda não é
+            paciente dele): vínculo/alocação nem chegam do servidor, então
+            mostramos o contato de urgência, que é o que foi liberado.
+          */}
+          {client.limitedView ? (
+            client.emergencyContactPhone ? (
+              <p className="text-sm text-gray-500 mt-1">
+                Urgência: {client.emergencyContactName || "—"}
+                {client.emergencyContactRelationship ? ` (${client.emergencyContactRelationship})` : ""}
+                {" · "}{client.emergencyContactPhone}
+              </p>
+            ) : (
+              <p className="text-sm text-gray-400 mt-1">Sem contato de urgência informado</p>
+            )
+          ) : (
+            <p className="text-sm text-gray-500 mt-1">{client.affiliation} • {client.allocation}</p>
+          )}
           {client.affiliation === "Dependente" && client.dependencySponsor && (
              <p className="text-xs text-blue-600 mt-1 font-semibold flex items-center gap-1">Servidor: {client.dependencySponsor}</p>
           )}

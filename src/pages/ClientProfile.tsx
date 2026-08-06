@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from "react";
-import { useParams, useNavigate } from "react-router-dom";
+import { useParams, useNavigate, Link } from "react-router-dom";
 import { useStore } from "../contexts/StoreContext";
 import { ChevronLeft, Edit2, Clock, FileText, UserCircle, Save, Phone, X, FileDown, ShieldAlert, Siren, Download, Lock, Users2, ArrowRightLeft, ShieldCheck, History, AlertTriangle } from "lucide-react";
 import { cn } from "../lib/utils";
@@ -97,6 +97,49 @@ export default function ClientProfile() {
   );
 
   if (!client || !editData) return <div className="p-8 text-center">Paciente não encontrado.</div>;
+
+  /**
+   * Cadastro reduzido: o psicólogo enxerga esta pessoa na fila de espera, mas
+   * não é o responsável por ela. A ficha completa não é exibida porque os
+   * dados sequer chegaram do servidor — só nome, entrada e contato de urgência.
+   */
+  if (client.limitedView) {
+    return (
+      <div className="max-w-2xl mx-auto p-8">
+        <Link to="/waitlist" className="inline-flex items-center gap-1.5 text-sm font-semibold text-gray-500 hover:text-gray-800 mb-6">
+          <ChevronLeft size={16} /> Voltar para a Fila de Espera
+        </Link>
+        <div className="bg-white rounded-3xl border border-gray-100 shadow-sm p-8 space-y-5">
+          <div>
+            <h1 className="text-2xl font-bold text-gray-900">{client.fullName}</h1>
+            <p className="text-gray-500 mt-1">Na fila desde {formatDateTimeBR(client.dateIncluded)}</p>
+          </div>
+
+          <div className="bg-gray-50 border border-gray-100 rounded-2xl p-5">
+            <p className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">Contato de urgência</p>
+            {client.emergencyContactPhone ? (
+              <p className="font-medium text-gray-900">
+                {client.emergencyContactName || "—"}
+                {client.emergencyContactRelationship ? ` (${client.emergencyContactRelationship})` : ""}
+                <span className="block text-gray-600 mt-0.5">{client.emergencyContactPhone}</span>
+              </p>
+            ) : (
+              <p className="text-gray-500">Não informado.</p>
+            )}
+          </div>
+
+          <div className="bg-blue-50 border border-blue-100 rounded-2xl p-5 flex gap-3">
+            <Lock className="text-blue-600 shrink-0 mt-0.5" size={18} />
+            <p className="text-sm text-blue-900 leading-relaxed">
+              Você está vendo esta pessoa porque ela está na fila de espera. Os demais dados ficam
+              disponíveis ao profissional responsável pelo caso — a distribuição é feita pela
+              supervisão ou pelo administrativo.
+            </p>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   const formatPhone = (phone: string) => phone.replace(/\D/g, "");
   const clientDocs = clinicalDocuments.filter(d => d.clientId === client.id).sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());

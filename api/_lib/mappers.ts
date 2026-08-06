@@ -328,3 +328,34 @@ export function mapSessionMeta(s: any) {
     clinicalContentHidden: true,
   };
 }
+
+/**
+ * Fila de espera vista pelo PSICÓLOGO que ainda não é responsável pelo caso.
+ *
+ * O psicólogo precisa acompanhar a fila para saber quem está esperando e em
+ * que posição — e precisa do contato de urgência caso surja necessidade. Mas
+ * ele NÃO é responsável por essas pessoas, então não recebe o restante:
+ * pedido de ajuda, diagnóstico/CID, medicações, observações de contato,
+ * telefone pessoal, matrícula, setor.
+ *
+ * Isto é MINIMIZAÇÃO na origem (LGPD Art. 6º, III): o dado não trafega para o
+ * navegador de quem não precisa dele. Esconder na tela não seria controle de
+ * acesso — bastaria abrir o inspetor para ler tudo.
+ */
+export function mapClientWaitlistSummary(c: any) {
+  return {
+    id: c.id,
+    fullName: decryptField(c.fullNameEnc),
+    // Data E hora: é o que define a posição de quem entrou no mesmo dia.
+    dateIncluded: toISO(c.dateIncluded),
+    status: c.status,
+    priority: c.priority ?? undefined,
+    // Contato de urgência, conforme definido com o setor.
+    emergencyContactName: decryptField(c.emergencyContactNameEnc),
+    emergencyContactPhone: decryptField(c.emergencyContactPhoneEnc),
+    emergencyContactRelationship: decryptField(c.emergencyContactRelationshipEnc),
+    /** Sinaliza à interface que este cadastro veio reduzido. */
+    limitedView: true,
+    tags: [],
+  } as Record<string, any>;
+}

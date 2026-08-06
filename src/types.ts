@@ -125,6 +125,11 @@ export interface Client {
   /** Cadastro importado que precisa de conferência humana. */
   needsReview?: boolean;
   reviewNotes?: string;
+  /**
+   * true quando o cadastro chegou em versão reduzida (psicólogo vendo a fila
+   * de espera de quem ainda não é paciente dele). Os demais campos não vêm.
+   */
+  limitedView?: boolean;
   /** Motivo do encerramento sem atendimento (status CANCELADO). */
   cancellationReason?: string;
   /** Lote de importação (permite desfazer uma importação inteira). */

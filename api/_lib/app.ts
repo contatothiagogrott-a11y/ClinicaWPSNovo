@@ -34,6 +34,7 @@ import {
   mapUser,
   mapUserPublic,
   mapClient,
+  mapClientWaitlistSummary,
   mapSession,
   mapSessionMeta,
   mapGroup,
@@ -391,6 +392,27 @@ app.get(
           (c: any) => c.assignedPsicoId === session.userId || myGroupMemberClientIds.has(c.id)
         );
 
+    /**
+     * FILA DE ESPERA PARA O PSICÓLOGO.
+     *
+     * Quem está na fila ainda não tem responsável, então o filtro acima o
+     * deixava de fora e a tela "Fila de Espera" aparecia VAZIA para os
+     * psicólogos — efeito colateral do controle de acesso, não uma regra
+     * pedida pelo setor.
+     *
+     * A correção envia esses casos em versão REDUZIDA: nome, data/hora de
+     * entrada (para saber a posição) e contato de urgência. Nada de conteúdo
+     * clínico ou de contato pessoal de quem não é paciente dele.
+     */
+    const idsJaVisiveis = new Set(clients.map((c: any) => c.id));
+    const filaReduzida = isSupervisorOrAdmin
+      ? []
+      : clientsRaw.filter(
+          (c: any) =>
+            !idsJaVisiveis.has(c.id) &&
+            ["FILA_ESPERA", "TRIAGEM", "TRIADOS"].includes(c.status)
+        );
+
     // Quais pacientes este usuário pode ver CLINICAMENTE.
     const clinicalClientIds = new Set<string>(
       isAdmin
@@ -452,9 +474,12 @@ app.get(
       users: users.map((u: any) =>
         isSupervisorOrAdmin || u.id === session.userId ? mapUser(u) : mapUserPublic(u)
       ),
-      clients: clients.map((c: any) =>
-        mapClient(c, { includeHistory: false, includeClinical: clinicalClientIds.has(c.id) })
-      ),
+      clients: [
+        ...clients.map((c: any) =>
+          mapClient(c, { includeHistory: false, includeClinical: clinicalClientIds.has(c.id) })
+        ),
+        ...filaReduzida.map(mapClientWaitlistSummary),
+      ],
       sessions,
       appointments: appointments.map(mapAppointment),
       groups: groups.map(mapGroup),
