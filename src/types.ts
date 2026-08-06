@@ -26,12 +26,21 @@ export interface User {
   color?: string;
 }
 
+/**
+ * CANCELADO = a pessoa entrou na fila mas não chegou a ser atendida
+ * (não retornou o contato, desistiu, telefone inválido).
+ *
+ * É diferente de FINALIZADO, que significa serviço prestado e encerrado —
+ * distinção que importa para as métricas do setor e para o prazo de guarda
+ * do registro documental (Res. CFP nº 001/2009).
+ */
 export type ClientStatus =
   | "FILA_ESPERA"
   | "TRIAGEM"
   | "TRIADOS"
   | "EM_ATENDIMENTO"
-  | "FINALIZADO";
+  | "FINALIZADO"
+  | "CANCELADO";
 
 export type Priority = "BAIXA" | "MEDIA" | "ALTA" | "URGENTE";
 
@@ -116,6 +125,8 @@ export interface Client {
   /** Cadastro importado que precisa de conferência humana. */
   needsReview?: boolean;
   reviewNotes?: string;
+  /** Motivo do encerramento sem atendimento (status CANCELADO). */
+  cancellationReason?: string;
   /** Lote de importação (permite desfazer uma importação inteira). */
   importBatchId?: string;
   /** Encerramento do caso e prazo de guarda do registro documental. */

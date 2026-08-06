@@ -150,6 +150,7 @@ export function mapClient(c: any, options: ClientMapOptions = {}) {
     alescEntryDate: c.alescEntryDate ? toDateOnly(c.alescEntryDate) : undefined,
     needsReview: c.needsReview ?? false,
     reviewNotes: c.reviewNotes ?? undefined,
+    cancellationReason: decryptField(c.cancellationReasonEnc),
     importBatchId: c.importBatchId ?? undefined,
     finalizedAt: c.finalizedAt ? toISO(c.finalizedAt) : undefined,
     retentionUntil: c.retentionUntil ? toDateOnly(c.retentionUntil) : undefined,

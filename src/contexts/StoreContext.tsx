@@ -79,7 +79,8 @@ interface StoreContextType extends StoreState {
   importClients: (
     rows: Record<string, any>[],
     sourceLabel?: string,
-    onProgress?: (enviadas: number, total: number) => void
+    onProgress?: (enviadas: number, total: number) => void,
+    status?: "FILA_ESPERA" | "FINALIZADO" | "CANCELADO"
   ) => Promise<{ created: number; flagged: number; errors: { row: number; error: string }[]; importBatchId: string }>;
   /** Desfaz uma importação inteira pelo identificador do lote. */
   undoImport: (batchId: string) => Promise<number>;
@@ -475,7 +476,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
    * Todos os pedaços compartilham o mesmo `importBatchId`, então "desfazer
    * importação" continua apagando a planilha inteira de uma vez.
    */
-  const importClients: StoreContextType["importClients"] = async (rows, sourceLabel, onProgress) => {
+  const importClients: StoreContextType["importClients"] = async (rows, sourceLabel, onProgress, status) => {
     const TAMANHO_DO_LOTE = 50;
     let importBatchId = "";
     let created = 0;
@@ -489,7 +490,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
         flagged: number;
         errors: { row: number; error: string }[];
         importBatchId: string;
-      }>("/api/clients/import", { rows: pedaco, sourceLabel, importBatchId: importBatchId || undefined });
+      }>("/api/clients/import", { rows: pedaco, sourceLabel, status, importBatchId: importBatchId || undefined });
 
       importBatchId = res.importBatchId;
       created += res.created;

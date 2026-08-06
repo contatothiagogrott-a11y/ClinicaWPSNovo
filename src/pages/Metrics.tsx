@@ -93,6 +93,11 @@ export default function Metrics() {
 
   const totalAtendimentos = filteredSessions.length;
   const inWaitlist = filteredClients.filter(c => c.status === "FILA_ESPERA" || c.status === "TRIAGEM" || c.status === "TRIADOS");
+  /**
+   * Casos ATENDIDOS. CANCELADO fica deliberadamente de fora: são pessoas que
+   * entraram na fila e nunca foram atendidas — contá-las aqui inflaria o
+   * indicador de produção do setor.
+   */
   const completedOrActive = filteredClients.filter(c => c.status === "EM_ATENDIMENTO" || c.status === "FINALIZADO");
   
   const avgAtendimentos = completedOrActive.length > 0 ? (totalAtendimentos / completedOrActive.length).toFixed(1) : 0;

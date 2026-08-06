@@ -93,6 +93,13 @@ export const FIELD_DEFS: FieldDef[] = [
     keywords: [["data do contato"]] },
   { key: "contactObservations", label: "Observações", kind: "text", priority: 5,
     keywords: [["observa"], ["obs"]] },
+  // Casos já encerrados (listas antigas):
+  { key: "protocolNumber", label: "Nº de prontuário (casos finalizados)", kind: "text", priority: 9,
+    keywords: [["n prontuario"], ["no prontuario"], ["numero do prontuario"], ["prontuario"]] },
+  { key: "finalizedAt", label: "Data de encerramento", kind: "date", priority: 8,
+    keywords: [["data de encerramento"], ["data de alta"], ["encerrado em"], ["data final"]] },
+  { key: "cancellationReason", label: "Motivo do encerramento", kind: "text", priority: 8,
+    keywords: [["motivo"], ["justificativa"], ["situacao"]] },
 
   // Sem campo próprio no sistema: viram linhas rotuladas em Observações,
   // conforme decidido com o setor.

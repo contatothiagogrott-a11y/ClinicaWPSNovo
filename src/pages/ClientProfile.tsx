@@ -145,7 +145,7 @@ export default function ClientProfile() {
   // A API é quem decide o acesso clínico (ver /api/bootstrap -> clinicalClientIds).
   // Aqui apenas refletimos a decisão dela para não mostrar abas inúteis.
   const canViewProntuario = clinicalClientIds.includes(client.id);
-  const canEditStatus = (currentUser?.role === "SUPERVISOR" || currentUser?.role === "ADMIN" || currentUser?.role === "PSICO") && client.status !== "FINALIZADO";
+  const canEditStatus = (currentUser?.role === "SUPERVISOR" || currentUser?.role === "ADMIN" || currentUser?.role === "PSICO") && client.status !== "FINALIZADO" && client.status !== "CANCELADO";
 
   return (
     <div className="flex flex-col h-full animate-in fade-in slide-in-from-bottom-4 duration-500 max-w-5xl mx-auto space-y-6">
@@ -266,6 +266,7 @@ export default function ClientProfile() {
                       <option value="TRIADOS">Triados</option>
                       <option value="EM_ATENDIMENTO">Em Atendimento</option>
                       <option value="FINALIZADO">Finalizado / Alta</option>
+                      <option value="CANCELADO">Cancelado (não chegou a ser atendido)</option>
                     </select>
                   ) : (
                     <div className="bg-white px-4 py-3 rounded-xl border border-gray-100 font-medium">{client.status}</div>
@@ -622,6 +623,22 @@ export default function ClientProfile() {
           O aviso fica no topo da ficha, com o motivo exato — sem isso, o
           usuário teria de adivinhar o que revisar.
         */}
+        {/* Caso encerrado sem atendimento */}
+        {client.status === "CANCELADO" && (
+          <div className="mb-6 bg-gray-100 border border-gray-200 rounded-2xl p-5">
+            <p className="font-bold text-gray-800">Caso encerrado sem atendimento</p>
+            <p className="text-sm text-gray-600 mt-1">
+              Esta pessoa entrou na fila de espera mas não chegou a ser atendida. O cadastro fica
+              preservado para consulta futura.
+            </p>
+            {client.cancellationReason && (
+              <p className="text-sm text-gray-700 mt-2 whitespace-pre-wrap">
+                <strong>Motivo:</strong> {client.cancellationReason}
+              </p>
+            )}
+          </div>
+        )}
+
         {client.needsReview && (
           <div className="mb-6 bg-amber-50 border border-amber-200 rounded-2xl p-5 flex flex-col sm:flex-row sm:items-start gap-4">
             <AlertTriangle className="text-amber-600 shrink-0 mt-0.5" size={20} />

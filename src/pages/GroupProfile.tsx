@@ -85,7 +85,10 @@ export default function GroupProfile() {
   };
 
   // Eligibile clients: Not already in group
-  const eligibleClients = clients.filter(c => !group.memberIds.includes(c.id) && c.status !== "FINALIZADO");
+  // Casos encerrados (com ou sem atendimento) não entram em grupo novo.
+  const eligibleClients = clients.filter(
+    c => !group.memberIds.includes(c.id) && c.status !== "FINALIZADO" && c.status !== "CANCELADO"
+  );
   const groupMembers = clients.filter(c => group.memberIds.includes(c.id));
   const groupRecs = groupRecords.filter(r => r.groupId === group.id).sort((a,b) => new Date(b.sessionDate).getTime() - new Date(a.sessionDate).getTime());
 

@@ -40,6 +40,12 @@ export default function WaitlistImport() {
   const [erro, setErro] = useState("");
   const [importando, setImportando] = useState(false);
   const [resultado, setResultado] = useState<{ created: number; flagged: number; errors: any[]; importBatchId: string } | null>(null);
+  /**
+   * Destino da planilha. Listas antigas podem conter casos já encerrados:
+   * quem foi atendido entra como Finalizado; quem entrou na fila mas nunca
+   * foi atendido entra como Cancelado.
+   */
+  const [statusDestino, setStatusDestino] = useState<"FILA_ESPERA" | "FINALIZADO" | "CANCELADO">("FILA_ESPERA");
   const [progresso, setProgresso] = useState({ enviadas: 0, total: 0 });
   const [desfazendo, setDesfazendo] = useState(false);
   const [desfeito, setDesfeito] = useState(0);
@@ -90,7 +96,7 @@ export default function WaitlistImport() {
       }));
       setProgresso({ enviadas: 0, total: payload.length });
       const res = await importClients(payload, `${fileName} › ${sheetName}`, (enviadas, total) =>
-        setProgresso({ enviadas, total })
+        setProgresso({ enviadas, total }), statusDestino
       );
       setResultado(res as any);
       setEtapa("resultado");
@@ -207,6 +213,44 @@ export default function WaitlistImport() {
             <Cartao valor={semNome} rotulo="linhas sem nome (ignoradas)" cor="gray" />
           </div>
 
+          {/* Destino da planilha */}
+          <div className="bg-white border border-gray-200 rounded-2xl p-5 space-y-3">
+            <h2 className="font-bold text-gray-900 text-sm">Estas pessoas entram como</h2>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+              {([
+                ["FILA_ESPERA", "Fila de espera", "Aguardando atendimento"],
+                ["FINALIZADO", "Finalizado", "Foram atendidas e o caso encerrou"],
+                ["CANCELADO", "Cancelado", "Entraram na fila mas não foram atendidas"],
+              ] as const).map(([valor, titulo, desc]) => (
+                <button
+                  key={valor}
+                  onClick={() => setStatusDestino(valor)}
+                  className={cn(
+                    "text-left border rounded-xl px-4 py-3 transition-colors",
+                    statusDestino === valor
+                      ? "border-blue-500 bg-blue-50 ring-1 ring-blue-400"
+                      : "border-gray-200 hover:bg-gray-50"
+                  )}
+                >
+                  <span className="block font-bold text-sm text-gray-900">{titulo}</span>
+                  <span className="block text-[11px] text-gray-500 mt-0.5 leading-tight">{desc}</span>
+                </button>
+              ))}
+            </div>
+            {statusDestino === "FINALIZADO" && (
+              <p className="text-xs text-amber-800 bg-amber-50 border border-amber-100 rounded-xl px-4 py-3">
+                Casos finalizados devem trazer o <strong>número de prontuário</strong> da planilha —
+                a numeração histórica é preservada. Quem vier sem número entra marcado para revisão.
+              </p>
+            )}
+            {statusDestino === "CANCELADO" && (
+              <p className="text-xs text-gray-600 bg-gray-50 border border-gray-200 rounded-xl px-4 py-3">
+                Casos cancelados não recebem número de prontuário e não entram nas métricas de
+                atendimento — não houve serviço prestado. O cadastro fica preservado para consulta.
+              </p>
+            )}
+          </div>
+
           <div className="bg-white border border-gray-200 rounded-2xl overflow-hidden">
             <div className="px-5 py-3 bg-gray-50 border-b border-gray-200 flex items-center gap-2">
               <Eye size={16} className="text-gray-500" />
@@ -291,7 +335,7 @@ export default function WaitlistImport() {
               {importando && <Loader2 size={16} className="animate-spin" />}
               {importando && progresso.total > 0
                 ? `Importando ${progresso.enviadas} de ${progresso.total}...`
-                : `Importar ${linhas.length} pessoas para a fila`}
+                : `Importar ${linhas.length} pessoas`}
             </button>
           </div>
         </div>

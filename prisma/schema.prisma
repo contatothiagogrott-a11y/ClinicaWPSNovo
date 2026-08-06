@@ -36,6 +36,21 @@ enum ClientStatus {
   TRIADOS
   EM_ATENDIMENTO
   FINALIZADO
+  // Caso encerrado SEM atendimento: a pessoa entrou na fila mas não houve
+  // serviço prestado (não retornou o contato, desistiu, número inválido).
+  //
+  // Existe separado de FINALIZADO por três razões:
+  //  1. FINALIZADO significa serviço prestado e encerrado — é dele que corre o
+  //     prazo de guarda do registro documental (Res. CFP nº 001/2009). Sem
+  //     atendimento não há fato gerador dessa obrigação.
+  //  2. As métricas do setor somam EM_ATENDIMENTO + FINALIZADO como casos
+  //     atendidos. Misturar quem nunca foi atendido inflaria o indicador.
+  //  3. Quem não foi atendido não tem prontuário aberto, logo não recebe
+  //     número de prontuário.
+  //
+  // O dado é preservado: se a pessoa procurar o setor de novo, o histórico
+  // mostra que ela já esteve na fila antes.
+  CANCELADO
 }
 
 enum Priority {
@@ -203,6 +218,10 @@ model Client {
   // entra marcado e aparece filtrado na Fila de Espera até alguém conferir.
   needsReview            Boolean       @default(false)
   reviewNotes            String?
+
+  // Motivo do encerramento sem atendimento (status CANCELADO).
+  // Criptografado: pode conter informação sobre a situação da pessoa.
+  cancellationReasonEnc  String?
 
   // Identifica o lote de importação, permitindo desfazer uma importação
   // inteira caso o mapeamento de colunas tenha saído errado.

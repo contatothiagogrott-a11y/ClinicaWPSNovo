@@ -17,6 +17,7 @@ const STATUS_COLORS: Record<string, string> = {
   TRIADOS: "#8b5cf6",
   EM_ATENDIMENTO: "#10b981",
   FINALIZADO: "#94a3b8",
+  CANCELADO: "#d1d5db",
 };
 
 const STATUS_LABELS: Record<string, string> = {
@@ -25,6 +26,7 @@ const STATUS_LABELS: Record<string, string> = {
   TRIADOS: "Triados",
   EM_ATENDIMENTO: "Em Atendimento",
   FINALIZADO: "Finalizado",
+  CANCELADO: "Cancelado",
 };
 
 function durationHours(time: string, endTime?: string) {

@@ -550,6 +550,19 @@ app.post(
     if (!session) return;
     const rows: any[] = Array.isArray(req.body?.rows) ? req.body.rows : [];
     const sourceLabel = String(req.body?.sourceLabel ?? "planilha").slice(0, 120);
+
+    /**
+     * Status de destino da planilha.
+     *
+     * Listas antigas trazem casos já encerrados. Só três destinos são
+     * aceitos na importação: fila de espera (padrão), finalizado (houve
+     * atendimento) e cancelado (entrou na fila mas não houve atendimento).
+     * Nunca EM_ATENDIMENTO: isso exigiria psicólogo responsável e agenda.
+     */
+    const STATUS_PERMITIDOS = ["FILA_ESPERA", "FINALIZADO", "CANCELADO"];
+    const statusDestino = STATUS_PERMITIDOS.includes(String(req.body?.status))
+      ? String(req.body.status)
+      : "FILA_ESPERA";
     // O navegador envia a planilha em pedaços e reaproveita o mesmo lote,
     // para que "desfazer importação" continue apagando tudo de uma vez.
     const importBatchId = String(req.body?.importBatchId || crypto.randomUUID());
@@ -636,9 +649,27 @@ app.post(
         if (needsReview) flagged++;
 
         const id = crypto.randomUUID();
-        // Importado entra na FILA DE ESPERA: sem prontuário aberto, sem número.
-        // (A versão anterior gravava o texto "Pendente" aqui.)
-        const protocolNumber: string | null = null;
+        /**
+         * Número de prontuário.
+         *
+         * Fila de espera e cancelado NÃO têm prontuário aberto, logo não têm
+         * número. Já os casos FINALIZADOS foram atendidos de verdade e
+         * costumam ter numeração histórica na planilha — que precisa ser
+         * PRESERVADA, senão o documento antigo deixa de bater com o sistema.
+         *
+         * Se um caso finalizado vier sem número, ele é sinalizado para
+         * revisão em vez de receber um número novo: inventar numeração
+         * retroativa embaralharia a sequência do setor.
+         */
+        let protocolNumber: string | null = null;
+        if (statusDestino === "FINALIZADO") {
+          const informado = b.protocolNumber ? String(b.protocolNumber).trim() : "";
+          if (informado) {
+            protocolNumber = informado;
+          } else {
+            reasons.push("Caso finalizado sem número de prontuário na planilha.");
+          }
+        }
 
         clientesParaCriar.push({
           id,
@@ -661,7 +692,16 @@ app.post(
           extension: b.extension,
           alescEntryDate: parseDateInput(b.alescEntryDate) ?? undefined,
           dateIncluded: parseDateInput(b.dateIncluded) ?? new Date(),
-          status: "FILA_ESPERA",
+          status: statusDestino as any,
+          // Caso encerrado: registra a data e, quando houve atendimento,
+          // calcula o prazo de guarda do registro documental.
+          finalizedAt: statusDestino === "FILA_ESPERA" ? null : (parseDateInput(b.finalizedAt) ?? new Date()),
+          retentionUntil:
+            statusDestino === "FINALIZADO"
+              ? computeRetentionUntil(parseDateInput(b.finalizedAt) ?? new Date(), b.birthDate)
+              : null,
+          cancellationReasonEnc:
+            statusDestino === "CANCELADO" ? encryptField(b.cancellationReason || b.contactObservations) : null,
           sector: b.sector,
           workShift: b.workShift,
           whatsappAuthorized: b.whatsappAuthorized,
@@ -678,7 +718,12 @@ app.post(
           clientId: id,
           actorId: session.userId,
           category: "FLUXO",
-          action: "Caso criado por importação de planilha",
+          action:
+            statusDestino === "CANCELADO"
+              ? "Caso importado como encerrado sem atendimento"
+              : statusDestino === "FINALIZADO"
+              ? "Caso importado como finalizado"
+              : "Caso criado por importação de planilha",
           detailsEnc: encryptField(
             `Origem: ${sourceLabel}. Linha ${linha}.` +
               (needsReview ? ` Marcado para revisão: ${reasons.join(" ")}` : "")
@@ -891,6 +936,7 @@ app.patch(
     if ("helpRequest" in b) data.helpRequestEnc = encryptField(b.helpRequest);
     if ("medications" in b) data.medicationsEnc = encryptField(b.medications);
     if ("contactObservations" in b) data.contactObservationsEnc = encryptField(b.contactObservations);
+    if ("cancellationReason" in b) data.cancellationReasonEnc = encryptField(b.cancellationReason);
     // Diagnóstico/CID: dado de saúde, criptografado como os demais sensíveis.
     if ("diagnosis" in b) data.diagnosisEnc = encryptField(b.diagnosis);
     if ("alescEntryDate" in b) data.alescEntryDate = parseDateInput(b.alescEntryDate);
@@ -906,6 +952,15 @@ app.patch(
     }
     if (data.status && data.status !== "FINALIZADO" && existing.status === "FINALIZADO") {
       data.finalizedAt = null;
+      data.retentionUntil = null;
+    }
+    /**
+     * CANCELADO: registra a data de encerramento, mas NÃO calcula prazo de
+     * guarda. A guarda de 5 anos da Resolução CFP nº 001/2009 conta a partir
+     * do encerramento do SERVIÇO PRESTADO — e aqui não houve serviço.
+     */
+    if (data.status === "CANCELADO" && existing.status !== "CANCELADO") {
+      data.finalizedAt = new Date();
       data.retentionUntil = null;
     }
 
@@ -1049,6 +1104,7 @@ async function assignProtocolNumber(clientId: string): Promise<string | null> {
 }
 
 /** Status em que o caso já é considerado atendido e, portanto, tem prontuário. */
+// CANCELADO fica de fora: quem não foi atendido não tem prontuário aberto.
 const STATUS_COM_PRONTUARIO = ["TRIAGEM", "TRIADOS", "EM_ATENDIMENTO", "FINALIZADO"];
 
 function startOfToday(): Date {
