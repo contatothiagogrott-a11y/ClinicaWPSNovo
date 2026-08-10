@@ -924,6 +924,51 @@ app.patch(
       }
     }
 
+    /**
+     * CORREÇÃO MANUAL DO NÚMERO DE PRONTUÁRIO — restrita a SUPERVISOR e ADMIN.
+     *
+     * A numeração é gerada automaticamente pelo servidor quando o caso sai da
+     * fila (ver `assignProtocolNumber`). Mas listas históricas trazem números
+     * que precisam ser preservados, e erros de digitação em importação
+     * precisam de conserto — daí a edição manual.
+     *
+     * O campo NÃO entra na lista `plain` de campos livres de propósito: um
+     * psicólogo não pode alterar numeração de prontuário, porque isso permitiria
+     * sobrescrever ou duplicar o número de um caso alheio.
+     *
+     * Duplicidade é bloqueada: dois prontuários com o mesmo número tornam o
+     * registro documental irrastreável (Res. CFP nº 001/2009).
+     */
+    if ("protocolNumber" in b) {
+      if (session.role !== "SUPERVISOR" && session.role !== "ADMIN") {
+        res.status(403).json({
+          error: "Somente Supervisor e Administrativo podem alterar o número de prontuário.",
+        });
+        return;
+      }
+      const informado = b.protocolNumber === null || b.protocolNumber === ""
+        ? null
+        : String(b.protocolNumber).trim();
+
+      if (informado !== null) {
+        if (!/^\d+$/.test(informado)) {
+          res.status(400).json({ error: "O número de prontuário deve conter apenas dígitos." });
+          return;
+        }
+        const jaUsado = await prisma.client.findFirst({
+          where: { protocolNumber: informado, NOT: { id: req.params.id } },
+          select: { id: true },
+        });
+        if (jaUsado) {
+          res.status(409).json({
+            error: `O número ${informado} já pertence a outro prontuário.`,
+          });
+          return;
+        }
+      }
+      data.protocolNumber = informado;
+    }
+
     const plain: Record<string, string> = {
       registrationCode: "registrationCode",
       affiliation: "affiliation",

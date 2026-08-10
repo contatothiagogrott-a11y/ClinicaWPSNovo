@@ -59,6 +59,7 @@ export default function ClientProfile() {
   const [showExportPrompt, setShowExportPrompt] = useState(false);
   const [selectedTestIds, setSelectedTestIds] = useState<Set<string>>(new Set());
   const [isTransferring, setIsTransferring] = useState(false);
+  const [saveError, setSaveError] = useState("");
   const [history, setHistory] = useState<HistoryLog[] | null>(null);
   const [historyError, setHistoryError] = useState("");
 
@@ -167,15 +168,34 @@ export default function ClientProfile() {
     setShowExportPrompt(false);
   };
 
-  const handleSaveInfo = () => {
+  const handleSaveInfo = async () => {
     // O responsável NÃO acompanha o formulário: a troca tem rota e regra
     // próprias (TransferPsicoModal). Removemos o campo explicitamente para que
     // nenhuma edição de ficha carregue uma transferência silenciosa junto.
-    const { assignedPsicoId, assignedPsicoName, history: _history, ...safeData } = editData as any;
+    const { assignedPsicoId, assignedPsicoName, history: _history, protocolNumber, ...safeData } = editData as any;
     void assignedPsicoId;
     void assignedPsicoName;
-    updateClient(client.id, safeData, "Informações do paciente atualizadas.");
-    setIsEditingInfo(false);
+
+    /**
+     * O número de prontuário só é enviado quando quem edita tem permissão E
+     * o valor realmente mudou. Sem isso, um psicólogo salvando a ficha
+     * mandaria o campo inalterado junto e receberia 403 da API — um erro
+     * confuso, provocado por um campo que ele nem editou.
+     */
+    const payload: any = { ...safeData };
+    if (canTransferClient(currentUser) && (protocolNumber ?? "") !== (client.protocolNumber ?? "")) {
+      payload.protocolNumber = protocolNumber || null;
+    }
+
+    try {
+      await updateClient(client.id, payload, "Informações do paciente atualizadas.");
+      setSaveError("");
+      setIsEditingInfo(false);
+    } catch (err: any) {
+      // Ex.: número de prontuário já usado por outro caso.
+      setSaveError(err?.message || "Não foi possível salvar as alterações.");
+      return;
+    }
   };
 
   const handleReactivate = (newStatus: any) => {
@@ -403,8 +423,30 @@ export default function ClientProfile() {
                   </div>
                   <div>
                      <label className="block text-xs font-semibold text-gray-500 mb-1 tracking-wider uppercase">Prontuário</label>
-                     {isEditingInfo ? (
-                        <div className="bg-gray-50 px-4 py-3 rounded-xl border border-gray-100 font-medium text-gray-500" title="A numeração é gerada pelo sistema, em sequência, quando o caso passa a ser atendido.">
+                     {/*
+                       Edição manual liberada para Supervisor e Administrativo.
+                       O número normalmente é gerado pelo sistema ao sair da
+                       fila, mas listas históricas trazem numeração própria que
+                       precisa ser preservada, e erros de importação precisam
+                       de conserto. Para o psicólogo o campo continua só de
+                       leitura — e o bloqueio real está na API.
+                     */}
+                     {isEditingInfo && canTransferClient(currentUser) ? (
+                        <>
+                          <input
+                            type="text"
+                            inputMode="numeric"
+                            value={editData.protocolNumber ?? ""}
+                            onChange={e => setEditData({ ...editData, protocolNumber: e.target.value.replace(/\D/g, "") })}
+                            className="w-full bg-white border border-gray-200 rounded-xl px-4 py-3 outline-none font-medium text-gray-900"
+                            placeholder="Deixe vazio se ainda não houver"
+                          />
+                          <p className="text-[11px] text-gray-500 mt-1">
+                            Somente números. Deixe vazio para o sistema atribuir ao sair da fila.
+                          </p>
+                        </>
+                     ) : isEditingInfo ? (
+                        <div className="bg-gray-50 px-4 py-3 rounded-xl border border-gray-100 font-medium text-gray-500" title="Somente Supervisor e Administrativo podem alterar a numeração.">
                           {client.protocolNumber || "Atribuído ao sair da fila de espera"}
                         </div>
                      ) : (
@@ -751,6 +793,12 @@ export default function ClientProfile() {
           O aviso fica no topo da ficha, com o motivo exato — sem isso, o
           usuário teria de adivinhar o que revisar.
         */}
+        {saveError && (
+          <p className="mb-4 text-sm text-red-700 bg-red-50 border border-red-200 rounded-xl px-4 py-3 font-semibold">
+            {saveError}
+          </p>
+        )}
+
         {/* Caso encerrado sem atendimento */}
         {client.status === "CANCELADO" && (
           <div className="mb-6 bg-gray-100 border border-gray-200 rounded-2xl p-5">
