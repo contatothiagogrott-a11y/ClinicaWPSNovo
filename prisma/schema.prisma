@@ -447,6 +447,18 @@ model Appointment {
   sessionNumber Int?
   attendance    String?   @default("PENDENTE")
 
+  /**
+   * Natureza do compromisso.
+   *
+   * ATENDIMENTO gera prontuário (é ato clínico que precisa de registro).
+   * Os demais tipos — triagem de entrada em grupo, entrevista, devolutiva,
+   * reunião — ocupam a agenda e a sala, mas NÃO abrem prontuário automático.
+   *
+   * Sem essa distinção, todo agendamento criava um registro clínico pendente,
+   * enchendo a ficha do paciente de prontuários em branco.
+   */
+  appointmentType String   @default("ATENDIMENTO")
+
   // Momento em que o lembrete por push foi enviado.
   // Existe para IDEMPOTÊNCIA: o disparador externo bate na rota a cada 15
   // minutos, e sem esta marca o mesmo lembrete sairia várias vezes.

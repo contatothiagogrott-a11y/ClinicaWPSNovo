@@ -100,6 +100,15 @@ export default function AgendaModal({ open, onClose, initialData, existingAppoin
    * próximas ocorrências. As sessões passadas nunca são alteradas: agenda
    * realizada é registro, não se reescreve.
    */
+  /**
+   * Natureza do compromisso.
+   * Só ATENDIMENTO abre prontuário. Triagem de grupo, entrevista e devolutiva
+   * ocupam agenda e sala, mas não geram registro clínico automático.
+   */
+  const [appointmentType, setAppointmentType] = useState<NonNullable<Appointment["appointmentType"]>>(
+    (existingAppointment as any)?.appointmentType || "ATENDIMENTO"
+  );
+
   const [appointmentDate, setAppointmentDate] = useState(initialData.date);
   const [applyToFuture, setApplyToFuture] = useState(false);
   const [futureFeedback, setFutureFeedback] = useState("");
@@ -173,6 +182,7 @@ export default function AgendaModal({ open, onClose, initialData, existingAppoin
       roomId: roomId,
       clientId: bookingType === "client" ? selectedId : undefined,
       groupId: bookingType === "group" ? selectedId : undefined,
+      appointmentType,
       psicoId: resolvedPsicoId,
       recurrence,
       seriesId
@@ -264,6 +274,40 @@ export default function AgendaModal({ open, onClose, initialData, existingAppoin
                <select value={roomId} onChange={e => setRoomId(e.target.value)} required className="w-full bg-white border border-gray-200 focus:border-blue-500 rounded-xl px-3 py-2 outline-none font-bold text-gray-900 transition-colors">
                  {activeRooms.map(r => <option key={r} value={r}>{r}</option>)}
                </select>
+             </div>
+
+             {/* Natureza do compromisso */}
+             <div className="pt-4 border-t border-gray-200">
+               <label className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2 block">
+                 Tipo de compromisso
+               </label>
+               <div className="grid grid-cols-2 gap-2">
+                 {([
+                   ["ATENDIMENTO", "Atendimento"],
+                   ["TRIAGEM_GRUPO", "Triagem para grupo"],
+                   ["ENTREVISTA", "Entrevista"],
+                   ["DEVOLUTIVA", "Devolutiva"],
+                 ] as const).map(([valor, rotulo]) => (
+                   <button
+                     key={valor}
+                     type="button"
+                     onClick={() => setAppointmentType(valor)}
+                     className={cn(
+                       "text-sm font-bold py-2.5 rounded-xl border transition-colors",
+                       appointmentType === valor
+                         ? "bg-blue-50 border-blue-400 text-blue-700 ring-1 ring-blue-400"
+                         : "bg-white border-gray-200 text-gray-600 hover:bg-gray-50"
+                     )}
+                   >
+                     {rotulo}
+                   </button>
+                 ))}
+               </div>
+               <p className="text-[11px] text-gray-500 mt-2 leading-relaxed">
+                 {appointmentType === "ATENDIMENTO"
+                   ? "Abre um prontuário pendente para você registrar a evolução depois."
+                   : "Ocupa a agenda e a sala, mas não abre prontuário. Use quando o compromisso não for um atendimento clínico do paciente."}
+               </p>
              </div>
 
              {/* Data do atendimento — editável também na edição (mudar de terça

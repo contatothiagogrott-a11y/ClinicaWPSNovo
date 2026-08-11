@@ -235,6 +235,12 @@ export interface Appointment {
    * serviço (afastamento do profissional, mudança de escala) não diz nada
    * sobre a adesão do paciente. Nenhum dos três consome sessão do pacote.
    */
+  /**
+   * Natureza do compromisso. Só ATENDIMENTO abre prontuário automaticamente;
+   * triagem, entrevista, devolutiva e reunião ocupam a agenda sem gerar
+   * registro clínico.
+   */
+  appointmentType?: "ATENDIMENTO" | "TRIAGEM_GRUPO" | "ENTREVISTA" | "DEVOLUTIVA" | "REUNIAO";
   attendance?:
     | "PENDENTE"
     | "COMPARECEU"

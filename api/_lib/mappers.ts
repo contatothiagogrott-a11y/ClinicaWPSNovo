@@ -246,6 +246,7 @@ export function mapAppointment(a: any) {
     recurrence: a.recurrence ?? undefined,
     sessionNumber: a.sessionNumber ?? undefined,
     attendance: a.attendance ?? undefined,
+    appointmentType: a.appointmentType ?? "ATENDIMENTO",
   };
 }
 

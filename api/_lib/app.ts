@@ -1555,10 +1555,28 @@ app.post(
         seriesId: b.seriesId,
         recurrence: b.recurrence,
         sessionNumber: b.sessionNumber,
+        appointmentType: b.appointmentType || "ATENDIMENTO",
       },
     });
 
-    if (appt.clientId) {
+    /**
+     * PRONTUÁRIO PENDENTE — só para ATENDIMENTO.
+     *
+     * Antes, TODO agendamento criava um registro clínico em branco. Numa série
+     * recorrente isso significava um prontuário por ocorrência, e num
+     * compromisso que nem é atendimento (triagem de grupo, entrevista,
+     * devolutiva) significava um registro que nunca deveria existir.
+     *
+     * Resultado prático: a ficha do paciente enchia de prontuários vazios.
+     *
+     * Agora o registro nasce apenas quando o compromisso é de fato um
+     * atendimento — e apenas para a PRIMEIRA ocorrência de uma série (as
+     * demais geram o seu quando acontecerem, ao registrar a presença).
+     */
+    const geraProntuario =
+      (b.appointmentType || "ATENDIMENTO") === "ATENDIMENTO" && !b.seriesId;
+
+    if (appt.clientId && geraProntuario) {
       /**
        * O prontuário pendente nasce vinculado a QUEM VAI ATENDER (`appt.psicoId`),
        * não ao responsável pelo caso. É isso que permite ao psicólogo do grupo
@@ -1575,7 +1593,7 @@ app.post(
           appointmentId: appt.id,
         },
       });
-    } else if (appt.groupId) {
+    } else if (appt.groupId && geraProntuario) {
       const group = await prisma.group.findUnique({ where: { id: appt.groupId } });
       if (group) {
         await prisma.groupRecord.create({
@@ -1631,7 +1649,7 @@ app.patch(
     }
 
     const data: any = {};
-    for (const key of ["roomId", "time", "endTime", "recurrence", "sessionNumber", "attendance", "psicoId", "seriesId"]) {
+    for (const key of ["roomId", "time", "endTime", "recurrence", "sessionNumber", "attendance", "psicoId", "seriesId", "appointmentType"]) {
       if (key in b) data[key] = b[key];
     }
     if ("clientId" in b) data.clientId = b.clientId || null;
@@ -2738,6 +2756,52 @@ app.post(
     }
 
     res.json({ limpos: result.count });
+  })
+);
+
+/**
+ * Limpeza de prontuários pendentes em branco.
+ *
+ * Corrige o efeito do defeito anterior, em que TODO agendamento criava um
+ * registro clínico — inclusive séries recorrentes (um por ocorrência) e
+ * compromissos que nem eram atendimento.
+ *
+ * Remove apenas rascunhos SEM NENHUM CONTEÚDO: texto vazio, sem anotação
+ * privada, sem presença registrada e sem versões anteriores. Nada que alguém
+ * tenha escrito é tocado.
+ */
+app.post(
+  "/api/manutencao/limpar-prontuarios-vazios",
+  asyncHandler(async (req, res) => {
+    const session = requireSession(req, res, ["SUPERVISOR", "ADMIN"]);
+    if (!session) return;
+
+    const candidatos = await prisma.sessionRecord.findMany({
+      where: {
+        isDraft: true,
+        OR: [{ attendance: null }, { attendance: "PENDENTE" }],
+      },
+      include: { versions: true },
+    });
+
+    const idsParaRemover = candidatos
+      .filter((s: any) => {
+        const semTexto = !decryptField(s.notesEnc);
+        const semPrivada = !decryptField(s.privateNotesEnc);
+        const semVersoes = (s.versions ?? []).length === 0;
+        return semTexto && semPrivada && semVersoes;
+      })
+      .map((s: any) => s.id);
+
+    if (idsParaRemover.length === 0) {
+      res.json({ removidos: 0 });
+      return;
+    }
+
+    const result = await prisma.sessionRecord.deleteMany({
+      where: { id: { in: idsParaRemover } },
+    });
+    res.json({ removidos: result.count });
   })
 );
 
