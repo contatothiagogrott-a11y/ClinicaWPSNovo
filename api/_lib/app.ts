@@ -411,10 +411,31 @@ app.get(
     );
 
     // Quais pacientes este usuário enxerga (nível cadastro).
+    /**
+     * Pacientes que este profissional acessa.
+     *
+     * Inclui, além dos seus e dos membros dos seus grupos, quem ele ATENDEU em
+     * algum momento — mesmo sendo acompanhado individualmente por outro colega.
+     * É o caso da triagem de entrada em grupo: sem isso, o psicólogo escreveria
+     * o registro e depois não conseguiria abrir a ficha para relê-lo.
+     */
+    const idsQueAtendi = new Set<string>(
+      sessionsRaw.filter((s: any) => s.psicoId === session.userId).map((s: any) => s.clientId)
+    );
+    const idsQueAgendei = new Set<string>(
+      appointmentsRaw
+        .filter((a: any) => a.psicoId === session.userId && a.clientId)
+        .map((a: any) => a.clientId)
+    );
+
     const clients = isSupervisorOrAdmin
       ? clientsRaw
       : clientsRaw.filter(
-          (c: any) => c.assignedPsicoId === session.userId || myGroupMemberClientIds.has(c.id)
+          (c: any) =>
+            c.assignedPsicoId === session.userId ||
+            myGroupMemberClientIds.has(c.id) ||
+            idsQueAtendi.has(c.id) ||
+            idsQueAgendei.has(c.id)
         );
 
     /**
@@ -445,7 +466,13 @@ app.get(
         : isSupervisor
         ? clientsRaw.map((c: any) => c.id)
         : clients
-            .filter((c: any) => c.assignedPsicoId === session.userId || myGroupMemberClientIds.has(c.id))
+            .filter(
+              (c: any) =>
+                c.assignedPsicoId === session.userId ||
+                myGroupMemberClientIds.has(c.id) ||
+                idsQueAtendi.has(c.id) ||
+                idsQueAgendei.has(c.id)
+            )
             .map((c: any) => c.id)
     );
 
@@ -1487,6 +1514,35 @@ app.post(
     const session = requireSession(req, res);
     if (!session) return;
     const b = req.body ?? {};
+
+    /**
+     * Agendar NÃO exige ser o responsável pelo paciente.
+     *
+     * O setor trabalha com vínculos que coexistem: a mesma pessoa pode estar
+     * em atendimento individual com A e ser avaliada por B para entrar num
+     * grupo. Exigir titularidade aqui inviabilizaria a triagem de grupo.
+     *
+     * O que continua protegido é a TITULARIDADE do caso: nenhuma rota de
+     * agendamento altera `assignedPsicoId` de um paciente que já tem
+     * responsável (ver PATCH /api/clients/:id).
+     */
+    if (b.clientId) {
+      const alvo = await prisma.client.findUnique({
+        where: { id: b.clientId },
+        select: { status: true },
+      });
+      if (!alvo) {
+        res.status(404).json({ error: "Paciente não encontrado." });
+        return;
+      }
+      if (alvo.status === "FINALIZADO" || alvo.status === "CANCELADO") {
+        res.status(409).json({
+          error: "Este caso está encerrado. Reative o cadastro antes de agendar um atendimento.",
+        });
+        return;
+      }
+    }
+
     const appt = await prisma.appointment.create({
       data: {
         clientId: b.clientId || null,
@@ -1503,6 +1559,12 @@ app.post(
     });
 
     if (appt.clientId) {
+      /**
+       * O prontuário pendente nasce vinculado a QUEM VAI ATENDER (`appt.psicoId`),
+       * não ao responsável pelo caso. É isso que permite ao psicólogo do grupo
+       * registrar a triagem de entrada de um paciente que é acompanhado
+       * individualmente por outro colega — cada registro pertence a seu autor.
+       */
       await prisma.sessionRecord.create({
         data: {
           clientId: appt.clientId,

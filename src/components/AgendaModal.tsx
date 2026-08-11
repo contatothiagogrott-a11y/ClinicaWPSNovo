@@ -27,10 +27,25 @@ export default function AgendaModal({ open, onClose, initialData, existingAppoin
   // Fila de Espera/Triagem nunca aparecia para ser agendado. Agora mostra
   // qualquer paciente ainda ativo (não finalizado), com filtro de status e
   // busca por nome/matrícula para facilitar achar quem se procura.
-  let bookableClients = clients.filter(c => c.status !== "FINALIZADO");
-  if (currentUser?.role === "PSICO") {
-    bookableClients = bookableClients.filter(c => c.assignedPsicoId === currentUser.id || (!c.assignedPsicoId && (c.status === "FILA_ESPERA" || c.status === "TRIAGEM")));
-  }
+  /**
+   * QUEM PODE SER AGENDADO
+   * ======================
+   *
+   * Antes, o psicólogo só via os pacientes atribuídos a ele (ou os que ainda
+   * não tinham responsável). Isso impedia o caso real do setor: agendar uma
+   * TRIAGEM DE GRUPO para alguém que já está em atendimento individual com
+   * outro colega — a pessoa nem aparecia na lista.
+   *
+   * O setor definiu que qualquer psicólogo pode fazer triagem de entrada em
+   * grupo, e que os vínculos coexistem: individual com A, grupo com B, sem
+   * que um exclua o outro.
+   *
+   * Casos ENCERRADOS (finalizados ou cancelados) continuam fora: agendar
+   * alguém cujo caso foi encerrado seria reabertura disfarçada, sem registro.
+   */
+  const bookableClients = clients.filter(
+    c => c.status !== "FINALIZADO" && c.status !== "CANCELADO"
+  );
 
   const [clientStatusFilter, setClientStatusFilter] = useState<"TODOS" | "FILA_ESPERA" | "TRIAGEM" | "TRIADOS" | "EM_ATENDIMENTO">("TODOS");
   const [clientSearch, setClientSearch] = useState("");
@@ -59,6 +74,14 @@ export default function AgendaModal({ open, onClose, initialData, existingAppoin
 
   const [bookingType, setBookingType] = useState<"client" | "group">(existingAppointment?.groupId ? "group" : "client");
   const [selectedId, setSelectedId] = useState(existingAppointment?.clientId || existingAppointment?.groupId || "");
+
+  /** Paciente escolhido já é acompanhado por outro profissional? */
+  const clienteEscolhido = bookingType === "client" ? clients.find(c => c.id === selectedId) : null;
+  const outroResponsavel =
+    clienteEscolhido?.assignedPsicoId &&
+    clienteEscolhido.assignedPsicoId !== currentUser?.id
+      ? clienteEscolhido.assignedPsicoName
+      : null;
   const [recurrence, setRecurrence] = useState<"none" | "weekly" | "biweekly">(existingAppointment?.recurrence || "none");
 
   const defaultEndTime = () => {
@@ -177,17 +200,27 @@ export default function AgendaModal({ open, onClose, initialData, existingAppoin
        }
     }
 
-    // Se o usuário escolheu avançar o status do paciente (ex: Fila de Espera -> Triagem)
-    // junto com o agendamento, aplica isso também — e assume o paciente como seu, se
-    // ainda não tinha psicólogo responsável (comum em quem está na fila de espera).
+    /**
+     * Avanço de status junto com o agendamento.
+     *
+     * REGRA CRÍTICA: a atribuição de responsável só acontece quando o paciente
+     * AINDA NÃO TEM um. Antes, agendar com avanço de status sobrescrevia o
+     * responsável — então o psicólogo B, ao agendar uma triagem de grupo para
+     * um paciente do colega A, tomava o caso dele sem querer e sem registro.
+     *
+     * Transferir é ato próprio, com justificativa e trilha (privativo de
+     * Supervisor e Administrativo). Agendar não transfere.
+     */
     if (bookingType === "client" && statusTransition) {
       const selectedClient = clients.find(c => c.id === selectedId);
       const updates: any = { status: statusTransition };
-      if ((statusTransition === "EM_ATENDIMENTO" || statusTransition === "TRIAGEM") && responsiblePsicoId) {
-        updates.assignedPsicoId = responsiblePsicoId;
-      } else if (selectedClient && !selectedClient.assignedPsicoId && currentUser) {
-        updates.assignedPsicoId = currentUser.id;
+
+      const semResponsavel = selectedClient && !selectedClient.assignedPsicoId;
+      if (semResponsavel) {
+        // Primeira atribuição: quem foi escolhido no formulário, ou quem agenda.
+        updates.assignedPsicoId = responsiblePsicoId || currentUser?.id;
       }
+
       updateClient(selectedId, updates, `Status alterado para ${statusTransition} ao agendar atendimento.`);
     }
 
@@ -265,6 +298,16 @@ export default function AgendaModal({ open, onClose, initialData, existingAppoin
                  </div>
                </div>
              </div>
+
+             {/* O paciente escolhido já é acompanhado por outro profissional */}
+             {outroResponsavel && (
+               <div className="bg-blue-50 border border-blue-100 rounded-2xl p-4 text-sm text-blue-900">
+                 <strong>{clienteEscolhido?.fullName}</strong> está em acompanhamento individual com{" "}
+                 <strong>{outroResponsavel}</strong>. Este agendamento é um atendimento à parte
+                 (triagem, grupo ou avaliação) e <strong>não altera</strong> o profissional responsável
+                 pelo caso.
+               </div>
+             )}
 
              {existingAppointment?.seriesId && (
                <div className="bg-blue-50 border border-blue-100 rounded-2xl p-4">

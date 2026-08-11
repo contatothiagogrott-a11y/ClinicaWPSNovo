@@ -66,6 +66,18 @@ export default function ClientProfile() {
   const clientId = client?.id;
   const canSeeAudit = canViewAuditTrail(currentUser);
 
+  /**
+   * O psicólogo pode enxergar um paciente por tê-lo atendido pontualmente
+   * (triagem de entrada em grupo, por exemplo) sem ser o responsável pelo
+   * caso. Nesse caso ele registra o próprio atendimento, mas não edita o
+   * cadastro — que pertence ao acompanhamento individual conduzido por outro.
+   */
+  const souResponsavelOuGestao =
+    currentUser?.role === "SUPERVISOR" ||
+    currentUser?.role === "ADMIN" ||
+    client?.assignedPsicoId === currentUser?.id ||
+    !client?.assignedPsicoId;
+
   // Trilha de auditoria carregada sob demanda (não vem no bootstrap).
   useEffect(() => {
     if (activeTab !== "HISTORICO" || !clientId || !canSeeAudit) return;
@@ -320,10 +332,15 @@ export default function ClientProfile() {
           <div className="space-y-8 animate-in fade-in duration-300">
             <div className="flex items-center justify-between">
               <h2 className="text-xl font-bold text-gray-900">Ficha do Paciente</h2>
-              {!isEditingInfo && canEditStatus && (
+              {!isEditingInfo && canEditStatus && souResponsavelOuGestao && (
                 <button onClick={() => setIsEditingInfo(true)} className="text-blue-600 hover:bg-blue-50 px-4 py-2 rounded-xl text-sm font-bold flex items-center gap-2 transition-colors">
                   <Edit2 size={16} /> Editar
                 </button>
+              )}
+              {!isEditingInfo && !souResponsavelOuGestao && (
+                <span className="text-xs text-gray-400 flex items-center gap-1.5 font-semibold" title="O cadastro é mantido pelo profissional responsável pelo acompanhamento individual.">
+                  <Lock size={12} /> Cadastro mantido por {client.assignedPsicoName}
+                </span>
               )}
               {isEditingInfo && (
                 <button onClick={handleSaveInfo} className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-xl text-sm font-bold flex items-center gap-2 transition-colors">
