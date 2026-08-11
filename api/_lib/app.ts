@@ -1714,14 +1714,43 @@ app.delete(
       res.status(403).json({ error: "Você só pode remover os seus próprios agendamentos." });
       return;
     }
-    if (deleteFuture && appt.seriesId) {
-      await prisma.appointment.deleteMany({
-        where: { seriesId: appt.seriesId, date: { gte: appt.date } },
-      });
-    } else {
-      await prisma.appointment.delete({ where: { id: req.params.id } });
+    /**
+     * BUG CORRIGIDO: apagar o agendamento deixava o prontuário pendente ÓRFÃO.
+     *
+     * O campo `appointmentId` do SessionRecord é apenas um texto — não há
+     * relação nem cascata no banco. Então cada agendamento cancelado deixava
+     * para trás um rascunho em branco que nunca mais some, e a ficha do
+     * paciente ia acumulando registros fantasmas.
+     *
+     * Só apagamos rascunhos VAZIOS. Se o profissional já escreveu alguma coisa
+     * naquele registro, ele é preservado mesmo com o agendamento cancelado —
+     * o atendimento pode ter acontecido fora da agenda, e evolução escrita
+     * jamais é descartada automaticamente.
+     */
+    const idsParaApagar = deleteFuture && appt.seriesId
+      ? (await prisma.appointment.findMany({
+          where: { seriesId: appt.seriesId, date: { gte: appt.date } },
+          select: { id: true },
+        })).map((a: any) => a.id)
+      : [appt.id];
+
+    const rascunhosVazios = await prisma.sessionRecord.findMany({
+      where: { appointmentId: { in: idsParaApagar }, isDraft: true },
+      include: { versions: true },
+    });
+    const removiveis = rascunhosVazios
+      .filter((r: any) =>
+        !decryptField(r.notesEnc) && !decryptField(r.privateNotesEnc) && (r.versions ?? []).length === 0
+      )
+      .map((r: any) => r.id);
+
+    if (removiveis.length > 0) {
+      await prisma.sessionRecord.deleteMany({ where: { id: { in: removiveis } } });
     }
-    res.json({ ok: true });
+
+    await prisma.appointment.deleteMany({ where: { id: { in: idsParaApagar } } });
+
+    res.json({ ok: true, agendamentosRemovidos: idsParaApagar.length, prontuariosRemovidos: removiveis.length });
   })
 );
 
@@ -2776,6 +2805,26 @@ app.post(
     const session = requireSession(req, res, ["SUPERVISOR", "ADMIN"]);
     if (!session) return;
 
+    /**
+     * ATENÇÃO à janela de datas.
+     *
+     * Só entram rascunhos de sessões FUTURAS. Os rascunhos de sessões que já
+     * aconteceram são PENDÊNCIAS LEGÍTIMAS: o profissional ainda precisa
+     * registrar aquela evolução, e apagá-los faria sumir o lembrete de que há
+     * prontuário a escrever — além de apagar a própria prova de que o
+     * atendimento estava agendado.
+     *
+     * O problema real era outro: o registro nascia no momento do AGENDAMENTO,
+     * não do atendimento. Com séries de 12 ocorrências, isso criava
+     * prontuários pendentes para sessões que só acontecerão meses depois.
+     */
+    const agora = new Date();
+
+    // Agendamentos que ainda existem, para identificar rascunhos órfãos.
+    const agendamentosExistentes = new Set(
+      (await prisma.appointment.findMany({ select: { id: true } })).map((a: any) => a.id)
+    );
+
     const candidatos = await prisma.sessionRecord.findMany({
       where: {
         isDraft: true,
@@ -2789,7 +2838,21 @@ app.post(
         const semTexto = !decryptField(s.notesEnc);
         const semPrivada = !decryptField(s.privateNotesEnc);
         const semVersoes = (s.versions ?? []).length === 0;
-        return semTexto && semPrivada && semVersoes;
+        if (!semTexto || !semPrivada || !semVersoes) return false;
+
+        /**
+         * Duas situações removíveis:
+         *  1. ÓRFÃO — o agendamento que o gerou foi cancelado e o rascunho
+         *     ficou para trás (o campo appointmentId não tinha cascata).
+         *  2. FUTURO — sessão que ainda não aconteceu; o registro só deve
+         *     nascer quando o atendimento ocorrer.
+         *
+         * Rascunho de sessão JÁ REALIZADA e com agendamento ativo é pendência
+         * legítima: fica, porque o profissional ainda precisa escrever.
+         */
+        const orfao = !!s.appointmentId && !agendamentosExistentes.has(s.appointmentId);
+        const futuro = new Date(s.date) > agora;
+        return orfao || futuro;
       })
       .map((s: any) => s.id);
 
@@ -2801,7 +2864,11 @@ app.post(
     const result = await prisma.sessionRecord.deleteMany({
       where: { id: { in: idsParaRemover } },
     });
-    res.json({ removidos: result.count });
+    res.json({
+      removidos: result.count,
+      observacao:
+        "Removidos rascunhos vazios órfãos (agendamento cancelado) e de sessões futuras. Pendências de sessões já realizadas foram preservadas.",
+    });
   })
 );
 
