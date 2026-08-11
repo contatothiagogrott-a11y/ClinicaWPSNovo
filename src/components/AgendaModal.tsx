@@ -109,6 +109,9 @@ export default function AgendaModal({ open, onClose, initialData, existingAppoin
     (existingAppointment as any)?.appointmentType || "ATENDIMENTO"
   );
 
+  /** Profissional designado para conduzir um evento que não é atendimento. */
+  const [eventPsicoId, setEventPsicoId] = useState<string>("");
+
   const [appointmentDate, setAppointmentDate] = useState(initialData.date);
   const [applyToFuture, setApplyToFuture] = useState(false);
   const [futureFeedback, setFutureFeedback] = useState("");
@@ -162,6 +165,11 @@ export default function AgendaModal({ open, onClose, initialData, existingAppoin
     // agendamento não aparecia na agenda do psicólogo certo, e a cor exibida
     // também ficava errada.
     let resolvedPsicoId = existingAppointment?.psicoId;
+    // Evento que não é atendimento: quem conduz é quem foi designado (ou quem
+    // está agendando), e não o responsável pelo acompanhamento do paciente.
+    if (appointmentType !== "ATENDIMENTO") {
+      resolvedPsicoId = eventPsicoId || currentUser?.id || "";
+    }
     if (!resolvedPsicoId) {
       if (bookingType === "client") {
         if ((statusTransition === "TRIAGEM" || statusTransition === "EM_ATENDIMENTO") && responsiblePsicoId) {
@@ -183,6 +191,7 @@ export default function AgendaModal({ open, onClose, initialData, existingAppoin
       clientId: bookingType === "client" ? selectedId : undefined,
       groupId: bookingType === "group" ? selectedId : undefined,
       appointmentType,
+      sessionType: appointmentType,
       psicoId: resolvedPsicoId,
       recurrence,
       seriesId
@@ -305,9 +314,33 @@ export default function AgendaModal({ open, onClose, initialData, existingAppoin
                </div>
                <p className="text-[11px] text-gray-500 mt-2 leading-relaxed">
                  {appointmentType === "ATENDIMENTO"
-                   ? "Abre um prontuário pendente para você registrar a evolução depois."
-                   : "Ocupa a agenda e a sala, mas não abre prontuário. Use quando o compromisso não for um atendimento clínico do paciente."}
+                   ? "Abre um registro pendente para a evolução do atendimento."
+                   : "Abre um registro pendente próprio deste evento, para o profissional designado escrever a evolução. Não altera o responsável pelo acompanhamento do paciente."}
                </p>
+
+               {/*
+                 Profissional que conduz ESTE evento.
+                 A triagem de grupo, a entrevista e a devolutiva costumam ser
+                 conduzidas por alguém que não acompanha o paciente
+                 individualmente. É esta pessoa que poderá escrever a evolução
+                 do evento — e só ela.
+               */}
+               {appointmentType !== "ATENDIMENTO" && (
+                 <div className="mt-3">
+                   <label className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-1 block">
+                     Profissional que vai conduzir
+                   </label>
+                   <select
+                     value={eventPsicoId || currentUser?.id || ""}
+                     onChange={e => setEventPsicoId(e.target.value)}
+                     className="w-full bg-white border border-gray-200 focus:border-blue-500 rounded-xl px-4 py-2.5 outline-none font-medium text-sm"
+                   >
+                     {psicos.map(p => (
+                       <option key={p.id} value={p.id}>{p.name}{p.crp ? ` — CRP ${p.crp}` : ""}</option>
+                     ))}
+                   </select>
+                 </div>
+               )}
              </div>
 
              {/* Data do atendimento — editável também na edição (mudar de terça

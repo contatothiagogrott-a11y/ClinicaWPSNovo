@@ -21,6 +21,13 @@ import { canTransferClient, canViewAuditTrail, roleLabel } from "../lib/roles";
 import { formatDateBR, formatDateTimeBR, formatTimelineBR } from "../lib/datetime";
 import type { HistoryLog } from "../types";
 
+/** Natureza de cada registro, exibida no prontuário. */
+const SESSION_TYPE_LABELS: Record<string, string> = {
+  TRIAGEM_GRUPO: "Triagem para grupo",
+  ENTREVISTA: "Entrevista",
+  DEVOLUTIVA: "Devolutiva",
+};
+
 /** Rótulos dos documentos psicológicos, usados na trilha de auditoria. */
 const DOCUMENT_LABELS: Record<string, string> = {
   ANAMNESE_RISCO: "Anamnese e avaliação de risco",
@@ -1573,6 +1580,12 @@ function ProntuarioView({ clientId }: { clientId: string }) {
                       Sessão {clientSessions.length - i}
                    </h4>
                    {group && <span className="bg-purple-100 text-purple-700 text-xs font-bold px-2 py-0.5 rounded-md">Grupo: {group.name}</span>}
+                   {/* Natureza do registro, quando não é atendimento comum. */}
+                   {s.sessionType && s.sessionType !== "ATENDIMENTO" && (
+                     <span className="bg-sky-100 text-sky-700 text-xs font-bold px-2 py-0.5 rounded-md">
+                       {SESSION_TYPE_LABELS[s.sessionType] ?? s.sessionType}
+                     </span>
+                   )}
                    {/*
                      Conteúdo restrito: a API não enviou o texto desta sessão
                      porque ela pertence a outro contexto de atendimento (grupo

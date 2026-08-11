@@ -326,6 +326,14 @@ model AccessLog {
   @@index([at])
 }
 
+/**
+ * Registro de um encontro.
+ *
+ * `sessionType` diferencia a natureza do que foi registrado: atendimento
+ * comum, triagem de entrada em grupo, entrevista ou devolutiva. Todos são
+ * registros clínicos legítimos, assinados por quem os conduziu — o que muda é
+ * a natureza do ato, e isso precisa ficar explícito no prontuário.
+ */
 model SessionRecord {
   id            String    @id @default(uuid())
   clientId      String
@@ -339,6 +347,7 @@ model SessionRecord {
   status        String?
   groupId       String?
   appointmentId String?
+  sessionType   String?  @default("ATENDIMENTO")
   attendance    String?
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt

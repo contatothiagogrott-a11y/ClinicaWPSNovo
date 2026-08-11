@@ -168,6 +168,8 @@ export interface RecordVersion {
 
 export interface SessionRecord {
   appointmentId?: string;
+  /** Natureza do registro: atendimento, triagem de grupo, entrevista, devolutiva. */
+  sessionType?: "ATENDIMENTO" | "TRIAGEM_GRUPO" | "ENTREVISTA" | "DEVOLUTIVA";
   id: string;
   clientId: string;
   psicoId: string;

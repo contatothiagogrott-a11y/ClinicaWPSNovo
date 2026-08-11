@@ -1370,7 +1370,26 @@ app.post(
     const session = requireSession(req, res);
     if (!session) return;
     const b = req.body ?? {};
-    if (!(await hasClinicalAccess(session, b.clientId))) {
+
+    /**
+     * Quem pode registrar.
+     *
+     * Além do responsável pelo caso e de quem conduz um grupo do paciente,
+     * também pode registrar quem TEM UM AGENDAMENTO com essa pessoa — é o caso
+     * da triagem de entrada em grupo, da entrevista e da devolutiva, conduzidas
+     * por um profissional que não acompanha o paciente individualmente.
+     *
+     * Sem isso, o profissional conseguia agendar o evento mas não conseguia
+     * escrever a evolução dele.
+     */
+    const temAgendamento = b.clientId
+      ? !!(await prisma.appointment.findFirst({
+          where: { clientId: b.clientId, psicoId: session.userId },
+          select: { id: true },
+        }))
+      : false;
+
+    if (!temAgendamento && !(await hasClinicalAccess(session, b.clientId))) {
       denyClinical(res);
       return;
     }
@@ -1423,6 +1442,7 @@ app.post(
         status: b.status,
         groupId: b.groupId,
         appointmentId: b.appointmentId,
+        sessionType: b.sessionType || "ATENDIMENTO",
         attendance: b.attendance,
       },
       include: { versions: true },
@@ -1573,8 +1593,19 @@ app.post(
      * atendimento — e apenas para a PRIMEIRA ocorrência de uma série (as
      * demais geram o seu quando acontecerem, ao registrar a presença).
      */
-    const geraProntuario =
-      (b.appointmentType || "ATENDIMENTO") === "ATENDIMENTO" && !b.seriesId;
+    /**
+     * Quando nasce o registro pendente.
+     *
+     * Eventos avulsos (atendimento único, triagem de grupo, entrevista,
+     * devolutiva) geram o registro na hora: são encontros pontuais e o
+     * profissional designado precisa poder escrever a evolução deles.
+     *
+     * Séries recorrentes NÃO geram, exceto a primeira ocorrência — do
+     * contrário, agendar 12 semanas criaria 12 prontuários em branco de uma
+     * vez, para sessões que só acontecerão meses depois.
+     */
+    const geraProntuario = !b.seriesId;
+    const tipoDoEvento = b.appointmentType || "ATENDIMENTO";
 
     if (appt.clientId && geraProntuario) {
       /**
@@ -1591,6 +1622,7 @@ app.post(
           notesEnc: "",
           isDraft: true,
           appointmentId: appt.id,
+          sessionType: tipoDoEvento,
         },
       });
     } else if (appt.groupId && geraProntuario) {
