@@ -143,6 +143,7 @@ model User {
   pushSubscriptions PushSubscription[]
   clinicalDocuments ClinicalDocument[]
   groupClientNotes  GroupClientNote[]
+  coLedGroups       Group[]           @relation("GroupCoPsychologist")
 }
 
 model Client {
@@ -367,6 +368,16 @@ model Group {
   isActive       Boolean   @default(true)
   psychologistId String
   psychologist   User      @relation(fields: [psychologistId], references: [id])
+
+  /**
+   * Segundo profissional responsável (coterapeuta).
+   *
+   * Grupos costumam ser conduzidos em dupla. AMBOS respondem pelos prontuários
+   * de grupo, então os dois precisam de acesso de escrita — por isso é um
+   * vínculo real, e não uma anotação em texto livre.
+   */
+  coPsychologistId String?
+  coPsychologist   User?   @relation("GroupCoPsychologist", fields: [coPsychologistId], references: [id])
 
   members        GroupMember[]
   records        GroupRecord[]

@@ -199,6 +199,8 @@ export interface Group {
   createdAt: string;
   isActive: boolean;
   psychologistId: string;
+  /** Coterapeuta: segundo responsável, também com acesso aos prontuários do grupo. */
+  coPsychologistId?: string;
   memberIds: string[];
 }
 
@@ -225,7 +227,22 @@ export interface ConfigItem {
 }
 
 export interface Appointment {
-  attendance?: "PENDENTE" | "COMPARECEU" | "FALTA_JUSTIFICADA" | "FALTA_INJUSTIFICADA";
+  /**
+   * Situação do agendamento.
+   *
+   * Cancelamento e reagendamento são distintos de FALTA: quem avisou e
+   * desmarcou não pode ser contabilizado como faltoso, e o cancelamento pelo
+   * serviço (afastamento do profissional, mudança de escala) não diz nada
+   * sobre a adesão do paciente. Nenhum dos três consome sessão do pacote.
+   */
+  attendance?:
+    | "PENDENTE"
+    | "COMPARECEU"
+    | "FALTA_JUSTIFICADA"
+    | "FALTA_INJUSTIFICADA"
+    | "CANCELADO_PACIENTE"
+    | "CANCELADO_PROFISSIONAL"
+    | "REAGENDADO";
   sessionNumber?: number;
   id: string;
   clientId?: string;

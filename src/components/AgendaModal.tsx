@@ -421,6 +421,48 @@ export default function AgendaModal({ open, onClose, initialData, existingAppoin
                            Falta s/ Justif.
                          </button>
                        </div>
+
+                       {/*
+                         CANCELAMENTO E REAGENDAMENTO.
+                         Faltar é diferente de cancelar: quem avisou e desmarcou
+                         não pode ser contabilizado como falta. E o registro de
+                         QUEM cancelou (profissional ou paciente) é informação de
+                         gestão — motivo de cancelamento pelo serviço aponta
+                         problema de escala, e não de adesão do paciente.
+                       */}
+                       <div className="pt-2 mt-1 border-t border-gray-200">
+                         <p className="text-[11px] font-bold text-gray-500 uppercase tracking-wider mb-2 text-center">
+                           Cancelamento
+                         </p>
+                         <div className="flex gap-2">
+                           <button
+                             type="button"
+                             onClick={() => { markAttendance(existingAppointment.id, "CANCELADO_PACIENTE"); onClose(); }}
+                             className={`flex-1 py-2 rounded-lg font-bold text-sm transition-colors border ${existingAppointment.attendance === 'CANCELADO_PACIENTE' ? 'bg-amber-100 text-amber-700 border-amber-200' : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'}`}
+                           >
+                             Cancelado pelo paciente
+                           </button>
+                           <button
+                             type="button"
+                             onClick={() => { markAttendance(existingAppointment.id, "CANCELADO_PROFISSIONAL"); onClose(); }}
+                             className={`flex-1 py-2 rounded-lg font-bold text-sm transition-colors border ${existingAppointment.attendance === 'CANCELADO_PROFISSIONAL' ? 'bg-amber-100 text-amber-700 border-amber-200' : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'}`}
+                           >
+                             Cancelado pelo serviço
+                           </button>
+                         </div>
+                         <button
+                           type="button"
+                           onClick={() => { markAttendance(existingAppointment.id, "REAGENDADO"); onClose(); }}
+                           className={`w-full mt-2 py-2 rounded-lg font-bold text-sm transition-colors border ${existingAppointment.attendance === 'REAGENDADO' ? 'bg-sky-100 text-sky-700 border-sky-200' : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'}`}
+                         >
+                           Reagendado
+                         </button>
+                         <p className="text-[10px] text-gray-500 mt-2 leading-tight">
+                           Cancelamento e reagendamento <strong>não contam como falta</strong> e não
+                           consomem sessão do pacote do paciente. Para marcar a nova data, use o
+                           botão de agendar no dia desejado.
+                         </p>
+                       </div>
                     </div>
                  </div>
                )}

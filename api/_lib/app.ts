@@ -288,8 +288,13 @@ async function hasGroupAccess(
 ): Promise<boolean> {
   if (session.role === "SUPERVISOR") return true;
   if (session.role === "ADMIN") return false;
-  const group = await prisma.group.findUnique({ where: { id: groupId }, select: { psychologistId: true } });
-  return !!group && group.psychologistId === session.userId;
+  const group = await prisma.group.findUnique({
+    where: { id: groupId },
+    select: { psychologistId: true, coPsychologistId: true },
+  });
+  if (!group) return false;
+  // Ambos os condutores respondem pelo prontuário do grupo.
+  return group.psychologistId === session.userId || group.coPsychologistId === session.userId;
 }
 
 function denyRegistration(res: Response) {
@@ -378,8 +383,11 @@ app.get(
       prisma.groupClientNote.findMany(),
     ]);
 
+    // Grupos que este profissional conduz — como responsável OU coterapeuta.
     const myLedGroupIds = new Set(
-      groupsRaw.filter((g: any) => g.psychologistId === session.userId).map((g: any) => g.id)
+      groupsRaw
+        .filter((g: any) => g.psychologistId === session.userId || g.coPsychologistId === session.userId)
+        .map((g: any) => g.id)
     );
     const myGroupMemberClientIds = new Set(
       groupsRaw.filter((g: any) => myLedGroupIds.has(g.id)).flatMap((g: any) => g.members.map((m: any) => m.clientId))
@@ -444,7 +452,9 @@ app.get(
 
     const groups = isSupervisorOrAdmin
       ? groupsRaw
-      : groupsRaw.filter((g: any) => g.psychologistId === session.userId);
+      : groupsRaw.filter(
+          (g: any) => g.psychologistId === session.userId || g.coPsychologistId === session.userId
+        );
 
     const groupRecords = isSupervisor
       ? groupRecordsRaw
@@ -1613,6 +1623,32 @@ app.post(
       res.status(400).json({ error: "O profissional responsável está sem CRP cadastrado." });
       return;
     }
+    // Coterapeuta (opcional): mesmo requisito profissional do responsável.
+    const coPsychologistId: string | null = b.coPsychologistId || null;
+    if (coPsychologistId) {
+      if (coPsychologistId === psychologistId) {
+        res.status(400).json({ error: "O coterapeuta precisa ser um profissional diferente do responsável." });
+        return;
+      }
+      const co = await prisma.user.findUnique({
+        where: { id: coPsychologistId },
+        select: { role: true, crp: true },
+      });
+      if (!co || (co.role !== "PSICO" && co.role !== "SUPERVISOR")) {
+        res.status(400).json({ error: "O coterapeuta precisa ser um profissional de psicologia." });
+        return;
+      }
+      if (!co.crp) {
+        res.status(400).json({ error: "O coterapeuta está sem CRP cadastrado." });
+        return;
+      }
+    }
+
+    if (!b.name || !b.objective) {
+      res.status(400).json({ error: "Informe o nome e o objetivo do grupo." });
+      return;
+    }
+
     const group = await prisma.group.create({
       data: {
         name: b.name,
@@ -1621,6 +1657,7 @@ app.post(
         frequency: b.frequency,
         criteria: b.criteria,
         psychologistId,
+        coPsychologistId,
       },
       include: { members: true },
     });
@@ -1648,6 +1685,9 @@ app.patch(
         return;
       }
       data.psychologistId = b.psychologistId;
+    }
+    if ("coPsychologistId" in b) {
+      data.coPsychologistId = b.coPsychologistId || null;
     }
     if (Array.isArray(b.memberIds)) {
       await prisma.groupMember.deleteMany({ where: { groupId: req.params.id } });

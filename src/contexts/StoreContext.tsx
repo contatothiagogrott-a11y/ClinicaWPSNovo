@@ -60,7 +60,7 @@ interface StoreContextType extends StoreState {
   addAppointment: (appt: Omit<Appointment, "id">) => Promise<void>;
   updateAppointment: (id: string, updates: Partial<Appointment>, applyToFuture?: boolean) => Promise<number>;
   deleteAppointment: (id: string, deleteFuture?: boolean) => Promise<void>;
-  markAttendance: (appointmentId: string, attendance: "PENDENTE" | "COMPARECEU" | "FALTA_JUSTIFICADA" | "FALTA_INJUSTIFICADA") => Promise<void>;
+  markAttendance: (appointmentId: string, attendance: NonNullable<Appointment["attendance"]>) => Promise<void>;
   updateConfig: (config: AppConfig) => void;
   addConfigItem: (type: "affiliations" | "allocations" | "rooms" | "tags", name: string) => Promise<void>;
   updateConfigItem: (type: "affiliations" | "allocations" | "rooms" | "tags", id: string, updates: Partial<ConfigItem>) => Promise<void>;

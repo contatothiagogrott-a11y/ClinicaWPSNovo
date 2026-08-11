@@ -94,12 +94,22 @@ export default function AgendaPage() {
     const isGroup = !!event.appt.groupId;
     const color = psico?.color || (isGroup ? "#8b5cf6" : "#3b82f6");
     const noShow = event.appt.attendance === "FALTA_INJUSTIFICADA" || event.appt.attendance === "FALTA_JUSTIFICADA";
+    /**
+     * Cancelado/reagendado aparece esmaecido e RISCADO — o horário
+     * visualmente "não conta" mais, mas o registro permanece na agenda como
+     * histórico de que aquele encontro estava marcado.
+     */
+    const cancelado =
+      event.appt.attendance === "CANCELADO_PACIENTE" ||
+      event.appt.attendance === "CANCELADO_PROFISSIONAL" ||
+      event.appt.attendance === "REAGENDADO";
     return {
       style: {
-        backgroundColor: `${color}22`,
-        borderLeft: `4px solid ${color}`,
+        backgroundColor: cancelado ? "#f3f4f6" : `${color}22`,
+        borderLeft: `4px solid ${cancelado ? "#9ca3af" : color}`,
         color: "#1f2937",
-        opacity: noShow ? 0.55 : 1,
+        opacity: cancelado ? 0.5 : noShow ? 0.55 : 1,
+        textDecoration: cancelado ? "line-through" : "none",
         borderRadius: 8,
       },
     };

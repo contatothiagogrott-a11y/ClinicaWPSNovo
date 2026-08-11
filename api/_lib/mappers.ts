@@ -214,6 +214,7 @@ export function mapGroup(g: any) {
     createdAt: toISO(g.createdAt),
     isActive: g.isActive,
     psychologistId: g.psychologistId,
+    coPsychologistId: g.coPsychologistId ?? undefined,
     memberIds: (g.members ?? []).map((m: any) => m.clientId),
   };
 }
