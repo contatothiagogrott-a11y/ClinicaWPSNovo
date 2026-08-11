@@ -1685,11 +1685,66 @@ app.patch(
 
     if ("attendance" in data && updated.clientId) {
       await maybeIncrementCompletedSessionsOnAttendance(updated.clientId, existing.attendance, updated.attendance);
+      await resolverProntuarioPorPresenca(updated);
     }
 
     res.json({ appointment: mapAppointment(updated), futureUpdated });
   })
 );
+
+/**
+ * Fecha o prontuário pendente conforme a situação do agendamento.
+ *
+ * O rascunho é criado no agendamento e só faz sentido enquanto se espera uma
+ * evolução. Se o encontro NÃO ACONTECEU — cancelado, reagendado ou falta — não
+ * há evolução a escrever, e deixar o rascunho aberto faz o sistema cobrar para
+ * sempre um registro que nunca virá.
+ *
+ * Falta e cancelamento não são a mesma coisa:
+ *
+ *  - FALTA é dado clínico do acompanhamento e PERMANECE no prontuário, com o
+ *    registro de que o paciente não compareceu (o CFP trata a frequência como
+ *    parte do acompanhamento). O rascunho é fechado com esse texto.
+ *
+ *  - CANCELAMENTO e REAGENDAMENTO são movimentação de agenda, não atendimento.
+ *    O rascunho VAZIO é removido — não houve ato clínico a registrar. Se o
+ *    profissional já tiver escrito algo, o registro é preservado.
+ */
+async function resolverProntuarioPorPresenca(appt: any): Promise<void> {
+  const situacao = appt.attendance;
+  if (!situacao || situacao === "PENDENTE" || situacao === "COMPARECEU") return;
+
+  const rascunho = await prisma.sessionRecord.findFirst({
+    where: { appointmentId: appt.id, isDraft: true },
+    include: { versions: true },
+  });
+  if (!rascunho) return;
+
+  const temConteudo =
+    !!decryptField(rascunho.notesEnc) ||
+    !!decryptField(rascunho.privateNotesEnc) ||
+    (rascunho.versions ?? []).length > 0;
+
+  const ehFalta = situacao === "FALTA_JUSTIFICADA" || situacao === "FALTA_INJUSTIFICADA";
+
+  if (ehFalta) {
+    if (temConteudo) return; // já há registro escrito: não sobrescreve
+    const texto =
+      situacao === "FALTA_JUSTIFICADA"
+        ? "Paciente não compareceu ao atendimento — falta justificada."
+        : "Paciente não compareceu ao atendimento — falta sem justificativa.";
+    await prisma.sessionRecord.update({
+      where: { id: rascunho.id },
+      data: { notesEnc: encryptField(texto), isDraft: false, attendance: situacao },
+    });
+    return;
+  }
+
+  // Cancelado ou reagendado: sem ato clínico.
+  if (!temConteudo) {
+    await prisma.sessionRecord.delete({ where: { id: rascunho.id } }).catch(() => {});
+  }
+}
 
 function diffInDays(from: Date, to: Date): number {
   const MS = 24 * 60 * 60 * 1000;
@@ -2820,9 +2875,18 @@ app.post(
      */
     const agora = new Date();
 
-    // Agendamentos que ainda existem, para identificar rascunhos órfãos.
-    const agendamentosExistentes = new Set(
-      (await prisma.appointment.findMany({ select: { id: true } })).map((a: any) => a.id)
+    // Agendamentos existentes e sua situação, para identificar órfãos e
+    // encontros que não chegaram a acontecer.
+    const agendamentos = await prisma.appointment.findMany({
+      select: { id: true, attendance: true },
+    });
+    const agendamentosExistentes = new Set(agendamentos.map((a: any) => a.id));
+    const naoAconteceram = new Set(
+      agendamentos
+        .filter((a: any) =>
+          ["CANCELADO_PACIENTE", "CANCELADO_PROFISSIONAL", "REAGENDADO"].includes(a.attendance)
+        )
+        .map((a: any) => a.id)
     );
 
     const candidatos = await prisma.sessionRecord.findMany({
@@ -2852,7 +2916,9 @@ app.post(
          */
         const orfao = !!s.appointmentId && !agendamentosExistentes.has(s.appointmentId);
         const futuro = new Date(s.date) > agora;
-        return orfao || futuro;
+        // Encontro cancelado ou reagendado: não houve atendimento a registrar.
+        const naoOcorreu = !!s.appointmentId && naoAconteceram.has(s.appointmentId);
+        return orfao || futuro || naoOcorreu;
       })
       .map((s: any) => s.id);
 
@@ -2867,7 +2933,7 @@ app.post(
     res.json({
       removidos: result.count,
       observacao:
-        "Removidos rascunhos vazios órfãos (agendamento cancelado) e de sessões futuras. Pendências de sessões já realizadas foram preservadas.",
+        "Removidos rascunhos vazios: órfãos, de sessões futuras e de encontros cancelados ou reagendados. Pendências de atendimentos realizados foram preservadas.",
     });
   })
 );

@@ -72,7 +72,26 @@ function ConfigManager({ title, type, items, onAdd, onUpdate }: {
 }
 
 export default function Settings() {
-  const { config, addConfigItem, updateConfigItem, currentUser } = useStore();
+  const { config, addConfigItem, updateConfigItem, currentUser, limparProntuariosVazios } = useStore();
+  const [limpando, setLimpando] = useState(false);
+  const [resultadoLimpeza, setResultadoLimpeza] = useState<string>("");
+
+  const executarLimpeza = async () => {
+    setLimpando(true);
+    setResultadoLimpeza("");
+    try {
+      const n = await limparProntuariosVazios();
+      setResultadoLimpeza(
+        n === 0
+          ? "Nenhum prontuário pendente vazio encontrado."
+          : `${n} prontuário(s) pendente(s) vazio(s) removido(s).`
+      );
+    } catch (err: any) {
+      setResultadoLimpeza(err?.message || "Não foi possível concluir a limpeza.");
+    } finally {
+      setLimpando(false);
+    }
+  };
 
   if (currentUser?.role !== "SUPERVISOR") {
     return <div className="p-8 text-center text-red-500 font-bold">Acesso restrito ao Supervisor.</div>;
@@ -103,6 +122,31 @@ export default function Settings() {
           </div>
         </div>
 
+      </div>
+
+      {/* MANUTENÇÃO ------------------------------------------------------- */}
+      <div className="bg-white rounded-3xl border border-gray-100 shadow-sm p-6 mt-8">
+        <h2 className="text-lg font-bold text-gray-900">Manutenção</h2>
+        <p className="text-sm text-gray-500 mt-1 mb-4">
+          Prontuários pendentes em branco se acumulam quando um atendimento é cancelado,
+          reagendado ou quando a série é remarcada. Esta limpeza remove apenas os que
+          <strong> não têm nenhum conteúdo escrito</strong> e que não correspondem a um
+          atendimento realizado.
+        </p>
+        <div className="bg-gray-50 border border-gray-200 rounded-2xl p-4 mb-4 text-xs text-gray-600 space-y-1">
+          <p><strong>É removido:</strong> rascunho vazio de sessão futura, de agendamento cancelado ou excluído, e de encontro reagendado.</p>
+          <p><strong>É preservado:</strong> qualquer registro com texto, e as pendências de atendimentos que realmente aconteceram.</p>
+        </div>
+        <button
+          onClick={executarLimpeza}
+          disabled={limpando}
+          className="bg-gray-900 hover:bg-gray-800 disabled:opacity-60 text-white font-bold px-5 py-3 rounded-xl text-sm transition-colors"
+        >
+          {limpando ? "Limpando..." : "Limpar prontuários pendentes vazios"}
+        </button>
+        {resultadoLimpeza && (
+          <p className="mt-3 text-sm font-semibold text-gray-700">{resultadoLimpeza}</p>
+        )}
       </div>
     </div>
   );

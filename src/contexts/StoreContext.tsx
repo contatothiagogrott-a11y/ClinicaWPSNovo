@@ -86,6 +86,8 @@ interface StoreContextType extends StoreState {
   undoImport: (batchId: string) => Promise<number>;
   /** Marca um cadastro importado como conferido. */
   markClientReviewed: (clientId: string) => Promise<void>;
+  /** Remove prontuários pendentes vazios (órfãos, futuros e de encontros que não ocorreram). */
+  limparProntuariosVazios: () => Promise<number>;
   saveGroupClientNote: (clientId: string, groupId: string, content: string) => Promise<void>;
 }
 
@@ -461,6 +463,14 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     await refreshAll();
   };
 
+  const limparProntuariosVazios: StoreContextType["limparProntuariosVazios"] = async () => {
+    const { removidos } = await api.post<{ removidos: number }>(
+      "/api/manutencao/limpar-prontuarios-vazios"
+    );
+    await refreshAll();
+    return removidos;
+  };
+
   const markClientReviewed: StoreContextType["markClientReviewed"] = async (clientId) => {
     await api.post(`/api/clients/${clientId}/mark-reviewed`);
     await refreshAll();
@@ -575,6 +585,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
         importClients,
         undoImport,
         markClientReviewed,
+        limparProntuariosVazios,
         saveGroupClientNote,
       }}
     >
