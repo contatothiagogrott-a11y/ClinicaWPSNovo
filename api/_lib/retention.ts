@@ -5,8 +5,11 @@ import { ageInYears, parseDateInput } from "./datetime.js";
  * ==============================================
  *
  * Base normativa:
- *  - Resolução CFP nº 001/2009, art. 4º, §1º: guarda mínima de 5 anos do
- *    registro documental após o encerramento do serviço prestado.
+ *  - Lei nº 13.787/2018: prontuários em saúde guardados por até 20 anos,
+ *    com direito de acesso do usuário por igual período.
+ *  - Resolução CFP nº 001/2009, art. 4º, §1º: guarda mínima de 5 anos para o
+ *    registro documental genérico (prazo menor, não aplicável a prontuário
+ *    em serviço de saúde como o desta instituição).
  *  - Manual Orientativo de Registro e Elaboração de Documentos Psicológicos:
  *    o prazo de 5 anos NÃO deve ser tomado como parâmetro para crianças e
  *    adolescentes. A orientação é preservar as informações ao menos até a
@@ -21,7 +24,26 @@ import { ageInYears, parseDateInput } from "./datetime.js";
  * instituição e deve ser conferida por profissional responsável.
  */
 
-export const RETENTION_YEARS_ADULT = 5;
+/**
+ * PRAZO DE GUARDA — 20 ANOS
+ * =========================
+ *
+ * CORREÇÃO: a versão anterior usava 5 anos, com base na Resolução CFP
+ * nº 001/2009. Esse é o prazo do REGISTRO DOCUMENTAL genérico.
+ *
+ * Mas o Manual Orientativo do CFP é explícito: "os prontuários em saúde
+ * (psicológico ou multiprofissional) devem ser guardados por até 20 anos,
+ * conforme legislação vigente" — Lei nº 13.787/2018. A mesma lei assegura ao
+ * usuário o direito de acesso ao próprio prontuário por igual período.
+ *
+ * O Setor de Psicologia da ALESC integra a Coordenadoria de Saúde e
+ * Assistência, prestando serviço de saúde. Portanto o prazo aplicável é 20
+ * anos, contados do último registro.
+ */
+export const RETENTION_YEARS_ADULT = 20;
+
+/** Prazo genérico de registro documental (Res. CFP nº 001/2009), para referência. */
+export const RETENTION_YEARS_DOCUMENT_ONLY = 5;
 export const RETENTION_YEARS_AFTER_MAJORITY = 10;
 export const MAJORITY_AGE = 18;
 
@@ -64,6 +86,6 @@ export function describeRetention(
   const rule =
     age !== null && age < MAJORITY_AGE
       ? `guarda estendida (paciente menor de idade: maioridade + ${RETENTION_YEARS_AFTER_MAJORITY} anos)`
-      : `guarda mínima de ${RETENTION_YEARS_ADULT} anos (Res. CFP nº 001/2009, art. 4º, §1º)`;
+      : `guarda de ${RETENTION_YEARS_ADULT} anos para prontuário em saúde (Lei nº 13.787/2018)`;
   return `Prazo de guarda do registro documental definido para ${retentionUntil.toLocaleDateString("pt-BR", { timeZone: "America/Sao_Paulo" })} — ${rule}.`;
 }

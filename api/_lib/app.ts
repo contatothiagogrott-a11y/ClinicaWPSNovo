@@ -262,6 +262,23 @@ async function hasRegistrationAccess(
   return !!client && client.assignedPsicoId === session.userId;
 }
 
+/**
+ * Acesso ao conteúdo de UMA sessão específica.
+ *
+ * Diferente de `hasClinicalAccess` (que é por paciente): aqui a fronteira é o
+ * CONTEXTO do atendimento. Sessão de grupo pertence a quem conduz o grupo.
+ */
+async function hasSessionAccess(
+  session: { userId: string; role: AppRole },
+  record: { clientId: string; groupId: string | null; psicoId: string }
+): Promise<boolean> {
+  if (session.role === "ADMIN") return false;
+  if (session.role === "SUPERVISOR") return true;
+  if (record.psicoId === session.userId) return true; // autor da sessão
+  if (record.groupId) return hasGroupAccess(session, record.groupId);
+  return hasClinicalAccess(session, record.clientId);
+}
+
 async function hasClinicalAccess(
   session: { userId: string; role: AppRole },
   clientId: string
@@ -442,9 +459,28 @@ app.get(
       ? sessionsRaw
       : sessionsRaw.filter((s: any) => s.psicoId === session.userId || clinicalClientIds.has(s.clientId));
 
-    const sessions = visibleSessions.map((s: any) =>
-      isAdmin || !clinicalClientIds.has(s.clientId) ? mapSessionMeta(s) : mapSession(s, session.userId)
-    );
+    /**
+     * SIGILO ENTRE CONTEXTOS DE ATENDIMENTO
+     * =====================================
+     *
+     * Um paciente pode ter, ao mesmo tempo, atendimento individual com A e
+     * grupo com B. Cada um é uma relação clínica distinta.
+     *
+     * O Manual Orientativo do CFP trata o prontuário como único e
+     * institucional, mas o setor decidiu — legitimamente, já que a norma
+     * permite o acesso sem obrigá-lo — que o prontuário do GRUPO é restrito
+     * aos condutores do grupo e ao Supervisor.
+     *
+     * O psicólogo individual continua SABENDO que o paciente participa de um
+     * grupo (o vínculo aparece na ficha), mas não lê o conteúdo daquelas
+     * sessões — e o texto sequer sai do servidor para ele.
+     */
+    const sessions = visibleSessions.map((s: any) => {
+      if (isAdmin || !clinicalClientIds.has(s.clientId)) return mapSessionMeta(s);
+      // Sessão vinculada a um grupo que este profissional NÃO conduz.
+      if (s.groupId && !isSupervisor && !myLedGroupIds.has(s.groupId)) return mapSessionMeta(s);
+      return mapSession(s, session.userId);
+    });
 
     const appointments = isSupervisorOrAdmin
       ? appointmentsRaw
@@ -1271,6 +1307,19 @@ app.post(
       denyClinical(res);
       return;
     }
+    /**
+     * Exportação de documento de GRUPO: restrita aos condutores e ao
+     * Supervisor, conforme decidido com o setor. Baixar o PDF é a forma mais
+     * fácil de o conteúdo sair do sistema, então a restrição vale aqui também.
+     */
+    if (req.body?.groupId) {
+      if (!(await hasGroupAccess(session, String(req.body.groupId)))) {
+        res.status(403).json({
+          error: "Documentos de grupo podem ser exportados apenas pelos profissionais responsáveis pelo grupo.",
+        });
+        return;
+      }
+    }
     const label = String(req.body?.documentLabel ?? "Documento").slice(0, 120);
     await logDocumentEvent(req.params.id, actorOf(session), label, "EXPORTACAO");
     await logAccess({
@@ -1372,7 +1421,7 @@ app.patch(
       res.status(404).json({ error: "Prontuário não encontrado." });
       return;
     }
-    if (!(await hasClinicalAccess(session, existing.clientId))) {
+    if (!(await hasSessionAccess(session, existing))) {
       denyClinical(res);
       return;
     }

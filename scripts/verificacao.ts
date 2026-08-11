@@ -53,9 +53,9 @@ check("Agenda ida-e-volta 20/07 08:00", toDateOnly(iso) + " " + iso.slice(11, 16
 
 // === Guarda documental (Res. CFP 001/2009) ===
 const fim = new Date("2026-07-30T12:00:00-03:00");
-check("Guarda adulto: +5 anos", computeRetentionUntil(fim, "1990-01-01").getFullYear(), 2031);
+check("Guarda adulto: +20 anos (Lei 13.787/2018)", computeRetentionUntil(fim, "1990-01-01").getFullYear(), 2046);
 // Menor com 10 anos em 2026 (nasc. 2016): 18 anos em 2034, +10 = 2044.
-check("Guarda menor de idade: maioridade +10", computeRetentionUntil(fim, "2016-05-10").getFullYear(), 2044);
+check("Guarda menor: o maior entre os dois prazos", computeRetentionUntil(fim, "2016-05-10").getFullYear(), 2046);
 check("Idade calculada (nasc. 2016-05-10)", ageInYears("2016-05-10"), 10);
 
 // === Auditoria: só o NOME do campo, nunca o valor ===

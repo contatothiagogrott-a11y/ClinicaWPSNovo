@@ -148,7 +148,24 @@ export default function ClientProfile() {
 
   // Grupos que o usuário atual lidera e dos quais este paciente participa —
   // cobre o caso de grupo com um psicólogo e atendimento individual com outro.
-  const myGroupsWithClient = groups.filter(g => g.psychologistId === currentUser?.id && g.memberIds.includes(client.id));
+  // Responsável OU coterapeuta: ambos conduzem o grupo.
+  const myGroupsWithClient = groups.filter(
+    g => (g.psychologistId === currentUser?.id || g.coPsychologistId === currentUser?.id)
+      && g.memberIds.includes(client.id)
+  );
+
+  /**
+   * Todos os vínculos ativos do paciente no setor.
+   *
+   * Aqui a pessoa pode ter atendimento individual com um profissional e grupo
+   * com outro, ao mesmo tempo. Mostrar isso evita que um profissional conduza
+   * o caso sem saber que existe outro acompanhamento em curso — "é um setor
+   * só", como definido com a coordenação.
+   *
+   * Saber que o vínculo existe é diferente de ler o conteúdo: o prontuário do
+   * grupo continua restrito a quem o conduz.
+   */
+  const gruposDoPaciente = groups.filter(g => g.memberIds.includes(client.id) && g.isActive);
   const showGroupTab = myGroupsWithClient.length > 0;
 
   const handleExportProntuario = () => {
@@ -793,6 +810,36 @@ export default function ClientProfile() {
           O aviso fica no topo da ficha, com o motivo exato — sem isso, o
           usuário teria de adivinhar o que revisar.
         */}
+        {/* Vínculos ativos no setor */}
+        {(client.assignedPsicoName || gruposDoPaciente.length > 0) && (
+          <div className="mb-6 flex flex-wrap items-center gap-2">
+            <span className="text-xs font-bold text-gray-500 uppercase tracking-wider">Vínculos ativos:</span>
+            {client.assignedPsicoName && (
+              <span className="inline-flex items-center gap-1.5 bg-blue-50 border border-blue-100 text-blue-800 text-xs font-semibold px-3 py-1.5 rounded-lg">
+                <UserCircle size={13} /> Individual — {client.assignedPsicoName}
+              </span>
+            )}
+            {gruposDoPaciente.map(g => {
+              const conduz = g.psychologistId === currentUser?.id || g.coPsychologistId === currentUser?.id;
+              const nomes = [g.psychologistId, g.coPsychologistId]
+                .filter(Boolean)
+                .map(id => users.find(u => u.id === id)?.name)
+                .filter(Boolean)
+                .join(" e ");
+              return (
+                <span
+                  key={g.id}
+                  className="inline-flex items-center gap-1.5 bg-purple-50 border border-purple-100 text-purple-800 text-xs font-semibold px-3 py-1.5 rounded-lg"
+                  title={conduz ? "Você conduz este grupo" : "Prontuário do grupo restrito aos profissionais responsáveis"}
+                >
+                  <Users2 size={13} /> {g.name}{nomes ? ` — ${nomes}` : ""}
+                  {!conduz && <Lock size={11} className="text-purple-400" />}
+                </span>
+              );
+            })}
+          </div>
+        )}
+
         {saveError && (
           <p className="mb-4 text-sm text-red-700 bg-red-50 border border-red-200 rounded-xl px-4 py-3 font-semibold">
             {saveError}
@@ -1459,6 +1506,20 @@ function ProntuarioView({ clientId }: { clientId: string }) {
              nenhum PDF, não aparece para Supervisor nem para o Administrativo,
              e não gera entrada na trilha de auditoria clínica.
            */}
+           {/*
+             O prontuário é único e institucional (Manual Orientativo do CFP):
+             outros profissionais do setor terão acesso a este texto. A proteção
+             que a norma pede não é bloquear a leitura, e sim CONTER o que se
+             escreve — "apenas informações necessárias e indispensáveis ao
+             cumprimento dos objetivos do trabalho".
+             O que for impressão pessoal vai na anotação privada, abaixo.
+           */}
+           <p className="mb-3 text-[11px] text-gray-500 bg-gray-50 border border-gray-200 rounded-xl px-4 py-2.5 leading-relaxed">
+             Este registro compõe o prontuário da instituição e poderá ser lido por outros
+             profissionais do setor e pela supervisão. Registre apenas o necessário e
+             indispensável ao acompanhamento.
+           </p>
+
            <div className="mb-4 bg-amber-50/70 border border-amber-200 rounded-2xl p-4">
              <label className="flex items-center gap-2 text-xs font-bold text-amber-700 uppercase tracking-wide mb-1.5">
                <Lock size={12} /> Anotação privada desta sessão — somente você vê
@@ -1495,6 +1556,18 @@ function ProntuarioView({ clientId }: { clientId: string }) {
                       Sessão {clientSessions.length - i}
                    </h4>
                    {group && <span className="bg-purple-100 text-purple-700 text-xs font-bold px-2 py-0.5 rounded-md">Grupo: {group.name}</span>}
+                   {/*
+                     Conteúdo restrito: a API não enviou o texto desta sessão
+                     porque ela pertence a outro contexto de atendimento (grupo
+                     conduzido por outro profissional). Sinalizar é melhor do
+                     que exibir uma sessão aparentemente vazia — quem lê precisa
+                     saber que o registro existe, mas não é dele.
+                   */}
+                   {s.clinicalContentHidden && (
+                     <span className="inline-flex items-center gap-1 bg-gray-200 text-gray-600 text-xs font-bold px-2 py-0.5 rounded-md">
+                       <Lock size={10} /> Conteúdo restrito
+                     </span>
+                   )}
                    {s.attendance && s.attendance !== "PRESENTE" && <span className="bg-red-100 text-red-700 text-xs font-bold px-2 py-0.5 rounded-md">{s.attendance === "FALTA_JUSTIFICADA" ? "Falta Justificada" : "Falta Injustificada"}</span>}
                    {s.isDraft && <span className="bg-amber-200 text-amber-800 text-[10px] uppercase tracking-wider font-bold px-2 py-0.5 rounded-md">Pendente</span>}
                  </div>
@@ -1510,7 +1583,12 @@ function ProntuarioView({ clientId }: { clientId: string }) {
                  </div>
                </div>
                
-               {s.isDraft ? (
+               {s.clinicalContentHidden ? (
+                 <p className="text-sm text-gray-500 italic">
+                   Registro realizado em outro contexto de atendimento. O conteúdo é acessível aos
+                   profissionais responsáveis por aquele atendimento e à supervisão.
+                 </p>
+               ) : s.isDraft ? (
                   <div>
                      <div className="flex justify-between items-center">
                         <p className="text-amber-700/60 text-sm italic">Sessão agendada. Aguardando preenchimento do prontuário após a realização.</p>
