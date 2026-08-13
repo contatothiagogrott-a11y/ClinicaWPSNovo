@@ -325,7 +325,27 @@ function denyClinical(res: Response) {
 }
 
 // Contadores de sessões concluídas (regra preservada do sistema original).
-async function maybeIncrementCompletedSessions(clientId: string, wasDraft: boolean, isNowDraft: boolean) {
+/**
+ * Contador de sessões REALIZADAS.
+ *
+ * Fechar o rascunho não significa que houve sessão. Falta, cancelamento e
+ * reagendamento também encerram o registro — e estavam sendo contados como
+ * atendimento realizado, inflando o consumo do pacote do paciente.
+ *
+ * Só conta quando houve de fato o encontro.
+ */
+async function maybeIncrementCompletedSessions(
+  clientId: string,
+  wasDraft: boolean,
+  isNowDraft: boolean,
+  attendance?: string | null
+) {
+  const naoHouveEncontro =
+    attendance &&
+    ["FALTA_JUSTIFICADA", "FALTA_INJUSTIFICADA", "CANCELADO_PACIENTE", "CANCELADO_PROFISSIONAL", "REAGENDADO"]
+      .includes(attendance);
+  if (naoHouveEncontro) return;
+
   if (wasDraft && !isNowDraft) {
     await prisma.client.update({ where: { id: clientId }, data: { completedSessions: { increment: 1 } } });
   }
@@ -502,11 +522,45 @@ app.get(
      * grupo (o vínculo aparece na ficha), mas não lê o conteúdo daquelas
      * sessões — e o texto sequer sai do servidor para ele.
      */
+    /**
+     * VAZAMENTO CORRIGIDO.
+     *
+     * `clinicalClientIds` libera o PACIENTE, e o psicólogo entra nessa lista
+     * por conduzir um grupo do qual a pessoa participa. Como a sessão
+     * individual não tem `groupId`, ela passava direto pelo filtro anterior —
+     * e o condutor do grupo lia a terapia individual conduzida por outro
+     * profissional.
+     *
+     * A fronteira correta é o CONTEXTO de cada sessão, não o paciente:
+     *
+     *   - autor da sessão            -> lê (é o registro dele)
+     *   - sessão de grupo que conduz -> lê
+     *   - responsável pelo caso      -> lê as sessões individuais
+     *   - Supervisor                 -> lê tudo (supervisão clínica)
+     *   - qualquer outro             -> só metadados, sem o texto
+     */
+    const souResponsavelPor = new Set<string>(
+      clientsRaw.filter((c: any) => c.assignedPsicoId === session.userId).map((c: any) => c.id)
+    );
+
     const sessions = visibleSessions.map((s: any) => {
-      if (isAdmin || !clinicalClientIds.has(s.clientId)) return mapSessionMeta(s);
-      // Sessão vinculada a um grupo que este profissional NÃO conduz.
-      if (s.groupId && !isSupervisor && !myLedGroupIds.has(s.groupId)) return mapSessionMeta(s);
-      return mapSession(s, session.userId);
+      if (isAdmin) return mapSessionMeta(s);
+      if (isSupervisor) return mapSession(s, session.userId);
+
+      // Registro escrito por este profissional: sempre acessível a ele.
+      if (s.psicoId === session.userId) return mapSession(s, session.userId);
+
+      // Sessão de grupo: só quem conduz aquele grupo.
+      if (s.groupId) {
+        return myLedGroupIds.has(s.groupId)
+          ? mapSession(s, session.userId)
+          : mapSessionMeta(s);
+      }
+
+      // Sessão individual: só o profissional responsável pelo caso.
+      return souResponsavelPor.has(s.clientId)
+        ? mapSession(s, session.userId)
+        : mapSessionMeta(s);
     });
 
     const appointments = isSupervisorOrAdmin
@@ -1246,6 +1300,32 @@ async function assignProtocolNumber(clientId: string): Promise<string | null> {
   return linhas[0]?.protocolNumber ?? null;
 }
 
+/**
+ * Numeração do prontuário de GRUPO — sequência própria, prefixada com "G".
+ *
+ * Separada da numeração individual porque são documentos distintos: "G012" e
+ * "012" referenciam coisas diferentes, e sem o prefixo a referência a um
+ * prontuário no registro do setor ficaria ambígua.
+ *
+ * Mesmo cálculo atômico da numeração individual: uma única instrução SQL.
+ */
+async function assignGroupProtocolNumber(groupId: string): Promise<string | null> {
+  const linhas = await prisma.$queryRaw<Array<{ protocolNumber: string }>>`
+    UPDATE "Group"
+    SET "protocolNumber" = (
+      SELECT 'G' || LPAD(
+        (COALESCE(MAX(CAST(SUBSTRING("protocolNumber" FROM 2) AS BIGINT)), 0) + 1)::text,
+        3, '0'
+      )
+      FROM "Group"
+      WHERE "protocolNumber" ~ '^G[0-9]+$'
+    )
+    WHERE id = ${groupId} AND "protocolNumber" IS NULL
+    RETURNING "protocolNumber";
+  `;
+  return linhas[0]?.protocolNumber ?? null;
+}
+
 /** Status em que o caso já é considerado atendido e, portanto, tem prontuário. */
 // CANCELADO fica de fora: quem não foi atendido não tem prontuário aberto.
 const STATUS_COM_PRONTUARIO = ["TRIAGEM", "TRIADOS", "EM_ATENDIMENTO", "FINALIZADO"];
@@ -1417,7 +1497,8 @@ app.post(
         await maybeIncrementCompletedSessions(
           existing.clientId,
           existing.isDraft && !existing.appointmentId,
-          updated.isDraft
+          updated.isDraft,
+          updated.attendance
         );
         // Metainformação apenas — o texto do prontuário NUNCA entra no log.
         await logClinicalRecord(
@@ -1447,7 +1528,7 @@ app.post(
       },
       include: { versions: true },
     });
-    await maybeIncrementCompletedSessions(created.clientId, !created.appointmentId, created.isDraft);
+    await maybeIncrementCompletedSessions(created.clientId, !created.appointmentId, created.isDraft, created.attendance);
     await logClinicalRecord(
       created.clientId,
       actorOf(session),
@@ -1505,7 +1586,8 @@ app.patch(
     await maybeIncrementCompletedSessions(
       existing.clientId,
       existing.isDraft && !existing.appointmentId,
-      updated.isDraft
+      updated.isDraft,
+      updated.attendance
     );
 
     // Anotação privada isolada não é evento de prontuário: não gera entrada
@@ -1779,6 +1861,8 @@ async function resolverProntuarioPorPresenca(appt: any): Promise<void> {
       situacao === "FALTA_JUSTIFICADA"
         ? "Paciente não compareceu ao atendimento — falta justificada."
         : "Paciente não compareceu ao atendimento — falta sem justificativa.";
+    // Fecha o registro SEM contar como sessão realizada — a presença gravada
+    // no próprio registro impede o incremento (ver maybeIncrementCompletedSessions).
     await prisma.sessionRecord.update({
       where: { id: rascunho.id },
       data: { notesEnc: encryptField(texto), isDraft: false, attendance: situacao },
@@ -1920,7 +2004,14 @@ app.post(
       },
       include: { members: true },
     });
-    res.status(201).json({ group: mapGroup(group) });
+
+    // Numeração própria do grupo, atribuída na criação.
+    await assignGroupProtocolNumber(group.id);
+    const comNumero = await prisma.group.findUnique({
+      where: { id: group.id },
+      include: { members: true },
+    });
+    res.status(201).json({ group: mapGroup(comNumero) });
   })
 );
 

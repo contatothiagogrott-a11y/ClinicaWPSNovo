@@ -216,6 +216,7 @@ export function mapGroup(g: any) {
     isActive: g.isActive,
     psychologistId: g.psychologistId,
     coPsychologistId: g.coPsychologistId ?? undefined,
+    protocolNumber: g.protocolNumber ?? undefined,
     memberIds: (g.members ?? []).map((m: any) => m.clientId),
   };
 }

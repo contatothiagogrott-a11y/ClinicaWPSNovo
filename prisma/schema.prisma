@@ -385,6 +385,15 @@ model Group {
    * de grupo, então os dois precisam de acesso de escrita — por isso é um
    * vínculo real, e não uma anotação em texto livre.
    */
+  /**
+   * Número do prontuário do grupo, com prefixo "G" (G001, G002...).
+   *
+   * Sequência PRÓPRIA, separada da numeração dos prontuários individuais: são
+   * documentos de naturezas diferentes, e um número repetido entre eles
+   * tornaria a referência ambígua nos registros do setor.
+   */
+  protocolNumber   String?  @unique
+
   coPsychologistId String?
   coPsychologist   User?   @relation("GroupCoPsychologist", fields: [coPsychologistId], references: [id])
 

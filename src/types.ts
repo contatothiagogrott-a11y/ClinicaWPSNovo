@@ -203,6 +203,8 @@ export interface Group {
   psychologistId: string;
   /** Coterapeuta: segundo responsável, também com acesso aos prontuários do grupo. */
   coPsychologistId?: string;
+  /** Numeração própria do grupo, prefixada com "G" (G001, G002...). */
+  protocolNumber?: string;
   memberIds: string[];
 }
 

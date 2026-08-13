@@ -36,8 +36,16 @@ export function buildProntuarioDocDefinition(
    */
   equipe?: User[]
 ) {
+  /**
+   * O prontuário INDIVIDUAL não inclui sessões de grupo.
+   *
+   * O registro do grupo é documento próprio, com sigilo próprio (restrito aos
+   * condutores) e numeração própria. Misturar os dois num único PDF faria o
+   * documento individual carregar conteúdo de outro contexto de atendimento —
+   * e bastaria exportar para contornar a restrição de acesso.
+   */
   const nonDraftSessions = sessions
-    .filter(s => s.clientId === client.id && !s.isDraft)
+    .filter(s => s.clientId === client.id && !s.isDraft && !s.groupId)
     .sort((a, b) => (toDate(a.date)?.getTime() ?? 0) - (toDate(b.date)?.getTime() ?? 0));
 
   const firstDate = nonDraftSessions[0]?.date;

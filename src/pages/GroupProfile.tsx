@@ -1,11 +1,13 @@
 import React, { useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { useStore } from "../contexts/StoreContext";
-import { ChevronLeft, Edit2, Users, FileText, Save, UserPlus, X, Calendar } from "lucide-react";
+import { ChevronLeft, Edit2, Users, FileText, Save, UserPlus, X, Calendar, FileDown } from "lucide-react";
 import { cn } from "../lib/utils";
 import { format } from "date-fns";
 import { ptBR } from "date-fns/locale";
 import { clinicians } from "../lib/roles";
+import { openPdfInNewTab } from "../lib/pdfGenerator";
+import { buildProntuarioGrupoDocDefinition } from "../lib/pdfProntuarioGrupo";
 
 export default function GroupProfile() {
   const { id } = useParams();
@@ -30,6 +32,29 @@ export default function GroupProfile() {
 
   const psicos = clinicians(users);
   const psychologist = users.find(u => u.id === group.psychologistId);
+
+  /**
+   * Exportação restrita aos condutores e à supervisão.
+   * O prontuário de grupo é documento próprio: baixar o PDF é a forma mais
+   * direta de o conteúdo sair do sistema, então a restrição de leitura vale
+   * também aqui.
+   */
+  const conduzOGrupo =
+    currentUser?.id === group.psychologistId ||
+    currentUser?.id === group.coPsychologistId ||
+    currentUser?.role === "SUPERVISOR";
+
+  const exportarProntuarioDoGrupo = () => {
+    const membros = clients.filter(c => group.memberIds.includes(c.id));
+    const docDef = buildProntuarioGrupoDocDefinition(
+      group,
+      groupRecords,
+      membros,
+      users,
+      group.protocolNumber || "não atribuído"
+    );
+    openPdfInNewTab(docDef);
+  };
 
   const handleSaveInfo = () => {
     updateGroup(group.id, editData);
@@ -102,7 +127,23 @@ export default function GroupProfile() {
           <ChevronLeft size={24} />
         </button>
         <div>
-          <h1 className="text-3xl font-bold text-gray-900">{group.name}</h1>
+          <div className="flex items-start justify-between gap-4 flex-wrap">
+            <div>
+              <h1 className="text-3xl font-bold text-gray-900">{group.name}</h1>
+              <p className="text-sm text-gray-500 mt-1">
+                Prontuário de grupo nº{" "}
+                <strong className="text-gray-700">{group.protocolNumber || "não atribuído"}</strong>
+              </p>
+            </div>
+            {conduzOGrupo && (
+              <button
+                onClick={exportarProntuarioDoGrupo}
+                className="bg-purple-600 hover:bg-purple-700 text-white font-bold text-sm px-5 py-2.5 rounded-xl flex items-center gap-2 transition-colors shrink-0"
+              >
+                <FileDown size={16} /> Exportar prontuário do grupo
+              </button>
+            )}
+          </div>
           <p className="text-gray-500">Resp: {psychologist?.name || "Desconhecido"}</p>
         </div>
       </header>
