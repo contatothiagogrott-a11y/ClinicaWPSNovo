@@ -1607,6 +1607,20 @@ app.post(
     const geraProntuario = !b.seriesId;
     const tipoDoEvento = b.appointmentType || "ATENDIMENTO";
 
+    /**
+     * GRUPO É EXCEÇÃO À REGRA DA SÉRIE.
+     *
+     * Grupos são quase sempre agendados como série semanal. Ao bloquear a
+     * geração para séries (para não criar 12 prontuários individuais de uma
+     * vez), eu impedi também a criação do registro do grupo — e nenhum dia de
+     * grupo passou a gerar prontuário.
+     *
+     * A diferença é que o registro de grupo é UM por encontro, não um por
+     * paciente: não há multiplicação. E o art. 5º da Resolução CFP nº 001/2009
+     * exige documentação de cada encontro do grupo não eventual.
+     */
+    const geraRegistroDeGrupo = true;
+
     if (appt.clientId && geraProntuario) {
       /**
        * O prontuário pendente nasce vinculado a QUEM VAI ATENDER (`appt.psicoId`),
@@ -1625,7 +1639,7 @@ app.post(
           sessionType: tipoDoEvento,
         },
       });
-    } else if (appt.groupId && geraProntuario) {
+    } else if (appt.groupId && geraRegistroDeGrupo) {
       const group = await prisma.group.findUnique({ where: { id: appt.groupId } });
       if (group) {
         await prisma.groupRecord.create({
@@ -2967,6 +2981,92 @@ app.post(
       observacao:
         "Removidos rascunhos vazios: órfãos, de sessões futuras e de encontros cancelados ou reagendados. Pendências de atendimentos realizados foram preservadas.",
     });
+  })
+);
+
+/**
+ * REALINHAMENTO DE AUTORIA DOS PRONTUÁRIOS
+ * ========================================
+ *
+ * Corrige registros cujo autor não corresponde ao profissional que estava
+ * agendado naquele dia. Isso acontece com prontuários criados antes das
+ * correções: eles apontavam para o responsável ATUAL do caso, e não para quem
+ * de fato realizou o atendimento.
+ *
+ * Por que importa: a evolução precisa ser escrita por quem prestou o
+ * atendimento. Com o vínculo errado, o profissional que atendeu não consegue
+ * preencher — e o que assumiu o caso depois apareceria como autor de um ato
+ * que não praticou.
+ *
+ * Só realinha registros SEM CONTEÚDO. Se alguém já escreveu, o autor é quem
+ * assinou aquele texto e não se mexe.
+ *
+ * `?aplicar=true` executa; sem isso, apenas devolve a prévia.
+ */
+app.post(
+  "/api/manutencao/realinhar-autoria",
+  asyncHandler(async (req, res) => {
+    const session = requireSession(req, res, ["SUPERVISOR", "ADMIN"]);
+    if (!session) return;
+    const aplicar = req.query.aplicar === "true";
+
+    const registros = await prisma.sessionRecord.findMany({
+      where: { NOT: { appointmentId: null } },
+      include: { versions: true },
+    });
+
+    const agendamentos = new Map<string, any>(
+      (await prisma.appointment.findMany({ select: { id: true, psicoId: true, date: true } }))
+        .map((a: any) => [a.id, a])
+    );
+    const equipe = new Map<string, string>(
+      (await prisma.user.findMany({ select: { id: true, name: true } })).map((u: any) => [u.id, u.name])
+    );
+
+    const divergentes = registros.filter((r: any) => {
+      const appt = agendamentos.get(r.appointmentId);
+      if (!appt) return false;
+      if (appt.psicoId === r.psicoId) return false;
+      // Só realinha o que ainda não foi escrito.
+      const temConteudo =
+        !!decryptField(r.notesEnc) ||
+        !!decryptField(r.privateNotesEnc) ||
+        (r.versions ?? []).length > 0;
+      return !temConteudo;
+    });
+
+    const previa = divergentes.slice(0, 100).map((r: any) => {
+      const appt = agendamentos.get(r.appointmentId);
+      return {
+        data: toDateOnlyBRT(r.date),
+        autorAtual: equipe.get(r.psicoId) ?? "—",
+        autorCorreto: equipe.get(appt.psicoId) ?? "—",
+      };
+    });
+
+    if (!aplicar) {
+      res.json({ modo: "previa", total: divergentes.length, exemplos: previa });
+      return;
+    }
+
+    let corrigidos = 0;
+    for (const r of divergentes) {
+      const appt = agendamentos.get(r.appointmentId);
+      await prisma.sessionRecord.update({
+        where: { id: r.id },
+        data: { psicoId: appt.psicoId },
+      });
+      corrigidos++;
+    }
+
+    await logAccess({
+      actor: actorOf(session),
+      action: "REALINHAMENTO_DE_AUTORIA",
+      resource: `${corrigidos} prontuário(s)`,
+      ip: clientIp(req),
+    });
+
+    res.json({ modo: "aplicado", corrigidos });
   })
 );
 

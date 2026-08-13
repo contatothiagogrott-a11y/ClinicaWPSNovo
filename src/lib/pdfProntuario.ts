@@ -24,7 +24,17 @@ export function buildProntuarioDocDefinition(
   sessions: SessionRecord[],
   psico?: User,
   includedInstrumentApps?: InstrumentApplication[],
-  instruments?: Instrument[]
+  instruments?: Instrument[],
+  /**
+   * Equipe do setor, para identificar o autor de CADA sessão.
+   *
+   * O prontuário é institucional e o paciente pode ter sido atendido por
+   * profissionais diferentes ao longo do acompanhamento. Sem identificar quem
+   * realizou cada sessão, o documento impresso não permite saber quem
+   * respondeu por qual ato — e a identificação com nome e CRP é exigida
+   * (Resolução CFP nº 06/2019).
+   */
+  equipe?: User[]
 ) {
   const nonDraftSessions = sessions
     .filter(s => s.clientId === client.id && !s.isDraft)
@@ -33,14 +43,34 @@ export function buildProntuarioDocDefinition(
   const firstDate = nonDraftSessions[0]?.date;
   const lastDate = nonDraftSessions[nonDraftSessions.length - 1]?.date;
 
+  const TIPOS: Record<string, string> = {
+    TRIAGEM_GRUPO: "Triagem para grupo",
+    ENTREVISTA: "Entrevista",
+    DEVOLUTIVA: "Devolutiva",
+  };
+
   const sessionBlocks: any[] = [];
   nonDraftSessions.forEach(s => {
+    // Autor da sessão: preferencialmente da equipe; se não achar, cai no
+    // profissional que está emitindo o documento.
+    const autor = equipe?.find(u => u.id === s.psicoId) ?? (s.psicoId === psico?.id ? psico : undefined);
+    const assinatura = autor
+      ? `${autor.name}${autor.crp ? ` — CRP ${autor.crp}` : ""}`
+      : "Profissional não identificado";
+    const natureza = s.sessionType && TIPOS[s.sessionType] ? ` · ${TIPOS[s.sessionType]}` : "";
+
     sessionBlocks.push({
       margin: [0, 10, 0, 0],
       table: {
         widths: ["*"],
         body: [
-          [{ text: `DATA: ${formatDateBR(s.date)}`, bold: true, fillColor: "#f1f5f9" }],
+          [{ text: `DATA: ${formatDateBR(s.date)}${natureza}`, bold: true, fillColor: "#f1f5f9" }],
+          [{
+            text: `Sessão realizada por: ${assinatura}`,
+            fontSize: 8.5,
+            color: "#444444",
+            margin: [4, 4, 4, 0],
+          }],
           [{ text: s.notes || "(sem registro de evolução)", margin: [4, 8, 4, 20], minHeight: 60 }],
         ],
       },

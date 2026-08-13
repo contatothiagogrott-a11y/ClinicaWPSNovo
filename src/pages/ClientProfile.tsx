@@ -189,7 +189,7 @@ export default function ClientProfile() {
 
   const handleExportProntuario = () => {
     if (!client.instruments || client.instruments.length === 0) {
-      const docDef = buildProntuarioDocDefinition(client, sessions, assignedPsico);
+      const docDef = buildProntuarioDocDefinition(client, sessions, assignedPsico, undefined, undefined, users);
       exportWithAudit(docDef, "Prontuário completo");
       return;
     }
@@ -199,7 +199,7 @@ export default function ClientProfile() {
 
   const finalizeExportProntuario = (includeTests: boolean) => {
     const includedApps = includeTests ? (client.instruments || []).filter(a => selectedTestIds.has(a.id)) : undefined;
-    const docDef = buildProntuarioDocDefinition(client, sessions, assignedPsico, includedApps, instruments);
+    const docDef = buildProntuarioDocDefinition(client, sessions, assignedPsico, includedApps, instruments, users);
     exportWithAudit(docDef, "Prontuário completo");
     setShowExportPrompt(false);
   };
@@ -1410,7 +1410,7 @@ function InstrumentosView({ clientId }: { clientId: string }) {
 }
 
 function ProntuarioView({ clientId }: { clientId: string }) {
-   const { sessions, addSession, updateSession, updatePrivateSessionNotes, currentUser, groups } = useStore();
+   const { sessions, addSession, updateSession, updatePrivateSessionNotes, currentUser, groups, users } = useStore();
    const [writingSessionId, setWritingSessionId] = useState<string | null>(null);
    const [isWritingNew, setIsWritingNew] = useState(false);
    const [notes, setNotes] = useState("");
@@ -1455,7 +1455,18 @@ function ProntuarioView({ clientId }: { clientId: string }) {
      setAttendance("PRESENTE");
    };
 
+   /**
+    * Abrir um rascunho para escrever.
+    *
+    * Só o autor da sessão (ou o Supervisor) escreve. Um profissional que
+    * assumiu o caso depois NÃO preenche a evolução de um atendimento que
+    * quem o realizou foi outra pessoa — seria assinar ato alheio.
+    *
+    * É por isso que o profissional anterior mantém acesso aos rascunhos dele
+    * mesmo após a transferência do paciente: para concluir os retroativos.
+    */
    const handleEditDraft = (s: any) => {
+      if (s.psicoId !== currentUser?.id && currentUser?.role !== "SUPERVISOR") return;
       setWritingSessionId(s.id);
       setIsWritingNew(false);
       setNotes(s.notes || "");
@@ -1605,6 +1616,28 @@ function ProntuarioView({ clientId }: { clientId: string }) {
                     <p className={cn("text-sm font-bold", s.isDraft ? "text-amber-600/60" : "text-gray-500")}>
                        {formatDateTimeBR(s.date)}
                     </p>
+                    {/*
+                      AUTORIA DO REGISTRO.
+                      O prontuário é institucional e a mesma pessoa pode ter
+                      sido atendida por profissionais diferentes ao longo do
+                      tempo. Sem identificar quem realizou CADA sessão, o
+                      registro perde rastreabilidade — e documento psicológico
+                      exige identificação do profissional e do CRP
+                      (Resolução CFP nº 06/2019).
+                    */}
+                    {(() => {
+                      const autor = users.find(u => u.id === s.psicoId);
+                      if (!autor) return null;
+                      return (
+                        <span className="text-xs text-gray-500">
+                          por <strong className="text-gray-700">{autor.name}</strong>
+                          {autor.crp ? ` — CRP ${autor.crp}` : ""}
+                          {s.psicoId === currentUser?.id && (
+                            <span className="ml-1.5 bg-blue-100 text-blue-700 text-[10px] font-bold px-1.5 py-0.5 rounded">SEU</span>
+                          )}
+                        </span>
+                      );
+                    })()}
                     {(!s.isDraft && (s.psicoId === currentUser?.id || currentUser?.role === "SUPERVISOR") && !isEditingThis) && (
                        <button onClick={() => { setEditingRecordId(s.id); setEditNotes(s.notes); }} className="text-gray-400 hover:text-blue-600 transition-colors p-1" title="Editar Prontuário">
                           <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" /></svg>
@@ -1622,11 +1655,15 @@ function ProntuarioView({ clientId }: { clientId: string }) {
                   <div>
                      <div className="flex justify-between items-center">
                         <p className="text-amber-700/60 text-sm italic">Sessão agendada. Aguardando preenchimento do prontuário após a realização.</p>
-                        {!isWritingAny && (
-                           <button onClick={() => handleEditDraft(s)} className="text-amber-700 bg-amber-100/50 hover:bg-amber-100 px-4 py-2 rounded-xl text-sm font-bold transition-colors">
+                        {!isWritingAny && (s.psicoId === currentUser?.id || currentUser?.role === "SUPERVISOR") ? (
+                           <button onClick={() => handleEditDraft(s)} className="text-amber-700 bg-amber-100/50 hover:bg-amber-100 px-4 py-2 rounded-xl text-sm font-bold transition-colors shrink-0">
                              Preencher Agora
                            </button>
-                        )}
+                        ) : !isWritingAny ? (
+                           <span className="text-xs text-gray-400 font-semibold shrink-0" title="A evolução deve ser escrita por quem realizou o atendimento.">
+                             Pendente com {users.find(u => u.id === s.psicoId)?.name ?? "outro profissional"}
+                           </span>
+                        ) : null}
                      </div>
 
                      {(s.canWritePrivateNotes ?? s.psicoId === currentUser?.id) && (

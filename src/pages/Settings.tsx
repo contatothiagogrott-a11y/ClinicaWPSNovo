@@ -72,9 +72,11 @@ function ConfigManager({ title, type, items, onAdd, onUpdate }: {
 }
 
 export default function Settings() {
-  const { config, addConfigItem, updateConfigItem, currentUser, limparProntuariosVazios } = useStore();
+  const { config, addConfigItem, updateConfigItem, currentUser, limparProntuariosVazios, realinharAutoria } = useStore();
   const [limpando, setLimpando] = useState(false);
   const [resultadoLimpeza, setResultadoLimpeza] = useState<string>("");
+  const [previaAutoria, setPreviaAutoria] = useState<any>(null);
+  const [autoriaOcupado, setAutoriaOcupado] = useState(false);
 
   const executarLimpeza = async () => {
     setLimpando(true);
@@ -91,6 +93,18 @@ export default function Settings() {
     } finally {
       setLimpando(false);
     }
+  };
+
+  const verPrevia = async () => {
+    setAutoriaOcupado(true);
+    try { setPreviaAutoria(await realinharAutoria(false)); }
+    finally { setAutoriaOcupado(false); }
+  };
+
+  const aplicarRealinhamento = async () => {
+    setAutoriaOcupado(true);
+    try { setPreviaAutoria(await realinharAutoria(true)); }
+    finally { setAutoriaOcupado(false); }
   };
 
   if (currentUser?.role !== "SUPERVISOR") {
@@ -147,6 +161,68 @@ export default function Settings() {
         {resultadoLimpeza && (
           <p className="mt-3 text-sm font-semibold text-gray-700">{resultadoLimpeza}</p>
         )}
+
+        {/* Realinhamento de autoria */}
+        <div className="border-t border-gray-100 mt-6 pt-6">
+          <h3 className="font-bold text-gray-900">Realinhar autoria dos prontuários</h3>
+          <p className="text-sm text-gray-500 mt-1 mb-4">
+            Corrige registros em que o autor não corresponde ao profissional que estava agendado
+            naquele dia — situação comum em prontuários criados antes das últimas correções.
+            Só altera registros <strong>sem nenhum texto escrito</strong>.
+          </p>
+
+          <div className="flex flex-wrap gap-2">
+            <button
+              onClick={verPrevia}
+              disabled={autoriaOcupado}
+              className="bg-white border border-gray-300 hover:bg-gray-50 disabled:opacity-60 text-gray-800 font-bold px-5 py-3 rounded-xl text-sm transition-colors"
+            >
+              {autoriaOcupado ? "Verificando..." : "Ver o que seria alterado"}
+            </button>
+            {previaAutoria?.modo === "previa" && previaAutoria.total > 0 && (
+              <button
+                onClick={aplicarRealinhamento}
+                disabled={autoriaOcupado}
+                className="bg-gray-900 hover:bg-gray-800 disabled:opacity-60 text-white font-bold px-5 py-3 rounded-xl text-sm transition-colors"
+              >
+                Aplicar nos {previaAutoria.total} registros
+              </button>
+            )}
+          </div>
+
+          {previaAutoria?.modo === "previa" && (
+            <div className="mt-4">
+              {previaAutoria.total === 0 ? (
+                <p className="text-sm font-semibold text-emerald-700">
+                  Nenhuma divergência encontrada. Todos os registros já estão vinculados ao
+                  profissional correto.
+                </p>
+              ) : (
+                <>
+                  <p className="text-sm font-semibold text-gray-700 mb-2">
+                    {previaAutoria.total} registro(s) seriam realinhados:
+                  </p>
+                  <div className="border border-gray-200 rounded-xl overflow-hidden max-h-64 overflow-y-auto">
+                    {previaAutoria.exemplos?.map((e: any, i: number) => (
+                      <div key={i} className="px-4 py-2 text-xs border-b border-gray-100 last:border-0 flex flex-wrap gap-x-3">
+                        <span className="font-mono text-gray-500">{e.data}</span>
+                        <span className="text-gray-400 line-through">{e.autorAtual}</span>
+                        <span className="text-gray-400">→</span>
+                        <span className="font-bold text-gray-900">{e.autorCorreto}</span>
+                      </div>
+                    ))}
+                  </div>
+                </>
+              )}
+            </div>
+          )}
+
+          {previaAutoria?.modo === "aplicado" && (
+            <p className="mt-3 text-sm font-semibold text-emerald-700">
+              {previaAutoria.corrigidos} registro(s) realinhado(s).
+            </p>
+          )}
+        </div>
       </div>
     </div>
   );
