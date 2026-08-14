@@ -91,6 +91,8 @@ interface StoreContextType extends StoreState {
   /** Prévia ou aplicação do realinhamento de autoria dos prontuários. */
   /** Prévia ou remoção das duplicatas de registros de grupo. */
   removerDuplicatasDeGrupo: (aplicar: boolean) => Promise<any>;
+  /** Gera os prontuários individuais faltantes nos encontros de grupo. */
+  gerarProntuariosDeGrupo: (aplicar: boolean) => Promise<any>;
   realinharAutoria: (aplicar: boolean) => Promise<{
     modo: string; total?: number; corrigidos?: number;
     exemplos?: Array<{ data: string; autorAtual: string; autorCorreto: string }>;
@@ -478,6 +480,12 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     return removidos;
   };
 
+  const gerarProntuariosDeGrupo: StoreContextType["gerarProntuariosDeGrupo"] = async (aplicar) => {
+    const r = await api.post<any>(`/api/manutencao/gerar-prontuarios-de-grupo?aplicar=${aplicar}`);
+    if (aplicar) await refreshAll();
+    return r;
+  };
+
   const removerDuplicatasDeGrupo: StoreContextType["removerDuplicatasDeGrupo"] = async (aplicar) => {
     const r = await api.post<any>(`/api/manutencao/remover-duplicatas-de-grupo?aplicar=${aplicar}`);
     if (aplicar) await refreshAll();
@@ -607,6 +615,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
         limparProntuariosVazios,
         realinharAutoria,
         removerDuplicatasDeGrupo,
+        gerarProntuariosDeGrupo,
         saveGroupClientNote,
       }}
     >

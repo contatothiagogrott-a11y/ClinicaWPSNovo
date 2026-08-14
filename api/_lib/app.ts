@@ -1730,16 +1730,23 @@ app.post(
         const dataDoEncontro = parseLocalDateTime(b.date, b.time) ?? new Date();
 
         /**
-         * Evita duplicar: se já existe registro para este grupo nesta data,
-         * não cria outro. Reagendar ou recriar o encontro não deve gerar um
-         * segundo prontuário do mesmo dia.
+         * BUG CORRIGIDO — as duas criações são INDEPENDENTES.
+         *
+         * A verificação de duplicata do registro COLETIVO estava envolvendo
+         * também a criação dos prontuários individuais. Como já existiam
+         * registros coletivos antigos naquelas datas, o bloco inteiro era
+         * pulado e NENHUM prontuário individual era gerado — por isso o
+         * problema persistiu em todas as tentativas anteriores de corrigir.
+         *
+         * Agora cada criação verifica a própria duplicata, isoladamente.
          */
-        const jaExiste = await prisma.groupRecord.findFirst({
+
+        // --- 1. Registro COLETIVO do encontro ---
+        const coletivoExiste = await prisma.groupRecord.findFirst({
           where: { groupId: group.id, sessionDate: dataDoEncontro },
           select: { id: true },
         });
-
-        if (!jaExiste) {
+        if (!coletivoExiste) {
           await prisma.groupRecord.create({
             data: {
               groupId: group.id,
@@ -1750,40 +1757,35 @@ app.post(
               appointmentId: appt.id,
             },
           });
+        }
 
-          /**
-           * DOCUMENTAÇÃO INDIVIDUAL DE CADA INTEGRANTE.
-           *
-           * O art. 5º da Resolução CFP nº 001/2009 exige, além do registro do
-           * grupo, documentação individual correspondente a cada integrante
-           * de grupo não eventual.
-           *
-           * Antes isso só acontecia quando o registro coletivo era
-           * FINALIZADO — então o prontuário individual do dia simplesmente não
-           * existia enquanto o encontro não fosse fechado, e quando era, vinha
-           * duplicado com o que a agenda já tinha criado.
-           */
-          for (const membro of group.members) {
-            const duplicado = await prisma.sessionRecord.findFirst({
-              where: { clientId: membro.clientId, groupId: group.id, date: dataDoEncontro },
-              select: { id: true },
-            });
-            if (duplicado) continue;
+        /**
+         * --- 2. Documentação INDIVIDUAL de cada integrante ---
+         *
+         * Exigida pelo art. 5º da Resolução CFP nº 001/2009 para grupos não
+         * eventuais. É também o que permite ao profissional registrar a
+         * presença ou a falta de cada participante naquele encontro.
+         */
+        for (const membro of group.members) {
+          const individualExiste = await prisma.sessionRecord.findFirst({
+            where: { clientId: membro.clientId, groupId: group.id, date: dataDoEncontro },
+            select: { id: true },
+          });
+          if (individualExiste) continue;
 
-            await prisma.sessionRecord.create({
-              data: {
-                clientId: membro.clientId,
-                psicoId: appt.psicoId,
-                date: dataDoEncontro,
-                notesEnc: "",
-                isDraft: true,
-                status: "PENDENTE",
-                groupId: group.id,
-                appointmentId: appt.id,
-                sessionType: "ATENDIMENTO",
-              },
-            });
-          }
+          await prisma.sessionRecord.create({
+            data: {
+              clientId: membro.clientId,
+              psicoId: appt.psicoId,
+              date: dataDoEncontro,
+              notesEnc: "",
+              isDraft: true,
+              status: "PENDENTE",
+              groupId: group.id,
+              appointmentId: appt.id,
+              sessionType: "ATENDIMENTO",
+            },
+          });
         }
       }
     }
@@ -3358,6 +3360,101 @@ app.post(
       prontuariosIndividuais: remover.length,
       registrosColetivos: removerColetivos.length,
       conflitosParaConferencia: conflitos,
+    });
+  })
+);
+
+/**
+ * Gera os prontuários individuais que faltam nos encontros de grupo.
+ *
+ * Necessária porque os grupos já agendados foram criados enquanto o defeito
+ * existia: os encontros estão na agenda, mas sem a documentação individual de
+ * cada integrante — que é o que permite registrar presença ou falta.
+ *
+ * Serve também quando alguém ENTRA no grupo depois: os encontros já marcados
+ * passam a ter o registro dessa pessoa.
+ *
+ * `?aplicar=true` executa; sem isso, devolve apenas a prévia.
+ */
+app.post(
+  "/api/manutencao/gerar-prontuarios-de-grupo",
+  asyncHandler(async (req, res) => {
+    const session = requireSession(req, res, ["SUPERVISOR", "ADMIN"]);
+    if (!session) return;
+    const aplicar = req.query.aplicar === "true";
+
+    const agendamentosDeGrupo = await prisma.appointment.findMany({
+      where: { NOT: { groupId: null } },
+    });
+
+    const grupos = new Map(
+      (await prisma.group.findMany({ include: { members: true } })).map((g: any) => [g.id, g])
+    );
+
+    const existentes = await prisma.sessionRecord.findMany({
+      where: { NOT: { groupId: null } },
+      select: { clientId: true, groupId: true, date: true },
+    });
+    const chaveExistente = new Set(
+      existentes.map((r: any) => `${r.clientId}|${r.groupId}|${r.date.getTime()}`)
+    );
+
+    const aCriar: any[] = [];
+    const resumo = new Map<string, number>();
+
+    for (const appt of agendamentosDeGrupo) {
+      const grupo: any = grupos.get(appt.groupId);
+      if (!grupo) continue;
+
+      // Encontros cancelados ou reagendados não precisam de documentação.
+      if (["CANCELADO_PACIENTE", "CANCELADO_PROFISSIONAL", "REAGENDADO"].includes(appt.attendance ?? "")) {
+        continue;
+      }
+
+      for (const membro of grupo.members) {
+        const chave = `${membro.clientId}|${grupo.id}|${appt.date.getTime()}`;
+        if (chaveExistente.has(chave)) continue;
+        chaveExistente.add(chave);
+
+        aCriar.push({
+          clientId: membro.clientId,
+          psicoId: appt.psicoId,
+          date: appt.date,
+          notesEnc: "",
+          isDraft: true,
+          status: "PENDENTE",
+          groupId: grupo.id,
+          appointmentId: appt.id,
+          sessionType: "ATENDIMENTO",
+        });
+        resumo.set(grupo.name, (resumo.get(grupo.name) ?? 0) + 1);
+      }
+    }
+
+    if (!aplicar) {
+      res.json({
+        modo: "previa",
+        total: aCriar.length,
+        porGrupo: Array.from(resumo.entries()).map(([grupo, quantidade]) => ({ grupo, quantidade })),
+      });
+      return;
+    }
+
+    if (aCriar.length > 0) {
+      await prisma.sessionRecord.createMany({ data: aCriar });
+    }
+
+    await logAccess({
+      actor: actorOf(session),
+      action: "GERACAO_DE_PRONTUARIOS_DE_GRUPO",
+      resource: `${aCriar.length} registro(s)`,
+      ip: clientIp(req),
+    });
+
+    res.json({
+      modo: "aplicado",
+      criados: aCriar.length,
+      porGrupo: Array.from(resumo.entries()).map(([grupo, quantidade]) => ({ grupo, quantidade })),
     });
   })
 );

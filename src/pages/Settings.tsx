@@ -72,13 +72,15 @@ function ConfigManager({ title, type, items, onAdd, onUpdate }: {
 }
 
 export default function Settings() {
-  const { config, addConfigItem, updateConfigItem, currentUser, limparProntuariosVazios, realinharAutoria, removerDuplicatasDeGrupo } = useStore();
+  const { config, addConfigItem, updateConfigItem, currentUser, limparProntuariosVazios, realinharAutoria, removerDuplicatasDeGrupo, gerarProntuariosDeGrupo } = useStore();
   const [limpando, setLimpando] = useState(false);
   const [resultadoLimpeza, setResultadoLimpeza] = useState<string>("");
   const [previaAutoria, setPreviaAutoria] = useState<any>(null);
   const [autoriaOcupado, setAutoriaOcupado] = useState(false);
   const [dupGrupo, setDupGrupo] = useState<any>(null);
   const [dupOcupado, setDupOcupado] = useState(false);
+  const [gerarGrupo, setGerarGrupo] = useState<any>(null);
+  const [gerarOcupado, setGerarOcupado] = useState(false);
 
   const executarLimpeza = async () => {
     setLimpando(true);
@@ -95,6 +97,12 @@ export default function Settings() {
     } finally {
       setLimpando(false);
     }
+  };
+
+  const executarGeracao = async (aplicar: boolean) => {
+    setGerarOcupado(true);
+    try { setGerarGrupo(await gerarProntuariosDeGrupo(aplicar)); }
+    finally { setGerarOcupado(false); }
   };
 
   const verDuplicatas = async (aplicar: boolean) => {
@@ -169,6 +177,58 @@ export default function Settings() {
         {resultadoLimpeza && (
           <p className="mt-3 text-sm font-semibold text-gray-700">{resultadoLimpeza}</p>
         )}
+
+        {/* Geração de prontuários de grupo faltantes */}
+        <div className="border-t border-gray-100 mt-6 pt-6">
+          <h3 className="font-bold text-gray-900">Gerar prontuários faltantes dos grupos</h3>
+          <p className="text-sm text-gray-500 mt-1 mb-4">
+            Cria a documentação individual de cada integrante nos encontros de grupo já agendados —
+            é ela que permite registrar a presença ou a falta de cada participante. Use também
+            depois de <strong>incluir alguém num grupo</strong>, para gerar os registros dos
+            encontros já marcados.
+          </p>
+          <div className="flex flex-wrap gap-2">
+            <button
+              onClick={() => executarGeracao(false)}
+              disabled={gerarOcupado}
+              className="bg-white border border-gray-300 hover:bg-gray-50 disabled:opacity-60 text-gray-800 font-bold px-5 py-3 rounded-xl text-sm transition-colors"
+            >
+              {gerarOcupado ? "Verificando..." : "Ver o que está faltando"}
+            </button>
+            {gerarGrupo?.modo === "previa" && gerarGrupo.total > 0 && (
+              <button
+                onClick={() => executarGeracao(true)}
+                disabled={gerarOcupado}
+                className="bg-purple-600 hover:bg-purple-700 disabled:opacity-60 text-white font-bold px-5 py-3 rounded-xl text-sm transition-colors"
+              >
+                Gerar {gerarGrupo.total} prontuário(s)
+              </button>
+            )}
+          </div>
+          {gerarGrupo && (
+            <div className="mt-3 text-sm text-gray-700">
+              {gerarGrupo.modo === "previa" && gerarGrupo.total === 0 ? (
+                <p className="font-semibold text-emerald-700">
+                  Nenhum prontuário faltando. Todos os encontros de grupo já têm a documentação
+                  individual dos integrantes.
+                </p>
+              ) : (
+                <>
+                  <p className="font-semibold mb-1">
+                    {gerarGrupo.modo === "aplicado"
+                      ? `${gerarGrupo.criados} prontuário(s) criado(s):`
+                      : `${gerarGrupo.total} prontuário(s) seriam criados:`}
+                  </p>
+                  <ul className="text-xs text-gray-600 space-y-0.5">
+                    {gerarGrupo.porGrupo?.map((g: any, i: number) => (
+                      <li key={i}>· <strong>{g.grupo}</strong>: {g.quantidade}</li>
+                    ))}
+                  </ul>
+                </>
+              )}
+            </div>
+          )}
+        </div>
 
         {/* Duplicatas de grupo */}
         <div className="border-t border-gray-100 mt-6 pt-6">
