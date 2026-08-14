@@ -414,6 +414,15 @@ model GroupMember {
 
 model GroupRecord {
   id          String   @id @default(uuid())
+
+  /**
+   * Agendamento que originou este registro.
+   *
+   * Sem este vínculo, apagar o encontro da agenda deixava o registro de grupo
+   * órfão — e nenhuma rotina de limpeza conseguia encontrá-lo, porque não
+   * havia como saber a qual agendamento ele pertencia.
+   */
+  appointmentId String?
   contentEnc  String
   sessionDate DateTime
   groupId     String

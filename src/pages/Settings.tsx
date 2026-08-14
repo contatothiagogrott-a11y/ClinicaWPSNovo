@@ -72,11 +72,13 @@ function ConfigManager({ title, type, items, onAdd, onUpdate }: {
 }
 
 export default function Settings() {
-  const { config, addConfigItem, updateConfigItem, currentUser, limparProntuariosVazios, realinharAutoria } = useStore();
+  const { config, addConfigItem, updateConfigItem, currentUser, limparProntuariosVazios, realinharAutoria, removerDuplicatasDeGrupo } = useStore();
   const [limpando, setLimpando] = useState(false);
   const [resultadoLimpeza, setResultadoLimpeza] = useState<string>("");
   const [previaAutoria, setPreviaAutoria] = useState<any>(null);
   const [autoriaOcupado, setAutoriaOcupado] = useState(false);
+  const [dupGrupo, setDupGrupo] = useState<any>(null);
+  const [dupOcupado, setDupOcupado] = useState(false);
 
   const executarLimpeza = async () => {
     setLimpando(true);
@@ -93,6 +95,12 @@ export default function Settings() {
     } finally {
       setLimpando(false);
     }
+  };
+
+  const verDuplicatas = async (aplicar: boolean) => {
+    setDupOcupado(true);
+    try { setDupGrupo(await removerDuplicatasDeGrupo(aplicar)); }
+    finally { setDupOcupado(false); }
   };
 
   const verPrevia = async () => {
@@ -161,6 +169,51 @@ export default function Settings() {
         {resultadoLimpeza && (
           <p className="mt-3 text-sm font-semibold text-gray-700">{resultadoLimpeza}</p>
         )}
+
+        {/* Duplicatas de grupo */}
+        <div className="border-t border-gray-100 mt-6 pt-6">
+          <h3 className="font-bold text-gray-900">Remover prontuários de grupo duplicados</h3>
+          <p className="text-sm text-gray-500 mt-1 mb-4">
+            O prontuário do encontro de grupo estava sendo criado duas vezes — uma pelo
+            agendamento e outra ao finalizar o registro coletivo. Esta rotina remove as
+            repetições (mesma pessoa, mesmo grupo, mesma data), preservando sempre o registro
+            que tem conteúdo escrito.
+          </p>
+          <div className="flex flex-wrap gap-2">
+            <button
+              onClick={() => verDuplicatas(false)}
+              disabled={dupOcupado}
+              className="bg-white border border-gray-300 hover:bg-gray-50 disabled:opacity-60 text-gray-800 font-bold px-5 py-3 rounded-xl text-sm transition-colors"
+            >
+              {dupOcupado ? "Verificando..." : "Ver duplicatas encontradas"}
+            </button>
+            {dupGrupo?.modo === "previa" &&
+              (dupGrupo.prontuariosIndividuais > 0 || dupGrupo.registrosColetivos > 0) && (
+              <button
+                onClick={() => verDuplicatas(true)}
+                disabled={dupOcupado}
+                className="bg-gray-900 hover:bg-gray-800 disabled:opacity-60 text-white font-bold px-5 py-3 rounded-xl text-sm transition-colors"
+              >
+                Remover duplicatas
+              </button>
+            )}
+          </div>
+          {dupGrupo && (
+            <div className="mt-3 text-sm text-gray-700 space-y-1">
+              <p>
+                <strong>{dupGrupo.prontuariosIndividuais}</strong> prontuário(s) individual(is) e{" "}
+                <strong>{dupGrupo.registrosColetivos}</strong> registro(s) coletivo(s){" "}
+                {dupGrupo.modo === "aplicado" ? "removido(s)." : "seriam removidos."}
+              </p>
+              {dupGrupo.conflitosParaConferencia > 0 && (
+                <p className="text-amber-700">
+                  {dupGrupo.conflitosParaConferencia} caso(s) com texto escrito em mais de um
+                  registro — não removidos, precisam de conferência humana.
+                </p>
+              )}
+            </div>
+          )}
+        </div>
 
         {/* Realinhamento de autoria */}
         <div className="border-t border-gray-100 mt-6 pt-6">

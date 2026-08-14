@@ -1722,17 +1722,69 @@ app.post(
         },
       });
     } else if (appt.groupId && geraRegistroDeGrupo) {
-      const group = await prisma.group.findUnique({ where: { id: appt.groupId } });
+      const group = await prisma.group.findUnique({
+        where: { id: appt.groupId },
+        include: { members: true },
+      });
       if (group) {
-        await prisma.groupRecord.create({
-          data: {
-            groupId: group.id,
-            authorId: appt.psicoId,
-            sessionDate: parseLocalDateTime(b.date, b.time) ?? new Date(),
-            contentEnc: "",
-            isDraft: true,
-          },
+        const dataDoEncontro = parseLocalDateTime(b.date, b.time) ?? new Date();
+
+        /**
+         * Evita duplicar: se já existe registro para este grupo nesta data,
+         * não cria outro. Reagendar ou recriar o encontro não deve gerar um
+         * segundo prontuário do mesmo dia.
+         */
+        const jaExiste = await prisma.groupRecord.findFirst({
+          where: { groupId: group.id, sessionDate: dataDoEncontro },
+          select: { id: true },
         });
+
+        if (!jaExiste) {
+          await prisma.groupRecord.create({
+            data: {
+              groupId: group.id,
+              authorId: appt.psicoId,
+              sessionDate: dataDoEncontro,
+              contentEnc: "",
+              isDraft: true,
+              appointmentId: appt.id,
+            },
+          });
+
+          /**
+           * DOCUMENTAÇÃO INDIVIDUAL DE CADA INTEGRANTE.
+           *
+           * O art. 5º da Resolução CFP nº 001/2009 exige, além do registro do
+           * grupo, documentação individual correspondente a cada integrante
+           * de grupo não eventual.
+           *
+           * Antes isso só acontecia quando o registro coletivo era
+           * FINALIZADO — então o prontuário individual do dia simplesmente não
+           * existia enquanto o encontro não fosse fechado, e quando era, vinha
+           * duplicado com o que a agenda já tinha criado.
+           */
+          for (const membro of group.members) {
+            const duplicado = await prisma.sessionRecord.findFirst({
+              where: { clientId: membro.clientId, groupId: group.id, date: dataDoEncontro },
+              select: { id: true },
+            });
+            if (duplicado) continue;
+
+            await prisma.sessionRecord.create({
+              data: {
+                clientId: membro.clientId,
+                psicoId: appt.psicoId,
+                date: dataDoEncontro,
+                notesEnc: "",
+                isDraft: true,
+                status: "PENDENTE",
+                groupId: group.id,
+                appointmentId: appt.id,
+                sessionType: "ATENDIMENTO",
+              },
+            });
+          }
+        }
       }
     }
 
@@ -1933,9 +1985,31 @@ app.delete(
       await prisma.sessionRecord.deleteMany({ where: { id: { in: removiveis } } });
     }
 
+    /**
+     * Registros de GRUPO do mesmo agendamento.
+     *
+     * Estes não eram tocados por nenhuma rotina: apagar o encontro da agenda
+     * deixava o prontuário coletivo para trás, e ao reagendar surgia um
+     * segundo registro para o mesmo grupo — daí as sessões duplicadas.
+     */
+    const gruposVazios = await prisma.groupRecord.findMany({
+      where: { appointmentId: { in: idsParaApagar }, isDraft: true },
+    });
+    const gruposRemoviveis = gruposVazios
+      .filter((g: any) => !decryptField(g.contentEnc))
+      .map((g: any) => g.id);
+    if (gruposRemoviveis.length > 0) {
+      await prisma.groupRecord.deleteMany({ where: { id: { in: gruposRemoviveis } } });
+    }
+
     await prisma.appointment.deleteMany({ where: { id: { in: idsParaApagar } } });
 
-    res.json({ ok: true, agendamentosRemovidos: idsParaApagar.length, prontuariosRemovidos: removiveis.length });
+    res.json({
+      ok: true,
+      agendamentosRemovidos: idsParaApagar.length,
+      prontuariosRemovidos: removiveis.length,
+      registrosDeGrupoRemovidos: gruposRemoviveis.length,
+    });
   })
 );
 
@@ -2123,12 +2197,27 @@ app.post(
 
       const group = await prisma.group.findUnique({ where: { id: b.groupId }, include: { members: true } });
       if (group) {
+        const dataDoEncontro = parseLocalDateTime(String(b.sessionDate), "12:00") ?? sessionDate;
         for (const member of group.members) {
+          /**
+           * SEGUNDA FONTE DE DUPLICATAS.
+           *
+           * O agendamento do grupo já cria o prontuário individual de cada
+           * integrante. Ao finalizar o registro coletivo, este trecho criava
+           * TUDO DE NOVO, sem verificar — gerando um segundo conjunto de
+           * prontuários para o mesmo encontro.
+           */
+          const jaExiste = await prisma.sessionRecord.findFirst({
+            where: { clientId: member.clientId, groupId: group.id, date: dataDoEncontro },
+            select: { id: true },
+          });
+          if (jaExiste) continue;
+
           await prisma.sessionRecord.create({
             data: {
               clientId: member.clientId,
               psicoId: record.authorId,
-              date: parseLocalDateTime(String(b.sessionDate), "12:00") ?? sessionDate,
+              date: dataDoEncontro,
               notesEnc: "",
               isDraft: true,
               status: "PENDENTE",
@@ -3059,8 +3148,28 @@ app.post(
       })
       .map((s: any) => s.id);
 
+    /**
+     * Registros de GRUPO vazios: órfãos, futuros ou de encontros que não
+     * ocorreram. Estavam fora da limpeza, então o botão de Configurações não
+     * conseguia remover as duplicatas de grupo.
+     */
+    const registrosDeGrupo = await prisma.groupRecord.findMany({ where: { isDraft: true } });
+    const gruposParaRemover = registrosDeGrupo
+      .filter((g: any) => {
+        if (decryptField(g.contentEnc)) return false;
+        const orfao = !!g.appointmentId && !agendamentosExistentes.has(g.appointmentId);
+        const futuro = new Date(g.sessionDate) > agora;
+        const naoOcorreu = !!g.appointmentId && naoAconteceram.has(g.appointmentId);
+        return orfao || futuro || naoOcorreu;
+      })
+      .map((g: any) => g.id);
+
+    if (gruposParaRemover.length > 0) {
+      await prisma.groupRecord.deleteMany({ where: { id: { in: gruposParaRemover } } });
+    }
+
     if (idsParaRemover.length === 0) {
-      res.json({ removidos: 0 });
+      res.json({ removidos: gruposParaRemover.length, registrosDeGrupo: gruposParaRemover.length });
       return;
     }
 
@@ -3068,7 +3177,8 @@ app.post(
       where: { id: { in: idsParaRemover } },
     });
     res.json({
-      removidos: result.count,
+      removidos: result.count + gruposParaRemover.length,
+      registrosDeGrupo: gruposParaRemover.length,
       observacao:
         "Removidos rascunhos vazios: órfãos, de sessões futuras e de encontros cancelados ou reagendados. Pendências de atendimentos realizados foram preservadas.",
     });
@@ -3158,6 +3268,97 @@ app.post(
     });
 
     res.json({ modo: "aplicado", corrigidos });
+  })
+);
+
+/**
+ * Remove DUPLICATAS já existentes.
+ *
+ * Duas fontes geraram registros repetidos: o agendamento do grupo e a
+ * finalização do registro coletivo criavam, cada um, o prontuário individual
+ * do mesmo encontro.
+ *
+ * Critério: mesma pessoa, mesmo grupo, mesma data. Mantém o registro que TEM
+ * conteúdo escrito; se nenhum tiver, mantém o mais antigo. Nunca remove dois
+ * registros preenchidos — nesse caso não é duplicata, e a decisão é humana.
+ */
+app.post(
+  "/api/manutencao/remover-duplicatas-de-grupo",
+  asyncHandler(async (req, res) => {
+    const session = requireSession(req, res, ["SUPERVISOR", "ADMIN"]);
+    if (!session) return;
+    const aplicar = req.query.aplicar === "true";
+
+    const registros = await prisma.sessionRecord.findMany({
+      where: { NOT: { groupId: null } },
+      orderBy: { createdAt: "asc" },
+    });
+
+    const porChave = new Map<string, any[]>();
+    for (const r of registros) {
+      const chave = `${r.clientId}|${r.groupId}|${toDateOnlyBRT(r.date)}`;
+      porChave.set(chave, [...(porChave.get(chave) ?? []), r]);
+    }
+
+    const remover: string[] = [];
+    let conflitos = 0;
+
+    for (const [, grupo] of porChave) {
+      if (grupo.length < 2) continue;
+      const comConteudo = grupo.filter((r: any) => !!decryptField(r.notesEnc));
+
+      if (comConteudo.length > 1) {
+        // Dois registros preenchidos: não é duplicata técnica. Deixa para
+        // conferência humana.
+        conflitos++;
+        continue;
+      }
+      const manter = comConteudo[0] ?? grupo[0];
+      remover.push(...grupo.filter((r: any) => r.id !== manter.id).map((r: any) => r.id));
+    }
+
+    // Registros COLETIVOS duplicados (mesmo grupo, mesma data).
+    const coletivos = await prisma.groupRecord.findMany({ orderBy: { createdAt: "asc" } });
+    const porChaveColetiva = new Map<string, any[]>();
+    for (const g of coletivos) {
+      const chave = `${g.groupId}|${toDateOnlyBRT(g.sessionDate)}`;
+      porChaveColetiva.set(chave, [...(porChaveColetiva.get(chave) ?? []), g]);
+    }
+    const removerColetivos: string[] = [];
+    for (const [, grupo] of porChaveColetiva) {
+      if (grupo.length < 2) continue;
+      const comConteudo = grupo.filter((g: any) => !!decryptField(g.contentEnc));
+      if (comConteudo.length > 1) { conflitos++; continue; }
+      const manter = comConteudo[0] ?? grupo[0];
+      removerColetivos.push(...grupo.filter((g: any) => g.id !== manter.id).map((g: any) => g.id));
+    }
+
+    if (!aplicar) {
+      res.json({
+        modo: "previa",
+        prontuariosIndividuais: remover.length,
+        registrosColetivos: removerColetivos.length,
+        conflitosParaConferencia: conflitos,
+      });
+      return;
+    }
+
+    if (remover.length) await prisma.sessionRecord.deleteMany({ where: { id: { in: remover } } });
+    if (removerColetivos.length) await prisma.groupRecord.deleteMany({ where: { id: { in: removerColetivos } } });
+
+    await logAccess({
+      actor: actorOf(session),
+      action: "REMOCAO_DE_DUPLICATAS_DE_GRUPO",
+      resource: `${remover.length + removerColetivos.length} registro(s)`,
+      ip: clientIp(req),
+    });
+
+    res.json({
+      modo: "aplicado",
+      prontuariosIndividuais: remover.length,
+      registrosColetivos: removerColetivos.length,
+      conflitosParaConferencia: conflitos,
+    });
   })
 );
 
