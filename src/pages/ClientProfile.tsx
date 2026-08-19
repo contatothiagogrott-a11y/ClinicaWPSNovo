@@ -1653,7 +1653,31 @@ function ProntuarioView({ clientId }: { clientId: string }) {
                        <Lock size={10} /> Conteúdo restrito
                      </span>
                    )}
-                   {s.attendance && s.attendance !== "PRESENTE" && <span className="bg-red-100 text-red-700 text-xs font-bold px-2 py-0.5 rounded-md">{s.attendance === "FALTA_JUSTIFICADA" ? "Falta Justificada" : "Falta Injustificada"}</span>}
+                   {/*
+                     BUG CORRIGIDO: esta condição assumia que qualquer valor
+                     diferente de "PRESENTE" era falta — mas `attendance` tem
+                     DUAS convenções de nomes coexistindo no sistema: a do
+                     formulário de redação manual do prontuário ("PRESENTE" /
+                     "FALTA_NAO_JUSTIFICADA") e a do agendamento na agenda
+                     ("COMPARECEU" / "FALTA_INJUSTIFICADA" / "CANCELADO_..." /
+                     "REAGENDADO" / "PENDENTE"), que passou a propagar também
+                     para o prontuário quando a presença é confirmada na
+                     agenda. Todo registro com `attendance: "COMPARECEU"` —
+                     ou seja, todo paciente que COMPARECEU — caía no "else" e
+                     era rotulado "Falta Injustificada". Agora só rotula quem
+                     de fato faltou, reconhecendo as duas convenções.
+                   */}
+                   {(() => {
+                     const rotulosDeFalta: Record<string, string> = {
+                       FALTA_JUSTIFICADA: "Falta Justificada",
+                       FALTA_NAO_JUSTIFICADA: "Falta Injustificada",
+                       FALTA_INJUSTIFICADA: "Falta Injustificada",
+                     };
+                     const rotulo = s.attendance ? rotulosDeFalta[s.attendance] : undefined;
+                     return rotulo ? (
+                       <span className="bg-red-100 text-red-700 text-xs font-bold px-2 py-0.5 rounded-md">{rotulo}</span>
+                     ) : null;
+                   })()}
                    {s.isDraft && <span className="bg-amber-200 text-amber-800 text-[10px] uppercase tracking-wider font-bold px-2 py-0.5 rounded-md">Pendente</span>}
                  </div>
                  <div className="flex items-center gap-2">
