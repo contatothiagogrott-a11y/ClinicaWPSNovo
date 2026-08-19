@@ -1427,6 +1427,25 @@ function ProntuarioView({ clientId }: { clientId: string }) {
 
    const clientSessions = sessions.filter(s => s.clientId === clientId).sort((a,b) => new Date(b.date).getTime() - new Date(a.date).getTime());
 
+   /**
+    * NUMERAÇÃO DO ATENDIMENTO INDIVIDUAL — série própria, separada da
+    * numeração de grupo.
+    *
+    * Antes, o título "Sessão N" contava atendimento individual e sessão de
+    * grupo juntos, na mesma sequência (posição na lista ordenada por data).
+    * Isso misturava as duas contagens: a 5ª entrada da lista podia ser, na
+    * prática, a 2ª sessão individual do paciente, porque três sessões de
+    * grupo entraram no meio.
+    *
+    * A sessão de grupo já tem numeração própria (`groupSessionNumber`,
+    * atribuída no agendamento do grupo). Aqui calculamos o equivalente para
+    * o atendimento individual, contando só os registros SEM `groupId`.
+    */
+   const individualSessionsOrdered = clientSessions.filter(s => !s.groupId);
+   const individualNumberById = new Map(
+     individualSessionsOrdered.map((s, idx) => [s.id, individualSessionsOrdered.length - idx])
+   );
+
    const handleSave = () => {
      if(!notes.trim()) return;
      /**
@@ -1579,18 +1598,43 @@ function ProntuarioView({ clientId }: { clientId: string }) {
        )}
 
        <div className="space-y-6">
-         {clientSessions.map((s, i) => {
+         {clientSessions.map((s) => {
            const group = s.groupId ? groups.find(g => g.id === s.groupId) : null;
            const isEditingThis = editingRecordId === s.id;
+
+           /**
+            * TÍTULO DO PRONTUÁRIO.
+            *
+            * Formato definido com o setor: atendimento individual e sessão de
+            * grupo usam rótulos e numerações distintos, para nunca se
+            * confundirem na leitura — "Prontuário Individual Sessão 01" é o
+            * atendimento individual; "Prontuário Individual do Grupo Sessão
+            * 01" é o registro do integrante naquele encontro do grupo.
+            */
+           const autorDaSessao = users.find(u => u.id === s.psicoId)?.name ?? "—";
+           const numeroBruto = group ? s.groupSessionNumber : individualNumberById.get(s.id);
+           const numeroFormatado = typeof numeroBruto === "number" ? String(numeroBruto).padStart(2, "0") : "?";
+           const tituloSessao = group
+             ? `Prontuário Individual do Grupo Sessão ${numeroFormatado} - ${autorDaSessao}`
+             : `Prontuário Individual Sessão ${numeroFormatado} - ${autorDaSessao}`;
 
            return (
              <div key={s.id} className={cn("p-6 rounded-3xl border", s.isDraft ? "bg-amber-50 border-amber-100" : "bg-gray-50 border-gray-100")}>
                <div className="flex items-center justify-between mb-4 pb-4 border-b border-gray-200 border-dashed">
                  <div className="flex items-center gap-3 flex-wrap">
                    <h4 className={cn("font-bold", s.isDraft ? "text-amber-900" : "text-gray-900")}>
-                      Sessão {clientSessions.length - i}
+                      {tituloSessao}
                    </h4>
-                   {group && <span className="bg-purple-100 text-purple-700 text-xs font-bold px-2 py-0.5 rounded-md">Grupo: {group.name}</span>}
+                   {/*
+                     Selo do grupo (nome + nº de protocolo). A numeração já
+                     está no título acima — não repete aqui.
+                   */}
+                   {group && (
+                     <span className="bg-purple-100 text-purple-700 text-xs font-bold px-2 py-0.5 rounded-md">
+                       Grupo: {group.name}
+                       {group.protocolNumber ? ` (${group.protocolNumber})` : ""}
+                     </span>
+                   )}
                    {/* Natureza do registro, quando não é atendimento comum. */}
                    {s.sessionType && s.sessionType !== "ATENDIMENTO" && (
                      <span className="bg-sky-100 text-sky-700 text-xs font-bold px-2 py-0.5 rounded-md">

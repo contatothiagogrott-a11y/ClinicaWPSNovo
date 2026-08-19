@@ -93,6 +93,18 @@ interface StoreContextType extends StoreState {
   removerDuplicatasDeGrupo: (aplicar: boolean) => Promise<any>;
   /** Gera os prontuários individuais faltantes nos encontros de grupo. */
   gerarProntuariosDeGrupo: (aplicar: boolean) => Promise<any>;
+  /** Gera prontuários de atendimento individual faltantes e corrige datas desalinhadas. */
+  gerarProntuariosDeAtendimento: (aplicar: boolean) => Promise<any>;
+  /** Recalcula o Controle de Sessões, excluindo sessão de grupo do pacote individual. */
+  recalcularSessoesConcluidas: (aplicar: boolean) => Promise<any>;
+  /** Registra o desligamento de um integrante do grupo (não apaga o vínculo). */
+  desligarIntegrante: (
+    groupId: string,
+    clientId: string,
+    dados: { exitOutcome: string; exitReason: string; exitedAt: string }
+  ) => Promise<void>;
+  /** Corrige manualmente o número do prontuário do grupo (formato G000). */
+  atualizarNumeroDoGrupo: (groupId: string, protocolNumber: string | null) => Promise<void>;
   realinharAutoria: (aplicar: boolean) => Promise<{
     modo: string; total?: number; corrigidos?: number;
     exemplos?: Array<{ data: string; autorAtual: string; autorCorreto: string }>;
@@ -480,6 +492,16 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     return removidos;
   };
 
+  const desligarIntegrante: StoreContextType["desligarIntegrante"] = async (groupId, clientId, dados) => {
+    await api.post(`/api/groups/${groupId}/members/${clientId}/exit`, dados);
+    await refreshAll();
+  };
+
+  const atualizarNumeroDoGrupo: StoreContextType["atualizarNumeroDoGrupo"] = async (groupId, protocolNumber) => {
+    await api.patch(`/api/groups/${groupId}/protocol-number`, { protocolNumber });
+    await refreshAll();
+  };
+
   const gerarProntuariosDeGrupo: StoreContextType["gerarProntuariosDeGrupo"] = async (aplicar) => {
     const r = await api.post<any>(`/api/manutencao/gerar-prontuarios-de-grupo?aplicar=${aplicar}`);
     if (aplicar) await refreshAll();
@@ -494,6 +516,18 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
 
   const realinharAutoria: StoreContextType["realinharAutoria"] = async (aplicar) => {
     const r = await api.post<any>(`/api/manutencao/realinhar-autoria?aplicar=${aplicar}`);
+    if (aplicar) await refreshAll();
+    return r;
+  };
+
+  const gerarProntuariosDeAtendimento: StoreContextType["gerarProntuariosDeAtendimento"] = async (aplicar) => {
+    const r = await api.post<any>(`/api/manutencao/gerar-prontuarios-de-atendimento?aplicar=${aplicar}`);
+    if (aplicar) await refreshAll();
+    return r;
+  };
+
+  const recalcularSessoesConcluidas: StoreContextType["recalcularSessoesConcluidas"] = async (aplicar) => {
+    const r = await api.post<any>(`/api/manutencao/recalcular-sessoes-concluidas?aplicar=${aplicar}`);
     if (aplicar) await refreshAll();
     return r;
   };
@@ -616,6 +650,10 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
         realinharAutoria,
         removerDuplicatasDeGrupo,
         gerarProntuariosDeGrupo,
+        gerarProntuariosDeAtendimento,
+        recalcularSessoesConcluidas,
+        desligarIntegrante,
+        atualizarNumeroDoGrupo,
         saveGroupClientNote,
       }}
     >

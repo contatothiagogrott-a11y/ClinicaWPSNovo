@@ -348,6 +348,15 @@ model SessionRecord {
   groupId       String?
   appointmentId String?
   sessionType   String?  @default("ATENDIMENTO")
+
+  /**
+   * Número do encontro DENTRO do grupo (1º, 2º, 3º encontro...).
+   *
+   * Existe para que o prontuário individual do integrante identifique de qual
+   * sessão do grupo aquele registro trata — sem se confundir com a contagem
+   * das sessões de atendimento individual, que é outra série.
+   */
+  groupSessionNumber Int?
   attendance    String?
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
@@ -403,13 +412,35 @@ model Group {
   clientNotes    GroupClientNote[]
 }
 
+/**
+ * Vínculo de um integrante com o grupo.
+ *
+ * Antes era só presença ou ausência na lista: ao remover alguém, o vínculo
+ * desaparecia e não restava registro de que a pessoa esteve no grupo, quando
+ * entrou, quando saiu ou por quê.
+ *
+ * Isso é problema de registro documental: o prontuário precisa refletir o
+ * percurso do paciente no serviço (Resolução CFP nº 001/2009). Agora o
+ * desligamento é uma ANOTAÇÃO no vínculo, não um apagamento — a pessoa
+ * continua na história do grupo, com data e motivo.
+ */
 model GroupMember {
   groupId  String
   group    Group  @relation(fields: [groupId], references: [id], onDelete: Cascade)
   clientId String
   client   Client @relation(fields: [clientId], references: [id], onDelete: Cascade)
 
+  /** Data de ingresso — permite incluir alguém que entrou depois do início. */
+  joinedAt      DateTime  @default(now())
+
+  /** Preenchidos no desligamento; nulos enquanto o vínculo estiver ativo. */
+  exitedAt      DateTime?
+  exitReason    String?
+  /** Desfecho do vínculo, em terminologia clínica (ver EXIT_REASONS na API). */
+  exitOutcome   String?
+
   @@id([groupId, clientId])
+  @@index([groupId, exitedAt])
 }
 
 model GroupRecord {

@@ -186,6 +186,7 @@ export function mapSession(s: any, viewerId?: string) {
     groupId: s.groupId ?? undefined,
     appointmentId: s.appointmentId ?? undefined,
     sessionType: s.sessionType ?? "ATENDIMENTO",
+    groupSessionNumber: s.groupSessionNumber ?? undefined,
     attendance: s.attendance ?? undefined,
     createdAt: toISO(s.createdAt),
     updatedAt: toISO(s.updatedAt),
@@ -217,7 +218,20 @@ export function mapGroup(g: any) {
     psychologistId: g.psychologistId,
     coPsychologistId: g.coPsychologistId ?? undefined,
     protocolNumber: g.protocolNumber ?? undefined,
-    memberIds: (g.members ?? []).map((m: any) => m.clientId),
+    /**
+     * memberIds traz apenas os vínculos ATIVOS — é o que as telas usam para
+     * saber quem participa hoje.
+     * `membros` traz o histórico completo, incluindo quem já foi desligado,
+     * com data e desfecho. Registro documental não se apaga.
+     */
+    memberIds: (g.members ?? []).filter((m: any) => !m.exitedAt).map((m: any) => m.clientId),
+    membros: (g.members ?? []).map((m: any) => ({
+      clientId: m.clientId,
+      joinedAt: toISO(m.joinedAt),
+      exitedAt: m.exitedAt ? toISO(m.exitedAt) : undefined,
+      exitOutcome: m.exitOutcome ?? undefined,
+      exitReason: m.exitReason ?? undefined,
+    })),
   };
 }
 
@@ -324,6 +338,7 @@ export function mapSessionMeta(s: any) {
     groupId: s.groupId ?? undefined,
     appointmentId: s.appointmentId ?? undefined,
     sessionType: s.sessionType ?? "ATENDIMENTO",
+    groupSessionNumber: s.groupSessionNumber ?? undefined,
     attendance: s.attendance ?? undefined,
     createdAt: toISO(s.createdAt),
     updatedAt: toISO(s.updatedAt),

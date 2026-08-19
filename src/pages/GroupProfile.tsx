@@ -8,11 +8,25 @@ import { ptBR } from "date-fns/locale";
 import { clinicians } from "../lib/roles";
 import { openPdfInNewTab } from "../lib/pdfGenerator";
 import { buildProntuarioGrupoDocDefinition } from "../lib/pdfProntuarioGrupo";
+import GroupMemberExitModal from "../components/GroupMemberExitModal";
+import { formatDateBR, todayDateOnly } from "../lib/datetime";
+
+/** Rótulos dos desfechos, para exibir o histórico de vínculos encerrados. */
+const EXIT_LABELS: Record<string, string> = {
+  ALTA_GRUPAL: "Alta do processo grupal",
+  ENCAMINHAMENTO: "Encaminhamento para outra modalidade",
+  ABANDONO: "Abandono do processo",
+  DESISTENCIA: "Desistência manifestada",
+  INCOMPATIBILIDADE: "Incompatibilidade com o grupo",
+  IMPEDIMENTO: "Impedimento externo",
+  ENCERRAMENTO_GRUPO: "Encerramento do grupo",
+  OUTRO: "Outro motivo",
+};
 
 export default function GroupProfile() {
   const { id } = useParams();
   const navigate = useNavigate();
-  const { groups, users, clients, currentUser, updateGroup, groupRecords, addGroupRecord, updateClient } = useStore();
+  const { groups, users, clients, currentUser, updateGroup, groupRecords, addGroupRecord, updateClient, atualizarNumeroDoGrupo, sessions } = useStore();
   
   const group = groups.find(g => g.id === id);
   const [activeTab, setActiveTab] = useState<"INFO" | "MEMBROS" | "PRONTUARIO">("INFO");
@@ -29,6 +43,12 @@ export default function GroupProfile() {
   const [attendanceDraft, setAttendanceDraft] = useState<Record<string, string>>({});
 
   if (!group || !editData) return <div className="p-8 text-center">Grupo não encontrado.</div>;
+
+  const [membroSaindo, setMembroSaindo] = useState<string | null>(null);
+  const [dataDeIngresso, setDataDeIngresso] = useState(todayDateOnly());
+  const [editandoNumero, setEditandoNumero] = useState(false);
+  const [numeroDraft, setNumeroDraft] = useState("");
+  const [erroNumero, setErroNumero] = useState("");
 
   const psicos = clinicians(users);
   const psychologist = users.find(u => u.id === group.psychologistId);
@@ -61,18 +81,23 @@ export default function GroupProfile() {
     setIsEditingInfo(false);
   };
 
+  /**
+   * Inclusão de integrante, com DATA DE INGRESSO.
+   * Grupos recebem gente depois do início: a data registra desde quando a
+   * pessoa participa, e é a partir dela que os encontros passam a contar
+   * para ela.
+   */
   const handleAddMember = () => {
      if (!selectedClientToAdd) return;
      if (!group.memberIds.includes(selectedClientToAdd)) {
-        updateGroup(group.id, { memberIds: [...group.memberIds, selectedClientToAdd] });
+        updateGroup(group.id, {
+          memberIds: [...group.memberIds, selectedClientToAdd],
+          joinedAt: dataDeIngresso,
+        } as any);
         updateClient(selectedClientToAdd, { status: "EM_ATENDIMENTO" }, `Inserido no grupo: ${group.name} e movido para Em Atendimento por ${currentUser?.name}`);
      }
      setSelectedClientToAdd("");
      setShowAddMember(false);
-  };
-
-  const handleRemoveMember = (clientId: string) => {
-     updateGroup(group.id, { memberIds: group.memberIds.filter(mid => mid !== clientId) });
   };
 
   const handleSaveRecord = () => {
@@ -115,6 +140,29 @@ export default function GroupProfile() {
     c => !group.memberIds.includes(c.id) && c.status !== "FINALIZADO" && c.status !== "CANCELADO"
   );
   const groupMembers = clients.filter(c => group.memberIds.includes(c.id));
+
+  /**
+   * SESSÕES DE GRUPO REALIZADAS, POR INTEGRANTE — série própria, separada do
+   * Controle de Sessões do atendimento individual (que não conta mais sessão
+   * de grupo, por decisão do setor).
+   *
+   * Calculado sob demanda a partir dos prontuários individuais já existentes
+   * (mesmo critério de "sessão realizada" usado no recálculo do backend:
+   * registro finalizado, com presença que não seja falta/cancelamento/
+   * reagendamento). Cada grupo conta separado — não soma com outro grupo do
+   * mesmo paciente. Não é um contador novo gravado no banco, para não repetir
+   * o problema que gerou o bug original.
+   */
+  const NAO_HOUVE_ENCONTRO = ["FALTA_JUSTIFICADA", "FALTA_INJUSTIFICADA", "CANCELADO_PACIENTE", "CANCELADO_PROFISSIONAL", "REAGENDADO"];
+  const sessoesDesteGrupoPorMembro = new Map<string, number>(
+    groupMembers.map(m => [
+      m.id,
+      sessions.filter(s => s.groupId === group.id && s.clientId === m.id && !s.isDraft && !NAO_HOUVE_ENCONTRO.includes(s.attendance || "")).length,
+    ])
+  );
+
+  /** Integrantes já desligados, para o histórico do vínculo. */
+  const desligados = (group.membros ?? []).filter(m => m.exitedAt);
   const groupRecs = groupRecords.filter(r => r.groupId === group.id).sort((a,b) => new Date(b.sessionDate).getTime() - new Date(a.sessionDate).getTime());
 
   const canManageGroup = currentUser?.role === "SUPERVISOR" || currentUser?.role === "ADMIN" || currentUser?.id === group.psychologistId;
@@ -130,10 +178,42 @@ export default function GroupProfile() {
           <div className="flex items-start justify-between gap-4 flex-wrap">
             <div>
               <h1 className="text-3xl font-bold text-gray-900">{group.name}</h1>
-              <p className="text-sm text-gray-500 mt-1">
-                Prontuário de grupo nº{" "}
-                <strong className="text-gray-700">{group.protocolNumber || "não atribuído"}</strong>
-              </p>
+              {/* Numeração do grupo, corrigível por Supervisor e Administrativo. */}
+              <div className="text-sm text-gray-500 mt-1 flex items-center gap-2 flex-wrap">
+                <span>Prontuário de grupo nº</span>
+                {editandoNumero ? (
+                  <>
+                    <input
+                      value={numeroDraft}
+                      onChange={e => setNumeroDraft(e.target.value.toUpperCase())}
+                      placeholder="G001"
+                      className="w-24 border border-gray-300 rounded-lg px-2 py-1 text-sm font-bold text-gray-800 outline-none focus:border-purple-500"
+                    />
+                    <button
+                      onClick={async () => {
+                        setErroNumero("");
+                        try {
+                          await atualizarNumeroDoGrupo(group.id, numeroDraft || null);
+                          setEditandoNumero(false);
+                        } catch (err: any) { setErroNumero(err?.message || "Não foi possível salvar."); }
+                      }}
+                      className="text-xs font-bold text-white bg-purple-600 hover:bg-purple-700 px-3 py-1.5 rounded-lg"
+                    >Salvar</button>
+                    <button onClick={() => { setEditandoNumero(false); setErroNumero(""); }} className="text-xs font-bold text-gray-500 px-2">Cancelar</button>
+                  </>
+                ) : (
+                  <>
+                    <strong className="text-gray-700">{group.protocolNumber || "não atribuído"}</strong>
+                    {(currentUser?.role === "SUPERVISOR" || currentUser?.role === "ADMIN") && (
+                      <button
+                        onClick={() => { setNumeroDraft(group.protocolNumber || ""); setEditandoNumero(true); }}
+                        className="text-xs font-bold text-purple-600 hover:underline"
+                      >editar</button>
+                    )}
+                  </>
+                )}
+              </div>
+              {erroNumero && <p className="text-xs text-red-600 mt-1">{erroNumero}</p>}
             </div>
             {conduzOGrupo && (
               <button
@@ -238,7 +318,21 @@ export default function GroupProfile() {
                        </select>
                     </div>
                     <div className="flex items-center gap-2 w-full sm:w-auto">
-                       <button onClick={handleAddMember} disabled={!selectedClientToAdd} className="flex-1 sm:flex-none justify-center bg-blue-600 disabled:opacity-50 text-white px-6 py-3 rounded-xl font-bold transition-colors">Adicionar</button>
+                       <div className="mb-3">
+                       <label className="block text-xs font-semibold text-gray-500 mb-1 uppercase tracking-wider">
+                          Data de ingresso no grupo
+                       </label>
+                       <input
+                          type="date"
+                          value={dataDeIngresso}
+                          onChange={e => setDataDeIngresso(e.target.value)}
+                          className="w-full bg-white border border-gray-200 rounded-xl px-4 py-2.5 outline-none font-medium text-sm"
+                       />
+                       <p className="text-[11px] text-gray-500 mt-1">
+                          Para quem entrou depois do início do grupo, informe a data real de ingresso.
+                       </p>
+                    </div>
+                    <button onClick={handleAddMember} disabled={!selectedClientToAdd} className="flex-1 sm:flex-none justify-center bg-blue-600 disabled:opacity-50 text-white px-6 py-3 rounded-xl font-bold transition-colors">Adicionar</button>
                        <button onClick={() => {setShowAddMember(false); setSelectedClientToAdd("");}} className="p-3 text-gray-500 hover:bg-blue-100 rounded-xl"><X size={20}/></button>
                     </div>
                  </div>
@@ -250,12 +344,17 @@ export default function GroupProfile() {
                        <div className="flex items-center gap-3" onClick={() => navigate(`/client/${member.id}`)}>
                           <div className="w-10 h-10 rounded-full bg-white border border-gray-200 flex items-center justify-center text-gray-500 font-bold cursor-pointer">{member.fullName.charAt(0)}</div>
                           <div className="cursor-pointer">
-                             <p className="font-bold text-gray-900 group-hover:text-blue-600">{member.fullName}</p>
+                             <div className="flex items-center gap-2 flex-wrap">
+                               <p className="font-bold text-gray-900 group-hover:text-blue-600">{member.fullName}</p>
+                               <span className="text-[11px] font-bold text-purple-700 bg-purple-100 px-2 py-0.5 rounded-full whitespace-nowrap">
+                                 {sessoesDesteGrupoPorMembro.get(member.id) ?? 0} sessão(ões) neste grupo
+                               </span>
+                             </div>
                              <p className="text-xs text-gray-500">{member.status}</p>
                           </div>
                        </div>
                        {canManageGroup && (
-                          <button onClick={() => handleRemoveMember(member.id)} className="p-2 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-xl transition-colors">
+                          <button onClick={() => setMembroSaindo(member.id)} title="Desligar do grupo (registra data e desfecho)" className="p-2 text-gray-400 hover:text-purple-600 hover:bg-purple-50 rounded-xl transition-colors">
                              <X size={18} />
                           </button>
                        )}
@@ -377,6 +476,47 @@ export default function GroupProfile() {
         )}
 
       </div>
+
+      {/* Histórico de vínculos encerrados */}
+      {desligados.length > 0 && activeTab === "MEMBROS" && (
+        <div className="mt-6 bg-white rounded-3xl border border-gray-100 shadow-sm p-6">
+          <h3 className="font-bold text-gray-900 mb-1">Vínculos encerrados</h3>
+          <p className="text-sm text-gray-500 mb-4">
+            Quem já participou do grupo. O registro é preservado: os prontuários dos encontros
+            de que participaram continuam no histórico de cada paciente.
+          </p>
+          <div className="space-y-2">
+            {desligados.map(m => {
+              const pessoa = clients.find(c => c.id === m.clientId);
+              return (
+                <div key={m.clientId} className="border border-gray-100 rounded-2xl px-4 py-3">
+                  <div className="flex items-baseline justify-between gap-3 flex-wrap">
+                    <span className="font-bold text-gray-800">{pessoa?.fullName ?? "—"}</span>
+                    <span className="text-xs text-gray-500">
+                      {formatDateBR(m.joinedAt)} a {formatDateBR(m.exitedAt!)}
+                    </span>
+                  </div>
+                  {m.exitOutcome && (
+                    <p className="text-xs font-semibold text-purple-700 mt-1">
+                      {EXIT_LABELS[m.exitOutcome] ?? m.exitOutcome}
+                    </p>
+                  )}
+                  {m.exitReason && <p className="text-xs text-gray-600 mt-1">{m.exitReason}</p>}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* Desligamento de integrante */}
+      {membroSaindo && (
+        <GroupMemberExitModal
+          group={group}
+          client={clients.find(c => c.id === membroSaindo)!}
+          onClose={() => setMembroSaindo(null)}
+        />
+      )}
     </div>
   );
 }

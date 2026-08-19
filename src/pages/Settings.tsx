@@ -72,7 +72,7 @@ function ConfigManager({ title, type, items, onAdd, onUpdate }: {
 }
 
 export default function Settings() {
-  const { config, addConfigItem, updateConfigItem, currentUser, limparProntuariosVazios, realinharAutoria, removerDuplicatasDeGrupo, gerarProntuariosDeGrupo } = useStore();
+  const { config, addConfigItem, updateConfigItem, currentUser, limparProntuariosVazios, realinharAutoria, removerDuplicatasDeGrupo, gerarProntuariosDeGrupo, gerarProntuariosDeAtendimento, recalcularSessoesConcluidas } = useStore();
   const [limpando, setLimpando] = useState(false);
   const [resultadoLimpeza, setResultadoLimpeza] = useState<string>("");
   const [previaAutoria, setPreviaAutoria] = useState<any>(null);
@@ -81,6 +81,10 @@ export default function Settings() {
   const [dupOcupado, setDupOcupado] = useState(false);
   const [gerarGrupo, setGerarGrupo] = useState<any>(null);
   const [gerarOcupado, setGerarOcupado] = useState(false);
+  const [gerarAtendimento, setGerarAtendimento] = useState<any>(null);
+  const [gerarAtendimentoOcupado, setGerarAtendimentoOcupado] = useState(false);
+  const [recalculo, setRecalculo] = useState<any>(null);
+  const [recalculoOcupado, setRecalculoOcupado] = useState(false);
 
   const executarLimpeza = async () => {
     setLimpando(true);
@@ -121,6 +125,18 @@ export default function Settings() {
     setAutoriaOcupado(true);
     try { setPreviaAutoria(await realinharAutoria(true)); }
     finally { setAutoriaOcupado(false); }
+  };
+
+  const executarGeracaoAtendimento = async (aplicar: boolean) => {
+    setGerarAtendimentoOcupado(true);
+    try { setGerarAtendimento(await gerarProntuariosDeAtendimento(aplicar)); }
+    finally { setGerarAtendimentoOcupado(false); }
+  };
+
+  const executarRecalculo = async (aplicar: boolean) => {
+    setRecalculoOcupado(true);
+    try { setRecalculo(await recalcularSessoesConcluidas(aplicar)); }
+    finally { setRecalculoOcupado(false); }
   };
 
   if (currentUser?.role !== "SUPERVISOR") {
@@ -333,6 +349,91 @@ export default function Settings() {
           {previaAutoria?.modo === "aplicado" && (
             <p className="mt-3 text-sm font-semibold text-emerald-700">
               {previaAutoria.corrigidos} registro(s) realinhado(s).
+            </p>
+          )}
+        </div>
+
+        {/* Prontuários de atendimento individual faltantes / com data desalinhada */}
+        <div className="border-t border-gray-100 mt-6 pt-6">
+          <h3 className="font-bold text-gray-900">Corrigir prontuários de atendimento individual</h3>
+          <p className="text-sm text-gray-500 mt-1 mb-4">
+            Cobre duas falhas já corrigidas no código, mas que deixaram rastro em agendamentos
+            anteriores: (1) sessões de uma série recorrente marcadas como "Compareceu" que não
+            geraram prontuário; (2) prontuários que ficaram com a data antiga depois que o
+            agendamento foi remarcado. Esta rotina gera o que faltou e corrige a data do que já
+            existe, sem tocar em nenhum texto já escrito.
+          </p>
+          <div className="flex flex-wrap gap-2">
+            <button
+              onClick={() => executarGeracaoAtendimento(false)}
+              disabled={gerarAtendimentoOcupado}
+              className="bg-white border border-gray-300 hover:bg-gray-50 disabled:opacity-60 text-gray-800 font-bold px-5 py-3 rounded-xl text-sm transition-colors"
+            >
+              {gerarAtendimentoOcupado ? "Verificando..." : "Ver o que está pendente"}
+            </button>
+            {gerarAtendimento?.modo === "previa" &&
+              (gerarAtendimento.prontuariosAGerar > 0 || gerarAtendimento.datasADivergir > 0) && (
+              <button
+                onClick={() => executarGeracaoAtendimento(true)}
+                disabled={gerarAtendimentoOcupado}
+                className="bg-purple-600 hover:bg-purple-700 disabled:opacity-60 text-white font-bold px-5 py-3 rounded-xl text-sm transition-colors"
+              >
+                Corrigir agora
+              </button>
+            )}
+          </div>
+          {gerarAtendimento && (
+            <div className="mt-3 text-sm text-gray-700 space-y-1">
+              {gerarAtendimento.modo === "previa" && gerarAtendimento.prontuariosAGerar === 0 && gerarAtendimento.datasADivergir === 0 ? (
+                <p className="font-semibold text-emerald-700">Nada pendente. Atendimentos individuais e prontuários estão sincronizados.</p>
+              ) : (
+                <>
+                  <p>
+                    <strong>{gerarAtendimento.modo === "aplicado" ? gerarAtendimento.criados : gerarAtendimento.prontuariosAGerar}</strong> prontuário(s){" "}
+                    {gerarAtendimento.modo === "aplicado" ? "criado(s)" : "seriam criados"} e{" "}
+                    <strong>{gerarAtendimento.modo === "aplicado" ? gerarAtendimento.datasCorrigidas : gerarAtendimento.datasADivergir}</strong> data(s){" "}
+                    {gerarAtendimento.modo === "aplicado" ? "corrigida(s)" : "seriam corrigidas"}.
+                  </p>
+                </>
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* Recálculo do Controle de Sessões */}
+        <div className="border-t border-gray-100 mt-6 pt-6">
+          <h3 className="font-bold text-gray-900">Recalcular Controle de Sessões</h3>
+          <p className="text-sm text-gray-500 mt-1 mb-4">
+            Sessão de grupo não conta mais no pacote de sessões previstas do atendimento
+            individual — esse espaço é só do acompanhamento individual. Esta rotina recalcula o
+            número de cada paciente a partir dos próprios registros, removendo as sessões de
+            grupo que foram contadas por engano antes desta correção.
+          </p>
+          <div className="flex flex-wrap gap-2">
+            <button
+              onClick={() => executarRecalculo(false)}
+              disabled={recalculoOcupado}
+              className="bg-white border border-gray-300 hover:bg-gray-50 disabled:opacity-60 text-gray-800 font-bold px-5 py-3 rounded-xl text-sm transition-colors"
+            >
+              {recalculoOcupado ? "Verificando..." : "Ver quantos pacientes mudam"}
+            </button>
+            {recalculo?.modo === "previa" && recalculo.total > 0 && (
+              <button
+                onClick={() => executarRecalculo(true)}
+                disabled={recalculoOcupado}
+                className="bg-gray-900 hover:bg-gray-800 disabled:opacity-60 text-white font-bold px-5 py-3 rounded-xl text-sm transition-colors"
+              >
+                Recalcular {recalculo.total} paciente(s)
+              </button>
+            )}
+          </div>
+          {recalculo && (
+            <p className="mt-3 text-sm font-semibold text-gray-700">
+              {recalculo.modo === "previa" && recalculo.total === 0
+                ? "Nenhum paciente com número divergente. Nada a recalcular."
+                : recalculo.modo === "aplicado"
+                ? `${recalculo.corrigidos} paciente(s) com o Controle de Sessões recalculado.`
+                : `${recalculo.total} paciente(s) teriam o número alterado.`}
             </p>
           )}
         </div>

@@ -66,13 +66,15 @@ export function buildProntuarioDocDefinition(
       ? `${autor.name}${autor.crp ? ` — CRP ${autor.crp}` : ""}`
       : "Profissional não identificado";
     const natureza = s.sessionType && TIPOS[s.sessionType] ? ` · ${TIPOS[s.sessionType]}` : "";
+    // Identifica o encontro do grupo, quando for o caso.
+    const grupo = s.groupId && s.groupSessionNumber ? ` · Sessão ${s.groupSessionNumber} de grupo` : "";
 
     sessionBlocks.push({
       margin: [0, 10, 0, 0],
       table: {
         widths: ["*"],
         body: [
-          [{ text: `DATA: ${formatDateBR(s.date)}${natureza}`, bold: true, fillColor: "#f1f5f9" }],
+          [{ text: `DATA: ${formatDateBR(s.date)}${natureza}${grupo}`, bold: true, fillColor: "#f1f5f9" }],
           [{
             text: `Sessão realizada por: ${assinatura}`,
             fontSize: 8.5,

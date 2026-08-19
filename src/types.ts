@@ -170,6 +170,8 @@ export interface SessionRecord {
   appointmentId?: string;
   /** Natureza do registro: atendimento, triagem de grupo, entrevista, devolutiva. */
   sessionType?: "ATENDIMENTO" | "TRIAGEM_GRUPO" | "ENTREVISTA" | "DEVOLUTIVA";
+  /** Número do encontro dentro do grupo (1º, 2º...), separado da contagem individual. */
+  groupSessionNumber?: number;
   id: string;
   clientId: string;
   psicoId: string;
@@ -205,7 +207,16 @@ export interface Group {
   coPsychologistId?: string;
   /** Numeração própria do grupo, prefixada com "G" (G001, G002...). */
   protocolNumber?: string;
+  /** Vínculos ATIVOS (quem participa hoje). */
   memberIds: string[];
+  /** Histórico completo de vínculos, incluindo desligamentos. */
+  membros?: Array<{
+    clientId: string;
+    joinedAt: string;
+    exitedAt?: string;
+    exitOutcome?: string;
+    exitReason?: string;
+  }>;
 }
 
 export interface GroupAttendanceEntry {
