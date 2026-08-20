@@ -211,29 +211,30 @@ export default function Settings() {
             >
               {gerarOcupado ? "Verificando..." : "Ver o que está faltando"}
             </button>
-            {gerarGrupo?.modo === "previa" && gerarGrupo.total > 0 && (
+            {gerarGrupo?.modo === "previa" && (gerarGrupo.total > 0 || gerarGrupo.numerosADivergir > 0) && (
               <button
                 onClick={() => executarGeracao(true)}
                 disabled={gerarOcupado}
                 className="bg-purple-600 hover:bg-purple-700 disabled:opacity-60 text-white font-bold px-5 py-3 rounded-xl text-sm transition-colors"
               >
-                Gerar {gerarGrupo.total} prontuário(s)
+                Gerar {gerarGrupo.total} prontuário(s){gerarGrupo.numerosADivergir > 0 ? ` e corrigir ${gerarGrupo.numerosADivergir} numeração(ões)` : ""}
               </button>
             )}
           </div>
           {gerarGrupo && (
             <div className="mt-3 text-sm text-gray-700">
-              {gerarGrupo.modo === "previa" && gerarGrupo.total === 0 ? (
+              {gerarGrupo.modo === "previa" && gerarGrupo.total === 0 && gerarGrupo.numerosADivergir === 0 ? (
                 <p className="font-semibold text-emerald-700">
                   Nenhum prontuário faltando. Todos os encontros de grupo já têm a documentação
-                  individual dos integrantes.
+                  individual dos integrantes, com a numeração correta.
                 </p>
               ) : (
                 <>
                   <p className="font-semibold mb-1">
-                    {gerarGrupo.modo === "aplicado"
-                      ? `${gerarGrupo.criados} prontuário(s) criado(s):`
-                      : `${gerarGrupo.total} prontuário(s) seriam criados:`}
+                    <strong>{gerarGrupo.modo === "aplicado" ? gerarGrupo.criados : gerarGrupo.total}</strong> prontuário(s){" "}
+                    {gerarGrupo.modo === "aplicado" ? "criado(s)" : "seriam criados"} e{" "}
+                    <strong>{gerarGrupo.modo === "aplicado" ? gerarGrupo.numerosCorrigidos : gerarGrupo.numerosADivergir}</strong> numeração(ões){" "}
+                    {gerarGrupo.modo === "aplicado" ? "corrigida(s)" : "seriam corrigidas"}.
                   </p>
                   <ul className="text-xs text-gray-600 space-y-0.5">
                     {gerarGrupo.porGrupo?.map((g: any, i: number) => (

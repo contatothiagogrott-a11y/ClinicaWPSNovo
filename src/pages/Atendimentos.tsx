@@ -35,10 +35,20 @@ export default function Atendimentos() {
   const totalPages = Math.ceil(atendimentos.length / pageSize);
   const currentData = atendimentos.slice((page - 1) * pageSize, page * pageSize);
 
+  /**
+   * BUG CORRIGIDO: só reconhecia a convenção do formulário manual do
+   * prontuário ("PRESENTE" / "FALTA_NAO_JUSTIFICADA"). `attendance` também
+   * chega com a convenção da agenda ("COMPARECEU" / "FALTA_INJUSTIFICADA" /
+   * "CANCELADO_..." / "REAGENDADO") sempre que a presença é confirmada por
+   * lá — e todo esse grupo caía no "else" final e aparecia como "Pendente",
+   * mesmo já resolvido. Reconhece as duas convenções.
+   */
   const getAttendanceBadge = (attendance?: string) => {
-     if (attendance === "PRESENTE") return <span className="bg-green-100 text-green-700 font-bold px-2 py-1 rounded-md text-xs">Compareceu</span>;
+     if (attendance === "PRESENTE" || attendance === "COMPARECEU") return <span className="bg-green-100 text-green-700 font-bold px-2 py-1 rounded-md text-xs">Compareceu</span>;
      if (attendance === "FALTA_JUSTIFICADA") return <span className="bg-orange-100 text-orange-700 font-bold px-2 py-1 rounded-md text-xs">Falta Justif.</span>;
-     if (attendance === "FALTA_NAO_JUSTIFICADA") return <span className="bg-red-100 text-red-700 font-bold px-2 py-1 rounded-md text-xs">Falta Injustif.</span>;
+     if (attendance === "FALTA_NAO_JUSTIFICADA" || attendance === "FALTA_INJUSTIFICADA") return <span className="bg-red-100 text-red-700 font-bold px-2 py-1 rounded-md text-xs">Falta Injustif.</span>;
+     if (attendance === "CANCELADO_PACIENTE" || attendance === "CANCELADO_PROFISSIONAL") return <span className="bg-amber-100 text-amber-700 font-bold px-2 py-1 rounded-md text-xs">Cancelado</span>;
+     if (attendance === "REAGENDADO") return <span className="bg-sky-100 text-sky-700 font-bold px-2 py-1 rounded-md text-xs">Reagendado</span>;
      return <span className="bg-gray-100 text-gray-700 font-bold px-2 py-1 rounded-md text-xs">Pendente</span>;
   };
 

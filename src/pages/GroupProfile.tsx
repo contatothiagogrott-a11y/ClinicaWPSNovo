@@ -148,16 +148,26 @@ export default function GroupProfile() {
    *
    * Calculado sob demanda a partir dos prontuários individuais já existentes
    * (mesmo critério de "sessão realizada" usado no recálculo do backend:
-   * registro finalizado, com presença que não seja falta/cancelamento/
-   * reagendamento). Cada grupo conta separado — não soma com outro grupo do
-   * mesmo paciente. Não é um contador novo gravado no banco, para não repetir
-   * o problema que gerou o bug original.
+   * presença registrada que não seja falta/cancelamento/reagendamento). Cada
+   * grupo conta separado — não soma com outro grupo do mesmo paciente. Não é
+   * um contador novo gravado no banco, para não repetir o problema que gerou
+   * o bug original.
+   *
+   * BUG CORRIGIDO: a condição exigia `!s.isDraft` (prontuário já ESCRITO)
+   * para contar — mas a regra combinada com o setor é contar a presença para
+   * métrica independente do texto da evolução já ter sido escrito ou não
+   * (rodada anterior: "fica registrado que ele compareceu... pra métricas
+   * futuras"). Como a presença normalmente só é marcada e o prontuário fica
+   * pendente até a psicóloga escrever, exigir `!isDraft` mantinha a contagem
+   * zerada mesmo com presença confirmada na agenda. Agora conta por presença
+   * registrada (`attendance` preenchido e fora da lista de "não houve
+   * encontro"), com ou sem o texto já escrito.
    */
   const NAO_HOUVE_ENCONTRO = ["FALTA_JUSTIFICADA", "FALTA_INJUSTIFICADA", "CANCELADO_PACIENTE", "CANCELADO_PROFISSIONAL", "REAGENDADO"];
   const sessoesDesteGrupoPorMembro = new Map<string, number>(
     groupMembers.map(m => [
       m.id,
-      sessions.filter(s => s.groupId === group.id && s.clientId === m.id && !s.isDraft && !NAO_HOUVE_ENCONTRO.includes(s.attendance || "")).length,
+      sessions.filter(s => s.groupId === group.id && s.clientId === m.id && !!s.attendance && !NAO_HOUVE_ENCONTRO.includes(s.attendance)).length,
     ])
   );
 

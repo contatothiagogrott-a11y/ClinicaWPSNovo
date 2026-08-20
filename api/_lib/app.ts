@@ -1952,9 +1952,27 @@ app.patch(
       }
     }
 
-    if ("attendance" in data && updated.clientId) {
-      await maybeIncrementCompletedSessionsOnAttendance(updated.clientId, existing.attendance, updated.attendance, updated.groupId);
-      await resolverProntuarioPorPresenca(updated);
+    /**
+     * BUG CORRIGIDO: agendamento de GRUPO (sem `clientId`, com `groupId`)
+     * nunca entrava aqui — a condição exigia `updated.clientId`, que grupo
+     * não tem. Resultado: marcar presença/falta na agenda de um grupo não
+     * tinha NENHUM efeito no prontuário de nenhum integrante, e a sessão
+     * ficava "Pendente" para sempre.
+     *
+     * `maybeIncrementCompletedSessionsOnAttendance` continua só para
+     * atendimento individual — sessão de grupo nunca deve somar no pacote de
+     * sessões previstas do paciente (decisão do setor, rodada anterior); o
+     * próprio parâmetro `clientId` da função exige string, então só é
+     * chamada quando existe. `resolverProntuarioPorPresenca` agora atende
+     * os dois casos.
+     */
+    if ("attendance" in data) {
+      if (updated.clientId) {
+        await maybeIncrementCompletedSessionsOnAttendance(updated.clientId, existing.attendance, updated.attendance, updated.groupId);
+      }
+      if (updated.clientId || updated.groupId) {
+        await resolverProntuarioPorPresenca(updated);
+      }
     }
 
     res.json({ appointment: mapAppointment(updated), futureUpdated });
@@ -1991,12 +2009,48 @@ app.patch(
  * exigência da Resolução CFP nº 001/2009 (art. 3º) de registro de todo
  * atendimento prestado.
  */
+/**
+ * SESSÃO DE GRUPO — decisão do setor (confirmada com o responsável):
+ *
+ *   1. A presença é marcada UMA VEZ no agendamento do grupo na agenda, e
+ *      vale como a presença "oficial" de TODOS os integrantes daquele
+ *      encontro — mesma fonte de verdade que já existia para o atendimento
+ *      individual, só que aplicada a vários prontuários de uma vez (um
+ *      `SessionRecord` por integrante, todos com o mesmo `appointmentId`).
+ *      A marcação por integrante que já existe na tela de registro coletivo
+ *      do grupo (`GroupAttendance`) continua existindo à parte, para o
+ *      relato qualitativo do encontro — não sobrescreve nem é sobrescrita
+ *      por este campo.
+ *
+ *   2. Diferente do atendimento individual: falta e cancelamento NÃO fecham
+ *      nem apagam o prontuário pendente do integrante automaticamente aqui.
+ *      Só o campo de presença é gravado (o que já é suficiente para as
+ *      métricas de frequência — Resolução CFP nº 001/2009, art. 5º). Fechar
+ *      o registro com o texto da evolução continua sendo ato exclusivo da
+ *      psicóloga responsável, seja pelo prontuário individual ("Preencher
+ *      Agora") seja pelo registro coletivo do grupo.
+ */
 async function resolverProntuarioPorPresenca(appt: any): Promise<void> {
   const situacao = appt.attendance;
   if (!situacao || situacao === "PENDENTE") return;
 
+  if (appt.groupId) {
+    const semEncontro =
+      situacao === "CANCELADO_PACIENTE" || situacao === "CANCELADO_PROFISSIONAL" || situacao === "REAGENDADO";
+    if (semEncontro) return; // decisão do setor: não mexe automaticamente — só a psicóloga fecha
+
+    // Só toca rascunhos: um registro já finalizado teve a presença escrita
+    // deliberadamente pela psicóloga (formulário ou registro coletivo) e não
+    // deve ser sobrescrito por uma marcação posterior na agenda.
+    await prisma.sessionRecord.updateMany({
+      where: { appointmentId: appt.id, groupId: appt.groupId, isDraft: true },
+      data: { attendance: situacao },
+    });
+    return;
+  }
+
   if (situacao === "COMPARECEU") {
-    if (!appt.clientId) return; // agendamento de grupo não passa por aqui (ver call site)
+    if (!appt.clientId) return;
     const jaTemRegistro = await prisma.sessionRecord.findFirst({
       where: { appointmentId: appt.id },
       select: { id: true },
@@ -2352,6 +2406,22 @@ app.post(
       const group = await prisma.group.findUnique({ where: { id: b.groupId }, include: { members: true } });
       if (group) {
         const dataDoEncontro = parseLocalDateTime(String(b.sessionDate), "12:00") ?? sessionDate;
+
+        /**
+         * BUG CORRIGIDO ("Sessão ?" no prontuário): este caminho — registro
+         * coletivo escrito sem o agendamento do grupo ter passado por aqui
+         * antes — criava o prontuário individual de cada integrante SEM
+         * `groupSessionNumber`. Os outros dois pontos que criam esse mesmo
+         * registro (agendamento do grupo e a manutenção "Gerar prontuários
+         * faltantes dos grupos") já calculam o número certo; faltava aqui.
+         * Mesmo cálculo dos dois: conta quantos encontros do grupo já
+         * existem até esta data.
+         */
+        const encontrosAnteriores = await prisma.groupRecord.count({
+          where: { groupId: group.id, sessionDate: { lt: dataDoEncontro } },
+        });
+        const numeroDoEncontro = encontrosAnteriores + 1;
+
         for (const member of group.members) {
           /**
            * SEGUNDA FONTE DE DUPLICATAS.
@@ -2376,6 +2446,7 @@ app.post(
               isDraft: true,
               status: "PENDENTE",
               groupId: group.id,
+              groupSessionNumber: numeroDoEncontro,
             },
           });
           await writeHistory({
@@ -3561,7 +3632,7 @@ app.post(
 
     const existentes = await prisma.sessionRecord.findMany({
       where: { NOT: { groupId: null } },
-      select: { clientId: true, groupId: true, date: true },
+      select: { id: true, clientId: true, groupId: true, date: true, groupSessionNumber: true },
     });
     const chaveExistente = new Set(
       existentes.map((r: any) => `${r.clientId}|${r.groupId}|${r.date.getTime()}`)
@@ -3617,10 +3688,31 @@ app.post(
       }
     }
 
+    /**
+     * BUG CORRIGIDO ("Sessão ?" no prontuário de grupo já existente).
+     *
+     * Esta rotina sempre soube CRIAR o que faltava, mas nunca corrigia o
+     * `groupSessionNumber` de um registro que já existia sem ele — o que
+     * acontecia em dois pontos que criavam o registro individual sem
+     * calcular o número (um já corrigido nesta rodada, no registro coletivo
+     * do grupo). Como a verificação de duplicata olha só se o registro
+     * existe (não se está completo), ele nunca era revisitado. Agora
+     * comparamos o número salvo com o número correto (mesmo cálculo de
+     * `ordemPorGrupo`) e corrigimos quando estiver ausente ou errado.
+     */
+    const aCorrigirNumero: { id: string; paraNumero: number }[] = [];
+    for (const r of existentes) {
+      const numeroCorreto = ordemPorGrupo.get(`${r.groupId}|${r.date.getTime()}`);
+      if (numeroCorreto !== undefined && r.groupSessionNumber !== numeroCorreto) {
+        aCorrigirNumero.push({ id: r.id, paraNumero: numeroCorreto });
+      }
+    }
+
     if (!aplicar) {
       res.json({
         modo: "previa",
         total: aCriar.length,
+        numerosADivergir: aCorrigirNumero.length,
         porGrupo: Array.from(resumo.entries()).map(([grupo, quantidade]) => ({ grupo, quantidade })),
       });
       return;
@@ -3629,17 +3721,21 @@ app.post(
     if (aCriar.length > 0) {
       await prisma.sessionRecord.createMany({ data: aCriar });
     }
+    for (const item of aCorrigirNumero) {
+      await prisma.sessionRecord.update({ where: { id: item.id }, data: { groupSessionNumber: item.paraNumero } });
+    }
 
     await logAccess({
       actor: actorOf(session),
       action: "GERACAO_DE_PRONTUARIOS_DE_GRUPO",
-      resource: `${aCriar.length} registro(s)`,
+      resource: `${aCriar.length} registro(s) criado(s), ${aCorrigirNumero.length} numeração(ões) corrigida(s)`,
       ip: clientIp(req),
     });
 
     res.json({
       modo: "aplicado",
       criados: aCriar.length,
+      numerosCorrigidos: aCorrigirNumero.length,
       porGrupo: Array.from(resumo.entries()).map(([grupo, quantidade]) => ({ grupo, quantidade })),
     });
   })
