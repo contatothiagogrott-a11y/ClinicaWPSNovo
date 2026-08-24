@@ -22,7 +22,7 @@ export default function CreateGroupModal({ open, onClose }: { open: boolean; onC
   if (!open) return null;
 
   // Supervisor também conduz grupos: usa-se `clinicians`, não role === "PSICO".
-  const psicos = clinicians(users);
+  const psicos = clinicians(users).sort((a, b) => a.name.localeCompare(b.name, "pt-BR"));
 
   /**
    * BUG CORRIGIDO: o formulário tinha dois defeitos que faziam o botão

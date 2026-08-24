@@ -20,7 +20,7 @@ const STATUS_LABELS: Record<string, string> = {
 export default function AgendaModal({ open, onClose, initialData, existingAppointment }: { open: boolean, onClose: () => void, initialData: { date: string, time: string, endTime?: string, roomId: string }, existingAppointment?: Appointment }) {
   const { clients, users, groups, currentUser, addAppointment, updateAppointment, deleteAppointment, appointments, markAttendance, config, updateClient } = useStore();
 
-  const activeRooms = config.rooms.filter(r => r.isActive).map(r => r.name);
+  const activeRooms = config.rooms.filter(r => r.isActive).sort((a, b) => a.name.localeCompare(b.name, "pt-BR")).map(r => r.name);
   const [roomId, setRoomId] = useState(initialData.roomId || activeRooms[0] || "");
 
   // Antes só listava pacientes "Em Atendimento" — por isso quem estava em
@@ -50,7 +50,9 @@ export default function AgendaModal({ open, onClose, initialData, existingAppoin
   const [clientStatusFilter, setClientStatusFilter] = useState<"TODOS" | "FILA_ESPERA" | "TRIAGEM" | "TRIADOS" | "EM_ATENDIMENTO">("TODOS");
   const [clientSearch, setClientSearch] = useState("");
 
-  const activeClients = bookableClients.filter(c => {
+  // Ordem alfabética em toda lista de escolha: procurar nome numa lista
+  // desordenada é fonte de erro de seleção.
+  const activeClients = bookableClients.sort((a, b) => a.fullName.localeCompare(b.fullName, "pt-BR")).filter(c => {
     if (clientStatusFilter !== "TODOS" && c.status !== clientStatusFilter) return false;
     if (clientSearch.trim()) {
       const q = clientSearch.trim().toLowerCase();
@@ -68,9 +70,15 @@ export default function AgendaModal({ open, onClose, initialData, existingAppoin
   const [statusTransition, setStatusTransition] = useState<string>("");
   const [responsiblePsicoId, setResponsiblePsicoId] = useState<string>("");
   // Profissionais que atendem = Psicólogos + Supervisores.
-  const psicos = clinicians(users);
+  const psicos = clinicians(users).sort((a, b) => a.name.localeCompare(b.name, "pt-BR"));
   
-  const activeGroups = groups.filter(g => g.isActive && (currentUser?.role !== "PSICO" || g.psychologistId === currentUser.id));
+  const activeGroups = groups
+    .filter(g => g.isActive && (
+      currentUser?.role !== "PSICO" ||
+      g.psychologistId === currentUser.id ||
+      g.coPsychologistId === currentUser.id  // o coterapeuta também agenda
+    ))
+    .sort((a, b) => a.name.localeCompare(b.name, "pt-BR"));
 
   const [bookingType, setBookingType] = useState<"client" | "group">(existingAppointment?.groupId ? "group" : "client");
   const [selectedId, setSelectedId] = useState(existingAppointment?.clientId || existingAppointment?.groupId || "");
@@ -514,10 +522,21 @@ export default function AgendaModal({ open, onClose, initialData, existingAppoin
 
           {existingAppointment && (
              <div className="space-y-4">
-               {existingAppointment.clientId && (
+               {/*
+                 Encontros de GRUPO também precisam de cancelamento e
+                 reagendamento: o grupo pode não acontecer (profissional
+                 afastado, sala indisponível, feriado), e sem isso o encontro
+                 ficava marcado como se tivesse ocorrido, com os prontuários
+                 pendentes de todos os integrantes cobrando registro.
+                 A frequência individual de cada participante continua sendo
+                 registrada no prontuário do grupo, não aqui.
+               */}
+               {(existingAppointment.clientId || existingAppointment.groupId) && (
                  <div className="bg-gray-50 p-4 rounded-xl border border-gray-100">
-                    <p className="text-sm font-bold text-gray-700 mb-3 text-center">Registro de Frequência</p>
-                    <div className="flex flex-col gap-2">
+                    <p className="text-sm font-bold text-gray-700 mb-3 text-center">
+                      {existingAppointment.groupId ? "Situação do encontro" : "Registro de Frequência"}
+                    </p>
+                    <div className={cn("flex flex-col gap-2", existingAppointment.groupId && "hidden")}>
                        <button 
                          type="button" 
                          onClick={() => { markAttendance(existingAppointment.id, "COMPARECEU"); onClose(); }}

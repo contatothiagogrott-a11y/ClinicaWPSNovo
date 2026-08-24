@@ -16,7 +16,7 @@ export default function CapacityManagement() {
   });
 
   // O Supervisor atende e entra no quadro clínico com a mesma capacidade padrão.
-  const psicos = clinicians(users);
+  const psicos = clinicians(users).sort((a, b) => a.name.localeCompare(b.name, "pt-BR"));
 
   // Calculate current loads
   const getPsychoLoad = (psicoId: string) => {

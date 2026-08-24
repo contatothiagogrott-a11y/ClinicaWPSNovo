@@ -26,7 +26,7 @@ const EXIT_LABELS: Record<string, string> = {
 export default function GroupProfile() {
   const { id } = useParams();
   const navigate = useNavigate();
-  const { groups, users, clients, currentUser, updateGroup, groupRecords, addGroupRecord, updateClient, atualizarNumeroDoGrupo, sessions } = useStore();
+  const { groups, users, clients, currentUser, updateGroup, groupRecords, addGroupRecord, updateClient, atualizarNumeroDoGrupo } = useStore();
   
   const group = groups.find(g => g.id === id);
   const [activeTab, setActiveTab] = useState<"INFO" | "MEMBROS" | "PRONTUARIO">("INFO");
@@ -50,7 +50,7 @@ export default function GroupProfile() {
   const [numeroDraft, setNumeroDraft] = useState("");
   const [erroNumero, setErroNumero] = useState("");
 
-  const psicos = clinicians(users);
+  const psicos = clinicians(users).sort((a, b) => a.name.localeCompare(b.name, "pt-BR"));
   const psychologist = users.find(u => u.id === group.psychologistId);
 
   /**
@@ -136,40 +136,12 @@ export default function GroupProfile() {
 
   // Eligibile clients: Not already in group
   // Casos encerrados (com ou sem atendimento) não entram em grupo novo.
-  const eligibleClients = clients.filter(
+  const eligibleClients = [...clients]
+    .sort((a, b) => a.fullName.localeCompare(b.fullName, "pt-BR"))
+    .filter(
     c => !group.memberIds.includes(c.id) && c.status !== "FINALIZADO" && c.status !== "CANCELADO"
   );
   const groupMembers = clients.filter(c => group.memberIds.includes(c.id));
-
-  /**
-   * SESSÕES DE GRUPO REALIZADAS, POR INTEGRANTE — série própria, separada do
-   * Controle de Sessões do atendimento individual (que não conta mais sessão
-   * de grupo, por decisão do setor).
-   *
-   * Calculado sob demanda a partir dos prontuários individuais já existentes
-   * (mesmo critério de "sessão realizada" usado no recálculo do backend:
-   * presença registrada que não seja falta/cancelamento/reagendamento). Cada
-   * grupo conta separado — não soma com outro grupo do mesmo paciente. Não é
-   * um contador novo gravado no banco, para não repetir o problema que gerou
-   * o bug original.
-   *
-   * BUG CORRIGIDO: a condição exigia `!s.isDraft` (prontuário já ESCRITO)
-   * para contar — mas a regra combinada com o setor é contar a presença para
-   * métrica independente do texto da evolução já ter sido escrito ou não
-   * (rodada anterior: "fica registrado que ele compareceu... pra métricas
-   * futuras"). Como a presença normalmente só é marcada e o prontuário fica
-   * pendente até a psicóloga escrever, exigir `!isDraft` mantinha a contagem
-   * zerada mesmo com presença confirmada na agenda. Agora conta por presença
-   * registrada (`attendance` preenchido e fora da lista de "não houve
-   * encontro"), com ou sem o texto já escrito.
-   */
-  const NAO_HOUVE_ENCONTRO = ["FALTA_JUSTIFICADA", "FALTA_INJUSTIFICADA", "CANCELADO_PACIENTE", "CANCELADO_PROFISSIONAL", "REAGENDADO"];
-  const sessoesDesteGrupoPorMembro = new Map<string, number>(
-    groupMembers.map(m => [
-      m.id,
-      sessions.filter(s => s.groupId === group.id && s.clientId === m.id && !!s.attendance && !NAO_HOUVE_ENCONTRO.includes(s.attendance)).length,
-    ])
-  );
 
   /** Integrantes já desligados, para o histórico do vínculo. */
   const desligados = (group.membros ?? []).filter(m => m.exitedAt);
@@ -354,12 +326,7 @@ export default function GroupProfile() {
                        <div className="flex items-center gap-3" onClick={() => navigate(`/client/${member.id}`)}>
                           <div className="w-10 h-10 rounded-full bg-white border border-gray-200 flex items-center justify-center text-gray-500 font-bold cursor-pointer">{member.fullName.charAt(0)}</div>
                           <div className="cursor-pointer">
-                             <div className="flex items-center gap-2 flex-wrap">
-                               <p className="font-bold text-gray-900 group-hover:text-blue-600">{member.fullName}</p>
-                               <span className="text-[11px] font-bold text-purple-700 bg-purple-100 px-2 py-0.5 rounded-full whitespace-nowrap">
-                                 {sessoesDesteGrupoPorMembro.get(member.id) ?? 0} sessão(ões) neste grupo
-                               </span>
-                             </div>
+                             <p className="font-bold text-gray-900 group-hover:text-blue-600">{member.fullName}</p>
                              <p className="text-xs text-gray-500">{member.status}</p>
                           </div>
                        </div>

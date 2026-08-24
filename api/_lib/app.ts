@@ -290,9 +290,27 @@ async function hasClinicalAccess(
     select: { assignedPsicoId: true },
   });
   if (client?.assignedPsicoId === session.userId) return true;
-  // Psicólogo que conduz um grupo do qual este paciente participa.
+  /**
+   * Profissional que conduz um grupo do qual este paciente participa
+   * — OU JÁ PARTICIPOU.
+   *
+   * Dois defeitos corrigidos aqui:
+   *  1. O coterapeuta era ignorado: só o responsável pelo grupo tinha acesso.
+   *  2. Vínculos encerrados eram desconsiderados. Ao desligar alguém do
+   *     grupo, o profissional perdia o acesso aos prontuários pendentes dos
+   *     encontros de que a pessoa participou — e ficava sem como concluir o
+   *     registro de um atendimento que de fato aconteceu.
+   */
   const membership = await prisma.groupMember.findFirst({
-    where: { clientId, group: { psychologistId: session.userId } },
+    where: {
+      clientId,
+      group: {
+        OR: [
+          { psychologistId: session.userId },
+          { coPsychologistId: session.userId },
+        ],
+      },
+    },
     select: { clientId: true },
   });
   return !!membership;
@@ -326,59 +344,39 @@ function denyClinical(res: Response) {
 
 // Contadores de sessões concluídas (regra preservada do sistema original).
 /**
- * Contador de sessões REALIZADAS — SOMENTE atendimento individual.
+ * Contador de sessões REALIZADAS.
  *
  * Fechar o rascunho não significa que houve sessão. Falta, cancelamento e
  * reagendamento também encerram o registro — e estavam sendo contados como
  * atendimento realizado, inflando o consumo do pacote do paciente.
  *
  * Só conta quando houve de fato o encontro.
- *
- * DECISÃO DO SETOR (corrigida aqui): sessão de grupo NÃO consome o pacote de
- * sessões previstas — esse espaço é do acompanhamento individual. A presença
- * ou falta na sessão de grupo continua sendo registrada normalmente (no
- * próprio `SessionRecord.attendance`, para fins de métrica), só não soma
- * neste contador. A contagem de sessões de grupo é calculada à parte, por
- * grupo, direto a partir dos registros — ver GET /api/groups em `mapGroup`
- * e o uso em `GroupProfile.tsx` — para não recriar outro contador solto no
- * banco (foi exatamente esse tipo de contador que causou o bug anterior).
  */
 async function maybeIncrementCompletedSessions(
   clientId: string,
   wasDraft: boolean,
   isNowDraft: boolean,
-  attendance?: string | null,
-  groupId?: string | null
+  attendance?: string | null
 ) {
-  if (groupId) return;
-
   const naoHouveEncontro =
     attendance &&
     ["FALTA_JUSTIFICADA", "FALTA_INJUSTIFICADA", "CANCELADO_PACIENTE", "CANCELADO_PROFISSIONAL", "REAGENDADO"]
       .includes(attendance);
   if (naoHouveEncontro) return;
 
+  // Sessão de grupo TAMBÉM consome o pacote do paciente: é atendimento
+  // prestado pelo setor, independentemente da modalidade.
+
   if (wasDraft && !isNowDraft) {
     await prisma.client.update({ where: { id: clientId }, data: { completedSessions: { increment: 1 } } });
   }
 }
 
-/**
- * Idem, para a mudança de presença feita diretamente no AGENDAMENTO (tela de
- * agenda, botão "Compareceu"). Mesma regra: agendamento de GRUPO (sem
- * `clientId`, ou vinculado a `groupId`) nunca chega a chamar esta função hoje
- * (ver PATCH /api/appointments/:id, que só a chama quando `clientId` existe),
- * mas o parâmetro é mantido explícito para não depender desse detalhe do
- * chamador — se algum dia o agendamento de grupo passar a usar este caminho,
- * a exclusão continua garantida aqui.
- */
 async function maybeIncrementCompletedSessionsOnAttendance(
   clientId: string,
   wasAttendance: string | null,
-  isNowAttendance: string | null,
-  groupId?: string | null
+  isNowAttendance: string | null
 ) {
-  if (groupId) return;
   if (isNowAttendance === "COMPARECEU" && wasAttendance !== "COMPARECEU") {
     await prisma.client.update({ where: { id: clientId }, data: { completedSessions: { increment: 1 } } });
   }
@@ -449,6 +447,18 @@ app.get(
         .filter((g: any) => g.psychologistId === session.userId || g.coPsychologistId === session.userId)
         .map((g: any) => g.id)
     );
+    /**
+     * Integrantes dos grupos que este profissional conduz.
+     *
+     * Inclui DELIBERADAMENTE quem já foi desligado. Ao remover alguém do
+     * grupo, os prontuários dos encontros de que a pessoa participou
+     * continuam existindo — e o profissional precisa poder preencher os que
+     * ficaram pendentes. Filtrar os desligados aqui tornava esses registros
+     * inacessíveis: o trabalho ficava preso, sem forma de concluir.
+     *
+     * O vínculo encerrado deixa de aparecer na lista de participantes ativos
+     * (ver mapGroup), mas não apaga o acesso ao que já foi registrado.
+     */
     const myGroupMemberClientIds = new Set(
       groupsRaw.filter((g: any) => myLedGroupIds.has(g.id)).flatMap((g: any) => g.members.map((m: any) => m.clientId))
     );
@@ -1540,8 +1550,7 @@ app.post(
           existing.clientId,
           existing.isDraft && !existing.appointmentId,
           updated.isDraft,
-          updated.attendance,
-          existing.groupId
+          updated.attendance
         );
         // Metainformação apenas — o texto do prontuário NUNCA entra no log.
         await logClinicalRecord(
@@ -1571,7 +1580,7 @@ app.post(
       },
       include: { versions: true },
     });
-    await maybeIncrementCompletedSessions(created.clientId, !created.appointmentId, created.isDraft, created.attendance, created.groupId);
+    await maybeIncrementCompletedSessions(created.clientId, !created.appointmentId, created.isDraft, created.attendance);
     await logClinicalRecord(
       created.clientId,
       actorOf(session),
@@ -1630,8 +1639,7 @@ app.patch(
       existing.clientId,
       existing.isDraft && !existing.appointmentId,
       updated.isDraft,
-      updated.attendance,
-      existing.groupId
+      updated.attendance
     );
 
     // Anotação privada isolada não é evento de prontuário: não gera entrada
@@ -1858,30 +1866,6 @@ app.post(
  * ocorrências futuras da mesma série — sem tocar no que já aconteceu
  * (histórico de agenda é registro, não se reescreve).
  */
-/**
- * FALHA CORRIGIDA: `SessionRecord.date` (e `GroupRecord.sessionDate`) ficavam
- * "presos" na data antiga quando o agendamento era editado — não existia
- * nenhum código que sincronizasse a data do prontuário com a nova data do
- * agendamento (`appointmentId` é só um vínculo por texto, sem cascata no
- * banco). Resultado: o prontuário continuava aparecendo na ficha do paciente
- * na data de origem, e nenhuma sessão aparecia na data nova, mesmo o
- * agendamento estando correto e confirmado na agenda.
- *
- * Data de agendamento é dado de gestão de agenda, não fato clínico —
- * corrigi-la não reescreve o que foi escrito no prontuário (o texto não é
- * tocado), só o rótulo de QUANDO aquele atendimento aconteceu.
- */
-async function sincronizarDataDoProntuario(appointmentId: string, novaData: Date): Promise<void> {
-  await prisma.sessionRecord.updateMany({
-    where: { appointmentId },
-    data: { date: novaData },
-  });
-  await prisma.groupRecord.updateMany({
-    where: { appointmentId },
-    data: { sessionDate: novaData },
-  });
-}
-
 app.patch(
   "/api/appointments/:id",
   asyncHandler(async (req, res) => {
@@ -1920,10 +1904,6 @@ app.patch(
 
     const updated = await prisma.appointment.update({ where: { id: req.params.id }, data });
 
-    if ("date" in data) {
-      await sincronizarDataDoProntuario(updated.id, updated.date);
-    }
-
     // Propagação para as ocorrências futuras da mesma série.
     let futureUpdated = 0;
     if (b.applyToFuture && existing.seriesId) {
@@ -1944,35 +1924,18 @@ app.patch(
         }
         if (Object.keys(sibData).length > 0) {
           await prisma.appointment.update({ where: { id: sib.id }, data: sibData });
-          if (sibData.date) {
-            await sincronizarDataDoProntuario(sib.id, sibData.date);
-          }
           futureUpdated++;
         }
       }
     }
 
-    /**
-     * BUG CORRIGIDO: agendamento de GRUPO (sem `clientId`, com `groupId`)
-     * nunca entrava aqui — a condição exigia `updated.clientId`, que grupo
-     * não tem. Resultado: marcar presença/falta na agenda de um grupo não
-     * tinha NENHUM efeito no prontuário de nenhum integrante, e a sessão
-     * ficava "Pendente" para sempre.
-     *
-     * `maybeIncrementCompletedSessionsOnAttendance` continua só para
-     * atendimento individual — sessão de grupo nunca deve somar no pacote de
-     * sessões previstas do paciente (decisão do setor, rodada anterior); o
-     * próprio parâmetro `clientId` da função exige string, então só é
-     * chamada quando existe. `resolverProntuarioPorPresenca` agora atende
-     * os dois casos.
-     */
-    if ("attendance" in data) {
-      if (updated.clientId) {
-        await maybeIncrementCompletedSessionsOnAttendance(updated.clientId, existing.attendance, updated.attendance, updated.groupId);
-      }
-      if (updated.clientId || updated.groupId) {
-        await resolverProntuarioPorPresenca(updated);
-      }
+    if ("attendance" in data && updated.groupId) {
+      await resolverEncontroDeGrupoPorPresenca(updated);
+    }
+    if ("attendance" in data && updated.clientId) {
+      await maybeIncrementCompletedSessionsOnAttendance(updated.clientId, existing.attendance, updated.attendance);
+      await resolverProntuarioPorPresenca(updated);
+      await resolverEncontroDeGrupoPorPresenca(updated);
     }
 
     res.json({ appointment: mapAppointment(updated), futureUpdated });
@@ -1980,7 +1943,7 @@ app.patch(
 );
 
 /**
- * Fecha (ou abre) o prontuário pendente conforme a situação do agendamento.
+ * Fecha o prontuário pendente conforme a situação do agendamento.
  *
  * O rascunho é criado no agendamento e só faz sentido enquanto se espera uma
  * evolução. Se o encontro NÃO ACONTECEU — cancelado, reagendado ou falta — não
@@ -1996,81 +1959,10 @@ app.patch(
  *  - CANCELAMENTO e REAGENDAMENTO são movimentação de agenda, não atendimento.
  *    O rascunho VAZIO é removido — não houve ato clínico a registrar. Se o
  *    profissional já tiver escrito algo, o registro é preservado.
- *
- * FALHA CORRIGIDA (COMPARECEU sem prontuário): agendamentos com repetição
- * (semanal/quinzenal) só geram o prontuário pendente na 1ª ocorrência da
- * série — as demais deveriam gerar o seu "quando a sessão acontecesse, ao
- * marcar a presença", segundo o comentário original em POST /api/appointments.
- * Essa parte nunca tinha sido implementada: esta função retornava direto para
- * COMPARECEU, sem criar nada. Resultado: da 2ª sessão da série em diante,
- * confirmar presença não deixava rastro nenhum no prontuário — o profissional
- * não tinha onde escrever a evolução, e a sessão simplesmente não aparecia.
- * Sem documentação de sessão realizada, o sistema descumpria a própria
- * exigência da Resolução CFP nº 001/2009 (art. 3º) de registro de todo
- * atendimento prestado.
- */
-/**
- * SESSÃO DE GRUPO — decisão do setor (confirmada com o responsável):
- *
- *   1. A presença é marcada UMA VEZ no agendamento do grupo na agenda, e
- *      vale como a presença "oficial" de TODOS os integrantes daquele
- *      encontro — mesma fonte de verdade que já existia para o atendimento
- *      individual, só que aplicada a vários prontuários de uma vez (um
- *      `SessionRecord` por integrante, todos com o mesmo `appointmentId`).
- *      A marcação por integrante que já existe na tela de registro coletivo
- *      do grupo (`GroupAttendance`) continua existindo à parte, para o
- *      relato qualitativo do encontro — não sobrescreve nem é sobrescrita
- *      por este campo.
- *
- *   2. Diferente do atendimento individual: falta e cancelamento NÃO fecham
- *      nem apagam o prontuário pendente do integrante automaticamente aqui.
- *      Só o campo de presença é gravado (o que já é suficiente para as
- *      métricas de frequência — Resolução CFP nº 001/2009, art. 5º). Fechar
- *      o registro com o texto da evolução continua sendo ato exclusivo da
- *      psicóloga responsável, seja pelo prontuário individual ("Preencher
- *      Agora") seja pelo registro coletivo do grupo.
  */
 async function resolverProntuarioPorPresenca(appt: any): Promise<void> {
   const situacao = appt.attendance;
-  if (!situacao || situacao === "PENDENTE") return;
-
-  if (appt.groupId) {
-    const semEncontro =
-      situacao === "CANCELADO_PACIENTE" || situacao === "CANCELADO_PROFISSIONAL" || situacao === "REAGENDADO";
-    if (semEncontro) return; // decisão do setor: não mexe automaticamente — só a psicóloga fecha
-
-    // Só toca rascunhos: um registro já finalizado teve a presença escrita
-    // deliberadamente pela psicóloga (formulário ou registro coletivo) e não
-    // deve ser sobrescrito por uma marcação posterior na agenda.
-    await prisma.sessionRecord.updateMany({
-      where: { appointmentId: appt.id, groupId: appt.groupId, isDraft: true },
-      data: { attendance: situacao },
-    });
-    return;
-  }
-
-  if (situacao === "COMPARECEU") {
-    if (!appt.clientId) return;
-    const jaTemRegistro = await prisma.sessionRecord.findFirst({
-      where: { appointmentId: appt.id },
-      select: { id: true },
-    });
-    if (jaTemRegistro) return; // já existe (1ª ocorrência, ou já corrigido antes)
-
-    await prisma.sessionRecord.create({
-      data: {
-        clientId: appt.clientId,
-        psicoId: appt.psicoId,
-        date: appt.date,
-        notesEnc: "",
-        isDraft: true,
-        appointmentId: appt.id,
-        sessionType: appt.appointmentType || "ATENDIMENTO",
-        attendance: situacao,
-      },
-    });
-    return;
-  }
+  if (!situacao || situacao === "PENDENTE" || situacao === "COMPARECEU") return;
 
   const rascunho = await prisma.sessionRecord.findFirst({
     where: { appointmentId: appt.id, isDraft: true },
@@ -2103,6 +1995,46 @@ async function resolverProntuarioPorPresenca(appt: any): Promise<void> {
   // Cancelado ou reagendado: sem ato clínico.
   if (!temConteudo) {
     await prisma.sessionRecord.delete({ where: { id: rascunho.id } }).catch(() => {});
+  }
+}
+
+/**
+ * Encontro de GRUPO cancelado ou reagendado.
+ *
+ * Um encontro de grupo gera um prontuário pendente para CADA integrante. Se o
+ * encontro não acontece, todos ficariam cobrando um registro que nunca virá —
+ * e o registro coletivo também.
+ *
+ * Remove apenas os que estão em branco: o que já foi escrito permanece.
+ */
+async function resolverEncontroDeGrupoPorPresenca(appt: any): Promise<void> {
+  const situacao = appt.attendance;
+  if (!situacao || situacao === "PENDENTE" || situacao === "COMPARECEU") return;
+  if (!appt.groupId) return;
+
+  const naoOcorreu = ["CANCELADO_PACIENTE", "CANCELADO_PROFISSIONAL", "REAGENDADO"].includes(situacao);
+  if (!naoOcorreu) return;
+
+  // Prontuários individuais daquele encontro.
+  const individuais = await prisma.sessionRecord.findMany({
+    where: { appointmentId: appt.id, groupId: appt.groupId, isDraft: true },
+    include: { versions: true },
+  });
+  const removiveis = individuais
+    .filter((r: any) =>
+      !decryptField(r.notesEnc) && !decryptField(r.privateNotesEnc) && (r.versions ?? []).length === 0
+    )
+    .map((r: any) => r.id);
+  if (removiveis.length) {
+    await prisma.sessionRecord.deleteMany({ where: { id: { in: removiveis } } });
+  }
+
+  // Registro coletivo do encontro.
+  const coletivo = await prisma.groupRecord.findFirst({
+    where: { appointmentId: appt.id, isDraft: true },
+  });
+  if (coletivo && !decryptField(coletivo.contentEnc)) {
+    await prisma.groupRecord.delete({ where: { id: coletivo.id } }).catch(() => {});
   }
 }
 
@@ -2406,22 +2338,6 @@ app.post(
       const group = await prisma.group.findUnique({ where: { id: b.groupId }, include: { members: true } });
       if (group) {
         const dataDoEncontro = parseLocalDateTime(String(b.sessionDate), "12:00") ?? sessionDate;
-
-        /**
-         * BUG CORRIGIDO ("Sessão ?" no prontuário): este caminho — registro
-         * coletivo escrito sem o agendamento do grupo ter passado por aqui
-         * antes — criava o prontuário individual de cada integrante SEM
-         * `groupSessionNumber`. Os outros dois pontos que criam esse mesmo
-         * registro (agendamento do grupo e a manutenção "Gerar prontuários
-         * faltantes dos grupos") já calculam o número certo; faltava aqui.
-         * Mesmo cálculo dos dois: conta quantos encontros do grupo já
-         * existem até esta data.
-         */
-        const encontrosAnteriores = await prisma.groupRecord.count({
-          where: { groupId: group.id, sessionDate: { lt: dataDoEncontro } },
-        });
-        const numeroDoEncontro = encontrosAnteriores + 1;
-
         for (const member of group.members) {
           /**
            * SEGUNDA FONTE DE DUPLICATAS.
@@ -2446,7 +2362,6 @@ app.post(
               isDraft: true,
               status: "PENDENTE",
               groupId: group.id,
-              groupSessionNumber: numeroDoEncontro,
             },
           });
           await writeHistory({
@@ -3340,26 +3255,10 @@ app.post(
         .map((a: any) => a.id)
     );
 
-    /**
-     * FALHA CORRIGIDA: rascunho com presença "Compareceu" ficava de fora
-     * desta consulta, mesmo vazio e mesmo órfão — porque o filtro só
-     * considerava `attendance` nulo ou "PENDENTE". Depois da correção da
-     * sincronização de data (`sincronizarDataDoProntuario`) e da geração de
-     * prontuário ao confirmar presença (`resolverProntuarioPorPresenca`), é
-     * exatamente esse o estado que um rascunho órfão costuma ter — e ele
-     * nunca era alcançado por nenhum botão de manutenção.
-     *
-     * Incluir "COMPARECEU" aqui não muda o que é removido: a decisão de
-     * remover continua vindo só de órfão/futuro/agendamento cancelado, mais
-     * abaixo. Um rascunho "Compareceu" vazio ligado a um agendamento que
-     * ainda existe e já aconteceu continua sendo pendência legítima e
-     * permanece intocado — só passa a ser alcançável quando realmente é
-     * órfão (o caso que motivou esta correção).
-     */
     const candidatos = await prisma.sessionRecord.findMany({
       where: {
         isDraft: true,
-        OR: [{ attendance: null }, { attendance: "PENDENTE" }, { attendance: "COMPARECEU" }],
+        OR: [{ attendance: null }, { attendance: "PENDENTE" }],
       },
       include: { versions: true },
     });
@@ -3632,7 +3531,7 @@ app.post(
 
     const existentes = await prisma.sessionRecord.findMany({
       where: { NOT: { groupId: null } },
-      select: { id: true, clientId: true, groupId: true, date: true, groupSessionNumber: true },
+      select: { clientId: true, groupId: true, date: true },
     });
     const chaveExistente = new Set(
       existentes.map((r: any) => `${r.clientId}|${r.groupId}|${r.date.getTime()}`)
@@ -3688,31 +3587,10 @@ app.post(
       }
     }
 
-    /**
-     * BUG CORRIGIDO ("Sessão ?" no prontuário de grupo já existente).
-     *
-     * Esta rotina sempre soube CRIAR o que faltava, mas nunca corrigia o
-     * `groupSessionNumber` de um registro que já existia sem ele — o que
-     * acontecia em dois pontos que criavam o registro individual sem
-     * calcular o número (um já corrigido nesta rodada, no registro coletivo
-     * do grupo). Como a verificação de duplicata olha só se o registro
-     * existe (não se está completo), ele nunca era revisitado. Agora
-     * comparamos o número salvo com o número correto (mesmo cálculo de
-     * `ordemPorGrupo`) e corrigimos quando estiver ausente ou errado.
-     */
-    const aCorrigirNumero: { id: string; paraNumero: number }[] = [];
-    for (const r of existentes) {
-      const numeroCorreto = ordemPorGrupo.get(`${r.groupId}|${r.date.getTime()}`);
-      if (numeroCorreto !== undefined && r.groupSessionNumber !== numeroCorreto) {
-        aCorrigirNumero.push({ id: r.id, paraNumero: numeroCorreto });
-      }
-    }
-
     if (!aplicar) {
       res.json({
         modo: "previa",
         total: aCriar.length,
-        numerosADivergir: aCorrigirNumero.length,
         porGrupo: Array.from(resumo.entries()).map(([grupo, quantidade]) => ({ grupo, quantidade })),
       });
       return;
@@ -3721,197 +3599,19 @@ app.post(
     if (aCriar.length > 0) {
       await prisma.sessionRecord.createMany({ data: aCriar });
     }
-    for (const item of aCorrigirNumero) {
-      await prisma.sessionRecord.update({ where: { id: item.id }, data: { groupSessionNumber: item.paraNumero } });
-    }
 
     await logAccess({
       actor: actorOf(session),
       action: "GERACAO_DE_PRONTUARIOS_DE_GRUPO",
-      resource: `${aCriar.length} registro(s) criado(s), ${aCorrigirNumero.length} numeração(ões) corrigida(s)`,
+      resource: `${aCriar.length} registro(s)`,
       ip: clientIp(req),
     });
 
     res.json({
       modo: "aplicado",
       criados: aCriar.length,
-      numerosCorrigidos: aCorrigirNumero.length,
       porGrupo: Array.from(resumo.entries()).map(([grupo, quantidade]) => ({ grupo, quantidade })),
     });
-  })
-);
-
-/**
- * Corrige os dois efeitos da falha de sincronização entre AGENDAMENTO
- * INDIVIDUAL e prontuário (o equivalente desta rotina, para grupo, é a
- * `/api/manutencao/gerar-prontuarios-de-grupo` acima):
- *
- *   1. Ocorrências de série recorrente (semanal/quinzenal), da 2ª em diante,
- *      que foram marcadas "Compareceu" antes da correção (ver
- *      `resolverProntuarioPorPresenca`) não geraram prontuário nenhum —
- *      ficaram sem documentação mesmo tendo, segundo o próprio sistema,
- *      acontecido.
- *   2. Agendamentos cuja data foi editada depois de o prontuário já existir
- *      ficaram com o prontuário "preso" na data antiga — `SessionRecord.date`
- *      nunca era atualizado junto com `Appointment.date` (ver
- *      `sincronizarDataDoProntuario`, que corrige isso a partir de agora;
- *      esta rotina conserta o que já ficou desalinhado antes da correção).
- *
- * Só mexe em agendamento INDIVIDUAL (`clientId` preenchido, `groupId`
- * vazio) — grupo tem rotina própria.
- *
- * `?aplicar=true` executa; sem isso, devolve apenas a prévia.
- */
-app.post(
-  "/api/manutencao/gerar-prontuarios-de-atendimento",
-  asyncHandler(async (req, res) => {
-    const session = requireSession(req, res, ["SUPERVISOR", "ADMIN"]);
-    if (!session) return;
-    const aplicar = req.query.aplicar === "true";
-
-    const agendamentosIndividuais = await prisma.appointment.findMany({
-      where: { NOT: { clientId: null }, groupId: null },
-    });
-
-    const registrosExistentes = await prisma.sessionRecord.findMany({
-      where: { NOT: { appointmentId: null }, groupId: null },
-      select: { id: true, appointmentId: true, date: true },
-    });
-    const registroPorAgendamento = new Map<string, { id: string; date: Date }>(
-      registrosExistentes.map((r: any) => [r.appointmentId as string, { id: r.id, date: r.date }])
-    );
-
-    const aCriar: any[] = [];
-    const aCorrigirData: { id: string; paraData: Date }[] = [];
-
-    for (const appt of agendamentosIndividuais) {
-      const registro = registroPorAgendamento.get(appt.id);
-
-      if (!registro) {
-        // Só preenche quem já foi confirmado como comparecido. Pendente sem
-        // presença marcada ainda não deveria ter prontuário — é o fluxo
-        // normal (nasce na 1ª ocorrência ou quando alguém marcar presença).
-        if (appt.attendance === "COMPARECEU") {
-          aCriar.push({
-            clientId: appt.clientId,
-            psicoId: appt.psicoId,
-            date: appt.date,
-            notesEnc: "",
-            isDraft: true,
-            appointmentId: appt.id,
-            sessionType: appt.appointmentType || "ATENDIMENTO",
-            attendance: appt.attendance,
-          });
-        }
-        continue;
-      }
-
-      if (registro.date.getTime() !== appt.date.getTime()) {
-        aCorrigirData.push({ id: registro.id, paraData: appt.date });
-      }
-    }
-
-    if (!aplicar) {
-      res.json({
-        modo: "previa",
-        prontuariosAGerar: aCriar.length,
-        datasADivergir: aCorrigirData.length,
-      });
-      return;
-    }
-
-    if (aCriar.length > 0) {
-      await prisma.sessionRecord.createMany({ data: aCriar });
-    }
-    for (const item of aCorrigirData) {
-      await prisma.sessionRecord.update({ where: { id: item.id }, data: { date: item.paraData } });
-    }
-
-    await logAccess({
-      actor: actorOf(session),
-      action: "CORRECAO_DE_PRONTUARIOS_DE_ATENDIMENTO",
-      resource: `${aCriar.length} criado(s), ${aCorrigirData.length} data(s) corrigida(s)`,
-      ip: clientIp(req),
-    });
-
-    res.json({
-      modo: "aplicado",
-      criados: aCriar.length,
-      datasCorrigidas: aCorrigirData.length,
-    });
-  })
-);
-
-/**
- * RECÁLCULO do Controle de Sessões (`completedSessions`).
- *
- * DECISÃO DO SETOR: sessão de grupo não consome o pacote de sessões previstas
- * do atendimento individual (ver `maybeIncrementCompletedSessions`). Antes
- * desta correção, toda sessão de grupo finalizada incrementava o mesmo
- * contador do atendimento individual — inflando artificialmente o consumo do
- * pacote de todo paciente que também participa de grupo.
- *
- * Esta rotina recalcula `completedSessions` do zero, para todo paciente, a
- * partir dos próprios registros: conta só `SessionRecord` INDIVIDUAL
- * (`groupId` nulo), finalizado (`isDraft:false`), cuja presença não seja
- * falta/cancelamento/reagendamento — a mesma regra já aplicada em
- * `maybeIncrementCompletedSessions`, só que sem a contaminação da sessão de
- * grupo. O valor atual é SOBRESCRITO (decisão do setor: o campo nunca foi
- * corrigido manualmente na prática, então não há edição humana a preservar).
- *
- * `?aplicar=true` executa; sem isso, devolve apenas a prévia.
- */
-app.post(
-  "/api/manutencao/recalcular-sessoes-concluidas",
-  asyncHandler(async (req, res) => {
-    const session = requireSession(req, res, ["SUPERVISOR", "ADMIN"]);
-    if (!session) return;
-    const aplicar = req.query.aplicar === "true";
-
-    const registrosIndividuaisFinalizados = await prisma.sessionRecord.findMany({
-      where: {
-        groupId: null,
-        isDraft: false,
-        NOT: {
-          attendance: {
-            in: ["FALTA_JUSTIFICADA", "FALTA_INJUSTIFICADA", "CANCELADO_PACIENTE", "CANCELADO_PROFISSIONAL", "REAGENDADO"],
-          },
-        },
-      },
-      select: { clientId: true },
-    });
-
-    const contagemPorPaciente = new Map<string, number>();
-    for (const r of registrosIndividuaisFinalizados) {
-      contagemPorPaciente.set(r.clientId, (contagemPorPaciente.get(r.clientId) ?? 0) + 1);
-    }
-
-    const clientes = await prisma.client.findMany({ select: { id: true, completedSessions: true } });
-    const divergentes = clientes
-      .map((c: any) => ({
-        id: c.id,
-        valorAtual: c.completedSessions,
-        valorRecalculado: contagemPorPaciente.get(c.id) ?? 0,
-      }))
-      .filter((c: any) => c.valorAtual !== c.valorRecalculado);
-
-    if (!aplicar) {
-      res.json({ modo: "previa", total: divergentes.length });
-      return;
-    }
-
-    for (const c of divergentes) {
-      await prisma.client.update({ where: { id: c.id }, data: { completedSessions: c.valorRecalculado } });
-    }
-
-    await logAccess({
-      actor: actorOf(session),
-      action: "RECALCULO_DE_SESSOES_CONCLUIDAS",
-      resource: `${divergentes.length} paciente(s)`,
-      ip: clientIp(req),
-    });
-
-    res.json({ modo: "aplicado", corrigidos: divergentes.length });
   })
 );
 

@@ -1,5 +1,6 @@
 import React, { useState } from "react";
 import { useStore } from "../contexts/StoreContext";
+import { todayDateOnly } from "../lib/datetime";
 import { X } from "lucide-react";
 import { cn } from "../lib/utils";
 import { TagInput } from "./TagInput";
@@ -22,7 +23,17 @@ export default function CreateClientModal({ open, onClose }: { open: boolean; on
     emergencyContactName: string;
     emergencyContactPhone: string;
     emergencyContactRelationship: string;
+    registrationCode: string;
     dependencyType: string;
+    sector: string;
+    workShift: string;
+    residenceCityNeighborhood: string;
+    whatsappAuthorized?: boolean;
+    previouslyAttended?: boolean;
+    helpRequest: string;
+    medications: string;
+    diagnosis: string;
+    extension: string;
     dependencySponsor: string;
     dateIncluded: string;
   }>({
@@ -37,9 +48,19 @@ export default function CreateClientModal({ open, onClose }: { open: boolean; on
     emergencyContactName: "",
     emergencyContactPhone: "",
     emergencyContactRelationship: "",
+    registrationCode: "",
     dependencyType: "",
     dependencySponsor: "",
-    dateIncluded: new Date().toISOString().split("T")[0],
+    sector: "",
+    workShift: "",
+    residenceCityNeighborhood: "",
+    whatsappAuthorized: undefined,
+    previouslyAttended: undefined,
+    helpRequest: "",
+    medications: "",
+    diagnosis: "",
+    extension: "",
+    dateIncluded: todayDateOnly(),
   });
 
   const toggleTag = (tag: string) => {
@@ -63,13 +84,38 @@ export default function CreateClientModal({ open, onClose }: { open: boolean; on
       birthDate: formData.birthDate,
 
       signedAgreement: formData.signedAgreement,
-      registrationCode: `MAT-${Math.floor(Math.random() * 10000)}`,
+      /**
+       * A matrícula era INVENTADA aleatoriamente (`MAT-4821`), criando um
+       * dado falso no cadastro — e que depois não bate com a matrícula real
+       * do servidor na ALESC. Agora vem do formulário; vazia se não informada.
+       */
+      registrationCode: formData.registrationCode || "",
       affiliation: formData.affiliation,
       allocation: formData.allocation,
       tags: formData.tags,
       dependencyType: formData.affiliation === "Dependente" ? formData.dependencyType : undefined,
       dependencySponsor: formData.affiliation === "Dependente" ? formData.dependencySponsor : undefined,
-      dateIncluded: formData.dateIncluded ? new Date(formData.dateIncluded).toISOString() : new Date().toISOString(),
+      /**
+       * BUG DE FUSO CORRIGIDO.
+       *
+       * `new Date("2026-08-14").toISOString()` interpreta a data como
+       * MEIA-NOITE UTC. Em Florianópolis (UTC-3) isso volta um dia — o mesmo
+       * defeito que causava o atestado com data errada.
+       *
+       * A data pura é enviada COMO ESTÁ ("YYYY-MM-DD"); o servidor a ancora
+       * ao meio-dia de Brasília (ver parseDateInput em api/_lib/datetime.ts).
+       */
+      dateIncluded: formData.dateIncluded || todayDateOnly(),
+      // Campos complementares (todos opcionais).
+      sector: formData.sector || undefined,
+      workShift: formData.workShift || undefined,
+      extension: formData.extension || undefined,
+      residenceCityNeighborhood: formData.residenceCityNeighborhood || undefined,
+      whatsappAuthorized: formData.whatsappAuthorized,
+      previouslyAttended: formData.previouslyAttended,
+      helpRequest: formData.helpRequest || undefined,
+      medications: formData.medications || undefined,
+      diagnosis: formData.diagnosis || undefined,
       status: "FILA_ESPERA",
       maxSessions: 10, // default
       emergencyContactName: formData.emergencyContactName,
@@ -77,12 +123,16 @@ export default function CreateClientModal({ open, onClose }: { open: boolean; on
       emergencyContactRelationship: formData.emergencyContactRelationship,
     });
     setFormData({
-      signedAgreement: false, dateIncluded: new Date().toISOString().split("T")[0],
+      signedAgreement: false, dateIncluded: todayDateOnly(),
       fullName: "", whatsapp: "", birthDate: "",
       affiliation: activeAffiliations[0] || "", allocation: activeAllocations[0] || "",
       tags: [],
       emergencyContactName: "", emergencyContactPhone: "", emergencyContactRelationship: "",
-      dependencyType: "", dependencySponsor: ""
+      registrationCode: "", dependencyType: "", dependencySponsor: "",
+      sector: "", workShift: "", residenceCityNeighborhood: "",
+      whatsappAuthorized: undefined as boolean | undefined,
+      previouslyAttended: undefined as boolean | undefined,
+      helpRequest: "", medications: "", diagnosis: "", extension: "",
     });
     onClose();
   };
@@ -100,6 +150,13 @@ export default function CreateClientModal({ open, onClose }: { open: boolean; on
         </div>
 
         <form onSubmit={handleSubmit} className="p-6 space-y-4 max-h-[70vh] overflow-y-auto">
+          {/*
+            SEÇÃO OPCIONAL.
+            Estes campos vêm preenchidos quando o paciente entra por planilha,
+            mas o cadastro manual não tinha onde informá-los — obrigando a
+            criar e depois editar. Nenhum é obrigatório: quem cadastra na
+            recepção nem sempre tem a informação à mão.
+          */}
           <div className="grid grid-cols-2 gap-4">
                {/*
                  O campo de número de prontuário foi REMOVIDO daqui.
@@ -209,6 +266,70 @@ export default function CreateClientModal({ open, onClose }: { open: boolean; on
               Concluir Cadastro
             </button>
           </div>
+
+          <details className="border border-gray-200 rounded-2xl overflow-hidden">
+            <summary className="px-4 py-3 bg-gray-50 font-bold text-sm text-gray-700 cursor-pointer select-none">
+              Informações complementares (opcional)
+            </summary>
+            <div className="p-4 space-y-4">
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-semibold text-gray-700 mb-1">Matrícula</label>
+                  <input type="text" value={formData.registrationCode} onChange={e => setFormData({...formData, registrationCode: e.target.value})} className="w-full bg-gray-100 border-2 border-transparent focus:bg-white focus:border-blue-500 rounded-xl px-4 py-3 outline-none transition-all" />
+                </div>
+                <div>
+                  <label className="block text-sm font-semibold text-gray-700 mb-1">Setor</label>
+                  <input type="text" value={formData.sector} onChange={e => setFormData({...formData, sector: e.target.value.toLocaleUpperCase("pt-BR")})} className="w-full bg-gray-100 border-2 border-transparent focus:bg-white focus:border-blue-500 rounded-xl px-4 py-3 outline-none transition-all uppercase" />
+                </div>
+                <div>
+                  <label className="block text-sm font-semibold text-gray-700 mb-1">Turno</label>
+                  <input type="text" value={formData.workShift} onChange={e => setFormData({...formData, workShift: e.target.value})} placeholder="Matutino, Vespertino..." className="w-full bg-gray-100 border-2 border-transparent focus:bg-white focus:border-blue-500 rounded-xl px-4 py-3 outline-none transition-all" />
+                </div>
+                <div>
+                  <label className="block text-sm font-semibold text-gray-700 mb-1">Ramal</label>
+                  <input type="text" value={formData.extension} onChange={e => setFormData({...formData, extension: e.target.value})} className="w-full bg-gray-100 border-2 border-transparent focus:bg-white focus:border-blue-500 rounded-xl px-4 py-3 outline-none transition-all" />
+                </div>
+                <div>
+                  <label className="block text-sm font-semibold text-gray-700 mb-1">Cidade / bairro</label>
+                  <input type="text" value={formData.residenceCityNeighborhood} onChange={e => setFormData({...formData, residenceCityNeighborhood: e.target.value})} className="w-full bg-gray-100 border-2 border-transparent focus:bg-white focus:border-blue-500 rounded-xl px-4 py-3 outline-none transition-all" />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-semibold text-gray-700 mb-1">Autoriza contato por WhatsApp</label>
+                  <select value={formData.whatsappAuthorized === undefined ? "" : String(formData.whatsappAuthorized)} onChange={e => setFormData({...formData, whatsappAuthorized: e.target.value === "" ? undefined : e.target.value === "true"})} className="w-full bg-gray-100 border-2 border-transparent focus:bg-white focus:border-blue-500 rounded-xl px-4 py-3 outline-none transition-all">
+                    <option value="">Não informado</option>
+                    <option value="true">Sim</option>
+                    <option value="false">Não</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-sm font-semibold text-gray-700 mb-1">Já foi atendido antes</label>
+                  <select value={formData.previouslyAttended === undefined ? "" : String(formData.previouslyAttended)} onChange={e => setFormData({...formData, previouslyAttended: e.target.value === "" ? undefined : e.target.value === "true"})} className="w-full bg-gray-100 border-2 border-transparent focus:bg-white focus:border-blue-500 rounded-xl px-4 py-3 outline-none transition-all">
+                    <option value="">Não informado</option>
+                    <option value="true">Sim</option>
+                    <option value="false">Não</option>
+                  </select>
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-sm font-semibold text-gray-700 mb-1">Como o setor pode ajudar</label>
+                <textarea value={formData.helpRequest} onChange={e => setFormData({...formData, helpRequest: e.target.value})} rows={2} className="w-full bg-gray-100 border-2 border-transparent focus:bg-white focus:border-blue-500 rounded-xl px-4 py-3 outline-none transition-all text-sm" />
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-semibold text-gray-700 mb-1">Medicações em uso</label>
+                  <input type="text" value={formData.medications} onChange={e => setFormData({...formData, medications: e.target.value})} className="w-full bg-gray-100 border-2 border-transparent focus:bg-white focus:border-blue-500 rounded-xl px-4 py-3 outline-none transition-all" />
+                </div>
+                <div>
+                  <label className="block text-sm font-semibold text-gray-700 mb-1">Diagnóstico / CID informado</label>
+                  <input type="text" value={formData.diagnosis} onChange={e => setFormData({...formData, diagnosis: e.target.value})} className="w-full bg-gray-100 border-2 border-transparent focus:bg-white focus:border-blue-500 rounded-xl px-4 py-3 outline-none transition-all" />
+                </div>
+              </div>
+            </div>
+          </details>
         </form>
       </div>
     </div>

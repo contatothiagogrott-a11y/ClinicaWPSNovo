@@ -86,7 +86,7 @@ export default function Dashboard() {
   // Somente Gestor: ocupação da equipe, fila com tempo de espera, status pizza
   // ---------------------------------------------------------------------
   // Inclui o Supervisor, que também é responsável por pacientes.
-  const psicos = clinicians(users);
+  const psicos = clinicians(users).sort((a, b) => a.name.localeCompare(b.name, "pt-BR"));
   const teamOccupancy = psicos.map(p => {
     const active = clients.filter(c => c.assignedPsicoId === p.id && c.status === "EM_ATENDIMENTO").length;
     const cap = p.capacity as { urgente?: number; alta?: number; media?: number; baixa?: number } | undefined;

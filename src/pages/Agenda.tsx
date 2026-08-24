@@ -50,7 +50,7 @@ const messages = {
 
 export default function AgendaPage() {
   const { config, appointments, clients, currentUser, users, groups, updateAppointment } = useStore();
-  const activeRooms = config.rooms.filter(r => r.isActive).map(r => r.name);
+  const activeRooms = config.rooms.filter(r => r.isActive).sort((a, b) => a.name.localeCompare(b.name, "pt-BR")).map(r => r.name);
 
   const [view, setView] = useState<View>(Views.WEEK);
   const [date, setDate] = useState(new Date());

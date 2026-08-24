@@ -44,7 +44,7 @@ export default function Metrics() {
   const countFaltaInjustificada = withAttendance.filter(a => a.attendance === "FALTA_INJUSTIFICADA").length;
 
   // Métricas por profissional incluem o Supervisor, que também atende.
-  const psicos = clinicians(users);
+  const psicos = clinicians(users).sort((a, b) => a.name.localeCompare(b.name, "pt-BR"));
   const psicoPerformance = psicos.map(p => {
      const activeClients = clients.filter(c => c.assignedPsicoId === p.id && c.status === "EM_ATENDIMENTO");
      const myAppts = apptsInPeriod.filter(a => a.psicoId === p.id);
@@ -119,7 +119,7 @@ export default function Metrics() {
   // sessões dos casos finalizados com aquela tag — dá uma leitura por assunto
   // (ex: "Ansiedade") em vez de só números soltos.
   // -------------------------------------------------------------------------
-  const activeTags = config.tags.filter(t => t.isActive).map(t => t.name);
+  const activeTags = config.tags.filter(t => t.isActive).sort((a, b) => a.name.localeCompare(b.name, "pt-BR")).map(t => t.name);
   const tagBreakdown = activeTags.map(tag => {
     const withTag = clients.filter(c => c.tags?.includes(tag));
     const finalizedWithTag = withTag.filter(c => c.status === "FINALIZADO");

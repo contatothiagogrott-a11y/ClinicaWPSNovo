@@ -18,7 +18,7 @@ import { getSessionTier } from "../lib/sessionTiers";
 import { TagInput } from "../components/TagInput";
 import TransferPsicoModal from "../components/TransferPsicoModal";
 import { canTransferClient, canViewAuditTrail, roleLabel } from "../lib/roles";
-import { formatDateBR, formatDateTimeBR, formatTimelineBR } from "../lib/datetime";
+import { formatDateBR, formatDateTimeBR, formatTimelineBR, todayDateOnly } from "../lib/datetime";
 import type { HistoryLog } from "../types";
 
 /** Natureza de cada registro, exibida no prontuário. */
@@ -51,7 +51,7 @@ export default function ClientProfile() {
   const { clients, users, sessions, currentUser, updateClient, reactivateClient, config, addConfigItem, clinicalDocuments, addClinicalDocument, updateClinicalDocument, instruments, groups, groupClientNotes, saveGroupClientNote, clinicalClientIds, markClientReviewed, fetchClientHistory, registerClientAccess, registerDocumentExport } = useStore();
   const client = clients.find(c => c.id === id);
 
-  const [activeTab, setActiveTab] = useState<"INFO" | "PRONTUARIO" | "PRONTUARIO_GRUPO" | "HISTORICO" | "INSTRUMENTOS" | "DOCUMENTOS" | "GRUPO">("INFO");
+  const [activeTab, setActiveTab] = useState<"INFO" | "PRONTUARIO" | "HISTORICO" | "INSTRUMENTOS" | "DOCUMENTOS" | "GRUPO">("INFO");
   const [isEditingInfo, setIsEditingInfo] = useState(false);
   const [isReactivating, setIsReactivating] = useState(false);
   const [editData, setEditData] = useState(client);
@@ -106,13 +106,6 @@ export default function ClientProfile() {
   useEffect(() => {
     if (activeTab !== "PRONTUARIO" || !clientId) return;
     registerClientAccess(clientId, "prontuario");
-  }, [activeTab, clientId, registerClientAccess]);
-
-  // Idem para o prontuário de grupo — evento de leitura próprio, distinto do
-  // prontuário individual (são dois contextos de sigilo diferentes).
-  useEffect(() => {
-    if (activeTab !== "PRONTUARIO_GRUPO" || !clientId) return;
-    registerClientAccess(clientId, "prontuario_grupo");
   }, [activeTab, clientId, registerClientAccess]);
 
   const exportWithAudit = useCallback(
@@ -253,22 +246,6 @@ export default function ClientProfile() {
   const canViewProntuario = clinicalClientIds.includes(client.id);
   const canEditStatus = (currentUser?.role === "SUPERVISOR" || currentUser?.role === "ADMIN" || currentUser?.role === "PSICO") && client.status !== "FINALIZADO" && client.status !== "CANCELADO";
 
-  /**
-   * ABA "PRONTUÁRIO DE GRUPO" — separada do "Prontuário" (atendimento
-   * individual), pedido do setor para nunca misturar os dois contextos na
-   * tela, do mesmo jeito que já não se misturam no controle de sessões nem
-   * na numeração dos registros.
-   *
-   * Aparece quando existe PELO MENOS UM registro de sessão de grupo deste
-   * paciente no array `sessions` que o servidor já mandou para este usuário
-   * — e o servidor só manda o registro (mesmo que só como metadado, sem
-   * texto) para quem tem algum vínculo clínico com o paciente
-   * (`canViewProntuario`). Preservei quem já SAIU do grupo: a sessão
-   * continua existindo no array mesmo que o vínculo tenha sido encerrado —
-   * é registro documental, não se apaga (Resolução CFP nº 001/2009).
-   */
-  const showGroupProntuarioTab = canViewProntuario && sessions.some(s => s.clientId === client.id && !!s.groupId);
-
   return (
     <div className="flex flex-col h-full animate-in fade-in slide-in-from-bottom-4 duration-500 max-w-5xl mx-auto space-y-6">
       {/* Reactivate Banner */}
@@ -318,20 +295,12 @@ export default function ClientProfile() {
         >
           <UserCircle size={18} /> Informações
         </button>
-        <button
+        <button 
           onClick={() => setActiveTab("PRONTUARIO")}
           className={cn("flex items-center gap-2 px-6 py-2.5 rounded-xl font-medium transition-all", activeTab === "PRONTUARIO" ? "bg-white text-blue-600 shadow-sm" : "text-gray-500 hover:text-gray-700")}
         >
           <FileText size={18} /> Prontuário
         </button>
-        {showGroupProntuarioTab && (
-          <button
-            onClick={() => setActiveTab("PRONTUARIO_GRUPO")}
-            className={cn("flex items-center gap-2 px-6 py-2.5 rounded-xl font-medium transition-all whitespace-nowrap", activeTab === "PRONTUARIO_GRUPO" ? "bg-white text-blue-600 shadow-sm" : "text-gray-500 hover:text-gray-700")}
-          >
-            <Users2 size={18} /> Prontuário de Grupo
-          </button>
-        )}
         {canViewProntuario && (
           <button 
             onClick={() => setActiveTab("INSTRUMENTOS")}
@@ -640,7 +609,7 @@ export default function ClientProfile() {
                   {isEditingInfo ? (
                     <select value={editData.defaultRoom || ""} onChange={e => setEditData({...editData, defaultRoom: e.target.value})} className="w-full bg-white border border-gray-200 rounded-xl px-4 py-3 outline-none font-medium">
                       <option value="">Não definida</option>
-                      {config.rooms.filter(r => r.isActive).map(r => (
+                      {config.rooms.filter(r => r.isActive).sort((a, b) => a.name.localeCompare(b.name, "pt-BR")).map(r => (
                         <option key={r.id} value={r.name}>{r.name}</option>
                       ))}
                     </select>
@@ -689,7 +658,7 @@ export default function ClientProfile() {
                            !config.affiliations.some(a => a.name === editData.affiliation) && (
                              <option value={editData.affiliation}>{editData.affiliation} (não cadastrado)</option>
                            )}
-                         {config.affiliations.filter(a => a.isActive).map(a => <option key={a.id} value={a.name}>{a.name}</option>)}
+                         {config.affiliations.filter(a => a.isActive).sort((a, b) => a.name.localeCompare(b.name, "pt-BR")).map(a => <option key={a.id} value={a.name}>{a.name}</option>)}
                       </select>
                     ) : (
                       <div className="bg-gray-50 px-4 py-3 rounded-xl text-gray-900 font-medium mb-3">{client.affiliation || "Não informado"}</div>
@@ -720,7 +689,7 @@ export default function ClientProfile() {
                     <label className="block text-xs font-semibold text-gray-500 mb-1 tracking-wider uppercase">Local (Unidade)</label>
                     {isEditingInfo ? (
                       <select value={editData.allocation || ""} onChange={e => setEditData({...editData, allocation: e.target.value})} className="w-full bg-white border border-gray-200 rounded-xl px-4 py-3 outline-none font-medium">
-                         {config.allocations.filter(a => a.isActive).map(a => <option key={a.id} value={a.name}>{a.name}</option>)}
+                         {config.allocations.filter(a => a.isActive).sort((a, b) => a.name.localeCompare(b.name, "pt-BR")).map(a => <option key={a.id} value={a.name}>{a.name}</option>)}
                       </select>
                     ) : (
                       <div className="bg-gray-50 px-4 py-3 rounded-xl text-gray-900 font-medium">{client.allocation}</div>
@@ -1039,20 +1008,6 @@ export default function ClientProfile() {
            </div>
         )}
 
-        {/* PRONTUÁRIO DE GRUPO TAB */}
-        {activeTab === "PRONTUARIO_GRUPO" && (
-           <div className="animate-in fade-in duration-300">
-             {!showGroupProntuarioTab ? (
-               <div className="p-12 text-center bg-gray-50 rounded-3xl border border-dashed border-gray-200">
-                 <h3 className="text-lg font-bold text-gray-900 mb-2">Acesso Restrito</h3>
-                 <p className="text-gray-500 max-w-md mx-auto">O prontuário de grupo é conteúdo clínico restrito aos profissionais responsáveis pelo grupo e à supervisão.</p>
-               </div>
-             ) : (
-                <GroupProntuarioView clientId={client.id} />
-             )}
-           </div>
-        )}
-
         {/* INSTRUMENTOS TAB */}
         {activeTab === "INSTRUMENTOS" && (
            <div className="animate-in fade-in duration-300">
@@ -1257,11 +1212,11 @@ function InstrumentosView({ clientId }: { clientId: string }) {
   const [showApply, setShowApply] = useState(false);
   const [selectedInstId, setSelectedInstId] = useState("");
   const [purposeText, setPurposeText] = useState("");
-  const [applyDate, setApplyDate] = useState(() => new Date().toISOString().split("T")[0]);
+  const [applyDate, setApplyDate] = useState(() => todayDateOnly());
   const [firstDescription, setFirstDescription] = useState("");
 
   const [addingEntryFor, setAddingEntryFor] = useState<string | null>(null);
-  const [newEntryDate, setNewEntryDate] = useState(() => new Date().toISOString().split("T")[0]);
+  const [newEntryDate, setNewEntryDate] = useState(() => todayDateOnly());
   const [newEntryDescription, setNewEntryDescription] = useState("");
 
   const [editingEntry, setEditingEntry] = useState<{ appId: string; entryId: string } | null>(null);
@@ -1279,14 +1234,14 @@ function InstrumentosView({ clientId }: { clientId: string }) {
     setSelectedInstId("");
     setPurposeText("");
     setFirstDescription("");
-    setApplyDate(new Date().toISOString().split("T")[0]);
+    setApplyDate(todayDateOnly());
   };
 
   const handleAddEntry = (applicationId: string) => {
     if (!newEntryDate) return;
     addInstrumentApplicationEntry(applicationId, newEntryDate, newEntryDescription);
     setAddingEntryFor(null);
-    setNewEntryDate(new Date().toISOString().split("T")[0]);
+    setNewEntryDate(todayDateOnly());
     setNewEntryDescription("");
   };
 
@@ -1385,7 +1340,7 @@ function InstrumentosView({ clientId }: { clientId: string }) {
                             </div>
                          </div>
                          {canEditThis && addingEntryFor !== app.id && (
-                            <button onClick={() => { setAddingEntryFor(app.id); setNewEntryDate(new Date().toISOString().split("T")[0]); setNewEntryDescription(""); }} className="text-xs bg-blue-50 hover:bg-blue-100 text-blue-700 font-bold px-3 py-1.5 rounded-full transition-colors flex items-center gap-1">
+                            <button onClick={() => { setAddingEntryFor(app.id); setNewEntryDate(todayDateOnly()); setNewEntryDescription(""); }} className="text-xs bg-blue-50 hover:bg-blue-100 text-blue-700 font-bold px-3 py-1.5 rounded-full transition-colors flex items-center gap-1">
                                <PlusIcon size={14} /> Nova Data
                             </button>
                          )}
@@ -1454,369 +1409,6 @@ function InstrumentosView({ clientId }: { clientId: string }) {
   );
 }
 
-/**
- * FORMULÁRIO DE REDAÇÃO/PREENCHIMENTO DE SESSÃO — extraído de `ProntuarioView`
- * para ser reaproveitado também em `GroupProntuarioView`, sem duplicar a
- * lógica de sigilo da anotação privada (Resolução CFP nº 06/2019 e Manual
- * Orientativo do CFP quanto ao conteúdo mínimo necessário do prontuário).
- * Não acessa a store: é puramente controlado pelo componente pai, que decide
- * o que "Salvar" faz (criar sessão avulsa ou preencher um rascunho existente).
- */
-type AttendanceValue = "PRESENTE" | "FALTA_JUSTIFICADA" | "FALTA_NAO_JUSTIFICADA";
-
-function SessionWriteForm({
-  title, notes, setNotes, privateNotesDraft, setPrivateNotesDraft, attendance, onAttendanceChange, onCancel, onSave,
-}: {
-  title: string;
-  notes: string;
-  setNotes: (v: string) => void;
-  privateNotesDraft: string;
-  setPrivateNotesDraft: (v: string) => void;
-  attendance: AttendanceValue;
-  onAttendanceChange: (v: AttendanceValue) => void;
-  onCancel: () => void;
-  onSave: () => void;
-}) {
-  return (
-    <div className="bg-blue-50/50 border border-blue-100 p-6 rounded-3xl animate-in zoom-in-95 duration-200">
-      <div className="mb-4 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-          <div className="text-blue-800 font-bold">
-             {title}
-          </div>
-          <div className="flex items-center gap-2 bg-white rounded-xl p-1 border border-blue-100 shadow-sm">
-             {(["PRESENTE", "FALTA_JUSTIFICADA", "FALTA_NAO_JUSTIFICADA"] as const).map(att => (
-                <button
-                   key={att}
-                   onClick={() => onAttendanceChange(att)}
-                   className={cn("px-4 py-2 rounded-lg text-xs font-bold transition-all", attendance === att ? "bg-blue-100 text-blue-800 shadow-sm" : "text-gray-500 hover:bg-gray-50")}
-                >
-                   {att === "PRESENTE" ? "Compareceu" : att === "FALTA_JUSTIFICADA" ? "Falta Justificada" : "Falta Injustificada"}
-                </button>
-             ))}
-          </div>
-      </div>
-      <textarea
-        autoFocus
-        value={notes}
-        onChange={e => setNotes(e.target.value)}
-        className="w-full bg-white border border-blue-100 rounded-2xl p-4 min-h-[200px] outline-none focus:ring-2 focus:ring-blue-500 resize-y mb-4 font-medium text-gray-700"
-        placeholder="Escreva os apontamentos e evolução clínica da sessão..."
-      />
-      <p className="mb-3 text-[11px] text-gray-500 bg-gray-50 border border-gray-200 rounded-xl px-4 py-2.5 leading-relaxed">
-        Este registro compõe o prontuário da instituição e poderá ser lido por outros
-        profissionais do setor e pela supervisão. Registre apenas o necessário e
-        indispensável ao acompanhamento.
-      </p>
-
-      <div className="mb-4 bg-amber-50/70 border border-amber-200 rounded-2xl p-4">
-        <label className="flex items-center gap-2 text-xs font-bold text-amber-700 uppercase tracking-wide mb-1.5">
-          <Lock size={12} /> Anotação privada desta sessão — somente você vê
-        </label>
-        <textarea
-          value={privateNotesDraft}
-          onChange={e => setPrivateNotesDraft(e.target.value)}
-          rows={4}
-          className="w-full bg-white border border-amber-200 focus:border-amber-400 rounded-xl p-3 outline-none focus:ring-2 focus:ring-amber-300 resize-y font-medium text-gray-700 text-sm transition-colors"
-          placeholder="Impressões clínicas, hipóteses, lembretes pessoais... Não compõe o prontuário oficial e não sai em nenhum documento."
-        />
-        <p className="text-[11px] text-amber-700/80 mt-1.5">
-          Salva junto com o registro. Invisível para a supervisão, para o
-          administrativo e para qualquer outro profissional.
-        </p>
-      </div>
-      <div className="flex items-center justify-end gap-3">
-        <button onClick={onCancel} className="px-5 py-2.5 text-gray-500 font-bold hover:bg-gray-100 rounded-xl transition-colors">Cancelar</button>
-        <button onClick={onSave} className="bg-blue-600 text-white px-6 py-2.5 rounded-xl font-bold hover:bg-blue-700 transition-colors">Salvar Registro</button>
-      </div>
-    </div>
-  );
-}
-
-/**
- * CARD DE UM REGISTRO DE SESSÃO — extraído de `ProntuarioView` para ser
- * reaproveitado por `GroupProntuarioView`. Título, badges de falta,
- * conteúdo/rascunho e anotação privada são idênticos entre atendimento
- * individual e sessão de grupo; a única diferença é o rótulo (via `group`)
- * e a numeração (via `numeroFormatado`, calculada por quem chama).
- */
-function SessionRecordCard({
-  s, group, numeroFormatado, users, currentUser, isWritingAny, onEditDraft,
-  editingRecordId, editNotes, setEditNotes, onStartEditRecord, onCancelEditRecord, onSaveEditRecord,
-  editingPrivateId, editPrivateNotes, setEditPrivateNotes, onStartEditPrivate, onCancelEditPrivate, onSavePrivate,
-  onViewVersions,
-}: {
-  s: any;
-  group: Group | null | undefined;
-  numeroFormatado: string;
-  users: User[];
-  currentUser: User | null | undefined;
-  isWritingAny: boolean;
-  onEditDraft: (s: any) => void;
-  editingRecordId: string | null;
-  editNotes: string;
-  setEditNotes: (v: string) => void;
-  onStartEditRecord: (s: any) => void;
-  onCancelEditRecord: () => void;
-  onSaveEditRecord: (id: string) => void;
-  editingPrivateId: string | null;
-  editPrivateNotes: string;
-  setEditPrivateNotes: (v: string) => void;
-  onStartEditPrivate: (s: any) => void;
-  onCancelEditPrivate: () => void;
-  onSavePrivate: (id: string) => void;
-  onViewVersions: (id: string) => void;
-}) {
-  const isEditingThis = editingRecordId === s.id;
-
-  /**
-   * TÍTULO DO PRONTUÁRIO.
-   *
-   * Formato definido com o setor: atendimento individual e sessão de
-   * grupo usam rótulos e numerações distintos, para nunca se
-   * confundirem na leitura — "Prontuário Individual Sessão 01" é o
-   * atendimento individual; "Prontuário Individual do Grupo Sessão
-   * 01" é o registro do integrante naquele encontro do grupo.
-   */
-  const autorDaSessao = users.find(u => u.id === s.psicoId)?.name ?? "—";
-  const tituloSessao = group
-    ? `Prontuário Individual do Grupo Sessão ${numeroFormatado} - ${autorDaSessao}`
-    : `Prontuário Individual Sessão ${numeroFormatado} - ${autorDaSessao}`;
-
-  return (
-    <div className={cn("p-6 rounded-3xl border", s.isDraft ? "bg-amber-50 border-amber-100" : "bg-gray-50 border-gray-100")}>
-      <div className="flex items-center justify-between mb-4 pb-4 border-b border-gray-200 border-dashed">
-        <div className="flex items-center gap-3 flex-wrap">
-          <h4 className={cn("font-bold", s.isDraft ? "text-amber-900" : "text-gray-900")}>
-             {tituloSessao}
-          </h4>
-          {/*
-            Selo do grupo (nome + nº de protocolo). A numeração já
-            está no título acima — não repete aqui.
-          */}
-          {group && (
-            <span className="bg-purple-100 text-purple-700 text-xs font-bold px-2 py-0.5 rounded-md">
-              Grupo: {group.name}
-              {group.protocolNumber ? ` (${group.protocolNumber})` : ""}
-            </span>
-          )}
-          {/* Natureza do registro, quando não é atendimento comum. */}
-          {s.sessionType && s.sessionType !== "ATENDIMENTO" && (
-            <span className="bg-sky-100 text-sky-700 text-xs font-bold px-2 py-0.5 rounded-md">
-              {SESSION_TYPE_LABELS[s.sessionType] ?? s.sessionType}
-            </span>
-          )}
-          {/*
-            Conteúdo restrito: a API não enviou o texto desta sessão
-            porque ela pertence a outro contexto de atendimento (grupo
-            conduzido por outro profissional). Sinalizar é melhor do
-            que exibir uma sessão aparentemente vazia — quem lê precisa
-            saber que o registro existe, mas não é dele.
-          */}
-          {s.clinicalContentHidden && (
-            <span className="inline-flex items-center gap-1 bg-gray-200 text-gray-600 text-xs font-bold px-2 py-0.5 rounded-md">
-              <Lock size={10} /> Conteúdo restrito
-            </span>
-          )}
-          {/*
-            BUG CORRIGIDO: esta condição assumia que qualquer valor
-            diferente de "PRESENTE" era falta — mas `attendance` tem
-            DUAS convenções de nomes coexistindo no sistema: a do
-            formulário de redação manual do prontuário ("PRESENTE" /
-            "FALTA_NAO_JUSTIFICADA") e a do agendamento na agenda
-            ("COMPARECEU" / "FALTA_INJUSTIFICADA" / "CANCELADO_..." /
-            "REAGENDADO" / "PENDENTE"), que passou a propagar também
-            para o prontuário quando a presença é confirmada na
-            agenda. Todo registro com `attendance: "COMPARECEU"` —
-            ou seja, todo paciente que COMPARECEU — caía no "else" e
-            era rotulado "Falta Injustificada". Agora só rotula quem
-            de fato faltou, reconhecendo as duas convenções.
-          */}
-          {(() => {
-            const rotulosDeFalta: Record<string, string> = {
-              FALTA_JUSTIFICADA: "Falta Justificada",
-              FALTA_NAO_JUSTIFICADA: "Falta Injustificada",
-              FALTA_INJUSTIFICADA: "Falta Injustificada",
-            };
-            const rotulo = s.attendance ? rotulosDeFalta[s.attendance] : undefined;
-            return rotulo ? (
-              <span className="bg-red-100 text-red-700 text-xs font-bold px-2 py-0.5 rounded-md">{rotulo}</span>
-            ) : null;
-          })()}
-          {/*
-            SELO "COMPARECEU" MESMO EM RASCUNHO.
-            Agora a presença marcada na agenda (individual ou de grupo) é
-            gravada no prontuário mesmo antes da evolução ser escrita — mas
-            sem este selo, um registro com `attendance: "COMPARECEU"` e
-            `isDraft: true` mostrava só "Pendente", sem nenhum sinal de que a
-            presença já tinha sido confirmada. Mesmo padrão do selo de falta
-            acima, que já aparecia independente do rascunho estar aberto.
-          */}
-          {s.attendance === "COMPARECEU" && (
-            <span className="bg-emerald-100 text-emerald-700 text-xs font-bold px-2 py-0.5 rounded-md">Compareceu</span>
-          )}
-          {s.isDraft && <span className="bg-amber-200 text-amber-800 text-[10px] uppercase tracking-wider font-bold px-2 py-0.5 rounded-md">Pendente</span>}
-        </div>
-        <div className="flex items-center gap-2">
-           <p className={cn("text-sm font-bold", s.isDraft ? "text-amber-600/60" : "text-gray-500")}>
-              {formatDateTimeBR(s.date)}
-           </p>
-           {/*
-             AUTORIA DO REGISTRO.
-             O prontuário é institucional e a mesma pessoa pode ter
-             sido atendida por profissionais diferentes ao longo do
-             tempo. Sem identificar quem realizou CADA sessão, o
-             registro perde rastreabilidade — e documento psicológico
-             exige identificação do profissional e do CRP
-             (Resolução CFP nº 06/2019).
-           */}
-           {(() => {
-             const autor = users.find(u => u.id === s.psicoId);
-             if (!autor) return null;
-             return (
-               <span className="text-xs text-gray-500">
-                 por <strong className="text-gray-700">{autor.name}</strong>
-                 {autor.crp ? ` — CRP ${autor.crp}` : ""}
-                 {s.psicoId === currentUser?.id && (
-                   <span className="ml-1.5 bg-blue-100 text-blue-700 text-[10px] font-bold px-1.5 py-0.5 rounded">SEU</span>
-                 )}
-               </span>
-             );
-           })()}
-           {(!s.isDraft && (s.psicoId === currentUser?.id || currentUser?.role === "SUPERVISOR") && !isEditingThis) && (
-              <button onClick={() => onStartEditRecord(s)} className="text-gray-400 hover:text-blue-600 transition-colors p-1" title="Editar Prontuário">
-                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" /></svg>
-              </button>
-           )}
-        </div>
-      </div>
-
-      {s.clinicalContentHidden ? (
-        <p className="text-sm text-gray-500 italic">
-          Registro realizado em outro contexto de atendimento. O conteúdo é acessível aos
-          profissionais responsáveis por aquele atendimento e à supervisão.
-        </p>
-      ) : s.isDraft ? (
-         <div>
-            <div className="flex justify-between items-center">
-               <p className="text-amber-700/60 text-sm italic">Sessão agendada. Aguardando preenchimento do prontuário após a realização.</p>
-               {!isWritingAny && (s.psicoId === currentUser?.id || currentUser?.role === "SUPERVISOR") ? (
-                  <button onClick={() => onEditDraft(s)} className="text-amber-700 bg-amber-100/50 hover:bg-amber-100 px-4 py-2 rounded-xl text-sm font-bold transition-colors shrink-0">
-                    Preencher Agora
-                  </button>
-               ) : !isWritingAny ? (
-                  <span className="text-xs text-gray-400 font-semibold shrink-0" title="A evolução deve ser escrita por quem realizou o atendimento.">
-                    Pendente com {users.find(u => u.id === s.psicoId)?.name ?? "outro profissional"}
-                  </span>
-               ) : null}
-            </div>
-
-            {(s.canWritePrivateNotes ?? s.psicoId === currentUser?.id) && (
-               <div className="mt-4 pt-4 border-t border-amber-200 border-dashed">
-                  <div className="flex items-center justify-between mb-2">
-                     <span className="flex items-center gap-1.5 text-xs font-bold text-amber-700 uppercase tracking-wide">
-                        <Lock size={12} /> Anotação Privada (só você vê)
-                     </span>
-                     {editingPrivateId !== s.id && (
-                        <button onClick={() => onStartEditPrivate(s)} className="text-xs text-amber-700 hover:bg-amber-100 px-2 py-1 rounded-lg font-bold transition-colors">
-                           {s.privateNotes ? "Editar" : "Adicionar"}
-                        </button>
-                     )}
-                  </div>
-                  {editingPrivateId === s.id ? (
-                     <div className="space-y-2">
-                        <textarea
-                           autoFocus
-                           value={editPrivateNotes}
-                           onChange={e => setEditPrivateNotes(e.target.value)}
-                           className="w-full bg-amber-50 border border-amber-200 rounded-xl p-3 min-h-[100px] outline-none focus:ring-2 focus:ring-amber-400 resize-y font-medium text-gray-700 text-sm"
-                           placeholder="Impressões clínicas, hipóteses, lembretes antes de formalizar o prontuário..."
-                        />
-                        <div className="flex justify-end gap-2">
-                           <button onClick={onCancelEditPrivate} className="px-3 py-1.5 text-xs text-gray-500 font-bold hover:bg-gray-100 rounded-lg transition-colors">Cancelar</button>
-                           <button onClick={() => onSavePrivate(s.id)} className="bg-amber-600 text-white px-4 py-1.5 text-xs font-bold rounded-lg hover:bg-amber-700 transition-colors">Salvar</button>
-                        </div>
-                     </div>
-                  ) : (
-                     s.privateNotes ? (
-                        <p className="text-sm text-gray-600 bg-amber-50 border border-amber-100 rounded-xl p-3 whitespace-pre-wrap">{s.privateNotes}</p>
-                     ) : (
-                        <p className="text-xs text-gray-400 italic">Nenhuma anotação privada ainda.</p>
-                     )
-                  )}
-               </div>
-            )}
-         </div>
-      ) : (
-         <>
-            {isEditingThis ? (
-               <div className="space-y-4">
-                  <textarea
-                     autoFocus
-                     value={editNotes}
-                     onChange={e => setEditNotes(e.target.value)}
-                     className="w-full bg-white border border-gray-300 rounded-xl p-4 min-h-[150px] outline-none focus:ring-2 focus:ring-blue-500 resize-y font-medium text-gray-700"
-                  />
-                  <div className="flex items-center justify-end gap-2 border-t border-gray-100 pt-3">
-                     <button onClick={onCancelEditRecord} className="px-4 py-2 text-sm text-gray-500 font-bold hover:bg-gray-100 rounded-lg transition-colors">Cancelar</button>
-                     <button onClick={() => onSaveEditRecord(s.id)} className="bg-blue-600 text-white px-5 py-2 text-sm font-bold rounded-lg hover:bg-blue-700 transition-colors">Salvar Edição</button>
-                  </div>
-               </div>
-            ) : (
-               <div className="text-gray-700 whitespace-pre-wrap">{s.notes}</div>
-            )}
-
-            {!isEditingThis && (s.canWritePrivateNotes ?? s.psicoId === currentUser?.id) && (
-               <div className="mt-4 pt-4 border-t border-amber-200 border-dashed">
-                  <div className="flex items-center justify-between mb-2">
-                     <span className="flex items-center gap-1.5 text-xs font-bold text-amber-700 uppercase tracking-wide">
-                        <Lock size={12} /> Anotação Privada (só você vê)
-                     </span>
-                     {editingPrivateId !== s.id && (
-                        <button onClick={() => onStartEditPrivate(s)} className="text-xs text-amber-700 hover:bg-amber-100 px-2 py-1 rounded-lg font-bold transition-colors">
-                           {s.privateNotes ? "Editar" : "Adicionar"}
-                        </button>
-                     )}
-                  </div>
-                  {editingPrivateId === s.id ? (
-                     <div className="space-y-2">
-                        <textarea
-                           autoFocus
-                           value={editPrivateNotes}
-                           onChange={e => setEditPrivateNotes(e.target.value)}
-                           className="w-full bg-amber-50 border border-amber-200 rounded-xl p-3 min-h-[100px] outline-none focus:ring-2 focus:ring-amber-400 resize-y font-medium text-gray-700 text-sm"
-                        />
-                        <div className="flex justify-end gap-2">
-                           <button onClick={onCancelEditPrivate} className="px-3 py-1.5 text-xs text-gray-500 font-bold hover:bg-gray-100 rounded-lg transition-colors">Cancelar</button>
-                           <button onClick={() => onSavePrivate(s.id)} className="bg-amber-600 text-white px-4 py-1.5 text-xs font-bold rounded-lg hover:bg-amber-700 transition-colors">Salvar</button>
-                        </div>
-                     </div>
-                  ) : (
-                     s.privateNotes ? (
-                        <p className="text-sm text-gray-600 bg-amber-50 border border-amber-100 rounded-xl p-3 whitespace-pre-wrap">{s.privateNotes}</p>
-                     ) : (
-                        <p className="text-xs text-gray-400 italic">Nenhuma anotação privada para esta sessão.</p>
-                     )
-                  )}
-               </div>
-            )}
-
-            {!isEditingThis && s.updatedAt && s.updatedAt !== s.createdAt && (
-               <div className="mt-4 pt-4 border-t border-gray-200 border-dashed flex items-center justify-between text-xs text-gray-400 font-medium">
-                  <span>Editado em: {formatDateTimeBR(s.updatedAt)}</span>
-                  {s.versions && s.versions.length > 0 && (
-                     <button onClick={() => onViewVersions(s.id)} className="flex items-center gap-1 hover:text-blue-500 transition-colors">
-                        <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
-                        Ver Histórico ({s.versions.length})
-                     </button>
-                  )}
-               </div>
-            )}
-         </>
-      )}
-    </div>
-  );
-}
-
 function ProntuarioView({ clientId }: { clientId: string }) {
    const { sessions, addSession, updateSession, updatePrivateSessionNotes, currentUser, groups, users } = useStore();
    const [writingSessionId, setWritingSessionId] = useState<string | null>(null);
@@ -1833,27 +1425,7 @@ function ProntuarioView({ clientId }: { clientId: string }) {
 
    const [viewingVersionsId, setViewingVersionsId] = useState<string | null>(null);
 
-   /**
-    * ABA "PRONTUÁRIO" = SÓ ATENDIMENTO INDIVIDUAL.
-    *
-    * Sessão de grupo agora tem aba própria ("Prontuário de Grupo",
-    * `GroupProntuarioView`), visível somente a quem conduz aquele grupo (ou
-    * à Supervisão) — mesmo controle de acesso que já existia aqui, só que
-    * agora aplicado por tipo de atendimento, não misturando os dois no
-    * mesmo card. Sem esse filtro, o prontuário individual voltava a exibir
-    * junto sessões de grupo cujo conteúdo pertence a outro contexto clínico.
-    */
-   const clientSessions = sessions.filter(s => s.clientId === clientId && !s.groupId).sort((a,b) => new Date(b.date).getTime() - new Date(a.date).getTime());
-
-   /**
-    * NUMERAÇÃO DO ATENDIMENTO INDIVIDUAL — série própria, separada da
-    * numeração de grupo (que já vem pronta em `groupSessionNumber`, atribuída
-    * no agendamento do grupo). Como `clientSessions` agora só contém
-    * atendimento individual, a numeração é direta.
-    */
-   const individualNumberById = new Map(
-     clientSessions.map((s, idx) => [s.id, clientSessions.length - idx])
-   );
+   const clientSessions = sessions.filter(s => s.clientId === clientId).sort((a,b) => new Date(b.date).getTime() - new Date(a.date).getTime());
 
    const handleSave = () => {
      if(!notes.trim()) return;
@@ -1936,46 +1508,279 @@ function ProntuarioView({ clientId }: { clientId: string }) {
        </div>
 
        {isWritingAny && (
-         <SessionWriteForm
-           title={isWritingNew ? "Registrando Nova Sessão" : "Preenchendo Prontuário Pendente"}
-           notes={notes}
-           setNotes={setNotes}
-           privateNotesDraft={privateNotesDraft}
-           setPrivateNotesDraft={setPrivateNotesDraft}
-           attendance={attendance}
-           onAttendanceChange={handleAttendanceChange}
-           onCancel={() => { setIsWritingNew(false); setWritingSessionId(null); setNotes(""); setPrivateNotesDraft(""); setAttendance("PRESENTE"); }}
-           onSave={handleSave}
-         />
+         <div className="bg-blue-50/50 border border-blue-100 p-6 rounded-3xl animate-in zoom-in-95 duration-200">
+           <div className="mb-4 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+               <div className="text-blue-800 font-bold">
+                  {isWritingNew ? "Registrando Nova Sessão" : "Preenchendo Prontuário Pendente"}
+               </div>
+               <div className="flex items-center gap-2 bg-white rounded-xl p-1 border border-blue-100 shadow-sm">
+                  {(["PRESENTE", "FALTA_JUSTIFICADA", "FALTA_NAO_JUSTIFICADA"] as const).map(att => (
+                     <button
+                        key={att}
+                        onClick={() => handleAttendanceChange(att)}
+                        className={cn("px-4 py-2 rounded-lg text-xs font-bold transition-all", attendance === att ? "bg-blue-100 text-blue-800 shadow-sm" : "text-gray-500 hover:bg-gray-50")}
+                     >
+                        {att === "PRESENTE" ? "Compareceu" : att === "FALTA_JUSTIFICADA" ? "Falta Justificada" : "Falta Injustificada"}
+                     </button>
+                  ))}
+               </div>
+           </div>
+           <textarea 
+             autoFocus
+             value={notes}
+             onChange={e => setNotes(e.target.value)}
+             className="w-full bg-white border border-blue-100 rounded-2xl p-4 min-h-[200px] outline-none focus:ring-2 focus:ring-blue-500 resize-y mb-4 font-medium text-gray-700"
+             placeholder="Escreva os apontamentos e evolução clínica da sessão..."
+           />
+           {/*
+             Anotação privada EDITÁVEL durante a redação do prontuário.
+             Antes era só leitura, e apenas se já existisse — por isso a opção
+             "sumia" para quem estava registrando uma sessão nova.
+
+             Sigilo: este texto não compõe o prontuário oficial, não sai em
+             nenhum PDF, não aparece para Supervisor nem para o Administrativo,
+             e não gera entrada na trilha de auditoria clínica.
+           */}
+           {/*
+             O prontuário é único e institucional (Manual Orientativo do CFP):
+             outros profissionais do setor terão acesso a este texto. A proteção
+             que a norma pede não é bloquear a leitura, e sim CONTER o que se
+             escreve — "apenas informações necessárias e indispensáveis ao
+             cumprimento dos objetivos do trabalho".
+             O que for impressão pessoal vai na anotação privada, abaixo.
+           */}
+           <p className="mb-3 text-[11px] text-gray-500 bg-gray-50 border border-gray-200 rounded-xl px-4 py-2.5 leading-relaxed">
+             Este registro compõe o prontuário da instituição e poderá ser lido por outros
+             profissionais do setor e pela supervisão. Registre apenas o necessário e
+             indispensável ao acompanhamento.
+           </p>
+
+           <div className="mb-4 bg-amber-50/70 border border-amber-200 rounded-2xl p-4">
+             <label className="flex items-center gap-2 text-xs font-bold text-amber-700 uppercase tracking-wide mb-1.5">
+               <Lock size={12} /> Anotação privada desta sessão — somente você vê
+             </label>
+             <textarea
+               value={privateNotesDraft}
+               onChange={e => setPrivateNotesDraft(e.target.value)}
+               rows={4}
+               className="w-full bg-white border border-amber-200 focus:border-amber-400 rounded-xl p-3 outline-none focus:ring-2 focus:ring-amber-300 resize-y font-medium text-gray-700 text-sm transition-colors"
+               placeholder="Impressões clínicas, hipóteses, lembretes pessoais... Não compõe o prontuário oficial e não sai em nenhum documento."
+             />
+             <p className="text-[11px] text-amber-700/80 mt-1.5">
+               Salva junto com o registro. Invisível para a supervisão, para o
+               administrativo e para qualquer outro profissional.
+             </p>
+           </div>
+           <div className="flex items-center justify-end gap-3">
+             <button onClick={() => { setIsWritingNew(false); setWritingSessionId(null); setNotes(""); setPrivateNotesDraft(""); setAttendance("PRESENTE"); }} className="px-5 py-2.5 text-gray-500 font-bold hover:bg-gray-100 rounded-xl transition-colors">Cancelar</button>
+             <button onClick={handleSave} className="bg-blue-600 text-white px-6 py-2.5 rounded-xl font-bold hover:bg-blue-700 transition-colors">Salvar Registro</button>
+           </div>
+         </div>
        )}
 
        <div className="space-y-6">
-         {clientSessions.map((s) => {
-           const numeroFormatado = String(individualNumberById.get(s.id) ?? 0).padStart(2, "0");
+         {clientSessions.map((s, i) => {
+           const group = s.groupId ? groups.find(g => g.id === s.groupId) : null;
+           const isEditingThis = editingRecordId === s.id;
+
            return (
-             <SessionRecordCard
-               key={s.id}
-               s={s}
-               group={null}
-               numeroFormatado={numeroFormatado}
-               users={users}
-               currentUser={currentUser}
-               isWritingAny={isWritingAny}
-               onEditDraft={handleEditDraft}
-               editingRecordId={editingRecordId}
-               editNotes={editNotes}
-               setEditNotes={setEditNotes}
-               onStartEditRecord={(sess) => { setEditingRecordId(sess.id); setEditNotes(sess.notes); }}
-               onCancelEditRecord={() => setEditingRecordId(null)}
-               onSaveEditRecord={handleInlineSave}
-               editingPrivateId={editingPrivateId}
-               editPrivateNotes={editPrivateNotes}
-               setEditPrivateNotes={setEditPrivateNotes}
-               onStartEditPrivate={(sess) => { setEditingPrivateId(sess.id); setEditPrivateNotes(sess.privateNotes || ""); }}
-               onCancelEditPrivate={() => setEditingPrivateId(null)}
-               onSavePrivate={handleSavePrivateNotes}
-               onViewVersions={(id) => setViewingVersionsId(id)}
-             />
+             <div key={s.id} className={cn("p-6 rounded-3xl border", s.isDraft ? "bg-amber-50 border-amber-100" : "bg-gray-50 border-gray-100")}>
+               <div className="flex items-center justify-between mb-4 pb-4 border-b border-gray-200 border-dashed">
+                 <div className="flex items-center gap-3 flex-wrap">
+                   <h4 className={cn("font-bold", s.isDraft ? "text-amber-900" : "text-gray-900")}>
+                      Sessão {clientSessions.length - i}
+                   </h4>
+                   {/*
+                     Sessão de grupo identificada com a numeração PRÓPRIA do
+                     grupo ("Sessão 3"), que é uma série separada da contagem
+                     dos atendimentos individuais. Sem isso, as duas se
+                     misturavam na leitura do prontuário.
+                   */}
+                   {group && (
+                     <span className="bg-purple-100 text-purple-700 text-xs font-bold px-2 py-0.5 rounded-md">
+                       {s.groupSessionNumber ? `Sessão ${s.groupSessionNumber} · ` : ""}Grupo: {group.name}
+                       {group.protocolNumber ? ` (${group.protocolNumber})` : ""}
+                     </span>
+                   )}
+                   {/* Natureza do registro, quando não é atendimento comum. */}
+                   {s.sessionType && s.sessionType !== "ATENDIMENTO" && (
+                     <span className="bg-sky-100 text-sky-700 text-xs font-bold px-2 py-0.5 rounded-md">
+                       {SESSION_TYPE_LABELS[s.sessionType] ?? s.sessionType}
+                     </span>
+                   )}
+                   {/*
+                     Conteúdo restrito: a API não enviou o texto desta sessão
+                     porque ela pertence a outro contexto de atendimento (grupo
+                     conduzido por outro profissional). Sinalizar é melhor do
+                     que exibir uma sessão aparentemente vazia — quem lê precisa
+                     saber que o registro existe, mas não é dele.
+                   */}
+                   {s.clinicalContentHidden && (
+                     <span className="inline-flex items-center gap-1 bg-gray-200 text-gray-600 text-xs font-bold px-2 py-0.5 rounded-md">
+                       <Lock size={10} /> Conteúdo restrito
+                     </span>
+                   )}
+                   {s.attendance && s.attendance !== "PRESENTE" && <span className="bg-red-100 text-red-700 text-xs font-bold px-2 py-0.5 rounded-md">{s.attendance === "FALTA_JUSTIFICADA" ? "Falta Justificada" : "Falta Injustificada"}</span>}
+                   {s.isDraft && <span className="bg-amber-200 text-amber-800 text-[10px] uppercase tracking-wider font-bold px-2 py-0.5 rounded-md">Pendente</span>}
+                 </div>
+                 <div className="flex items-center gap-2">
+                    <p className={cn("text-sm font-bold", s.isDraft ? "text-amber-600/60" : "text-gray-500")}>
+                       {formatDateTimeBR(s.date)}
+                    </p>
+                    {/*
+                      AUTORIA DO REGISTRO.
+                      O prontuário é institucional e a mesma pessoa pode ter
+                      sido atendida por profissionais diferentes ao longo do
+                      tempo. Sem identificar quem realizou CADA sessão, o
+                      registro perde rastreabilidade — e documento psicológico
+                      exige identificação do profissional e do CRP
+                      (Resolução CFP nº 06/2019).
+                    */}
+                    {(() => {
+                      const autor = users.find(u => u.id === s.psicoId);
+                      if (!autor) return null;
+                      return (
+                        <span className="text-xs text-gray-500">
+                          por <strong className="text-gray-700">{autor.name}</strong>
+                          {autor.crp ? ` — CRP ${autor.crp}` : ""}
+                          {s.psicoId === currentUser?.id && (
+                            <span className="ml-1.5 bg-blue-100 text-blue-700 text-[10px] font-bold px-1.5 py-0.5 rounded">SEU</span>
+                          )}
+                        </span>
+                      );
+                    })()}
+                    {(!s.isDraft && (s.psicoId === currentUser?.id || currentUser?.role === "SUPERVISOR") && !isEditingThis) && (
+                       <button onClick={() => { setEditingRecordId(s.id); setEditNotes(s.notes); }} className="text-gray-400 hover:text-blue-600 transition-colors p-1" title="Editar Prontuário">
+                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" /></svg>
+                       </button>
+                    )}
+                 </div>
+               </div>
+               
+               {s.clinicalContentHidden ? (
+                 <p className="text-sm text-gray-500 italic">
+                   Registro realizado em outro contexto de atendimento. O conteúdo é acessível aos
+                   profissionais responsáveis por aquele atendimento e à supervisão.
+                 </p>
+               ) : s.isDraft ? (
+                  <div>
+                     <div className="flex justify-between items-center">
+                        <p className="text-amber-700/60 text-sm italic">Sessão agendada. Aguardando preenchimento do prontuário após a realização.</p>
+                        {!isWritingAny && (s.psicoId === currentUser?.id || currentUser?.role === "SUPERVISOR") ? (
+                           <button onClick={() => handleEditDraft(s)} className="text-amber-700 bg-amber-100/50 hover:bg-amber-100 px-4 py-2 rounded-xl text-sm font-bold transition-colors shrink-0">
+                             Preencher Agora
+                           </button>
+                        ) : !isWritingAny ? (
+                           <span className="text-xs text-gray-400 font-semibold shrink-0" title="A evolução deve ser escrita por quem realizou o atendimento.">
+                             Pendente com {users.find(u => u.id === s.psicoId)?.name ?? "outro profissional"}
+                           </span>
+                        ) : null}
+                     </div>
+
+                     {(s.canWritePrivateNotes ?? s.psicoId === currentUser?.id) && (
+                        <div className="mt-4 pt-4 border-t border-amber-200 border-dashed">
+                           <div className="flex items-center justify-between mb-2">
+                              <span className="flex items-center gap-1.5 text-xs font-bold text-amber-700 uppercase tracking-wide">
+                                 <Lock size={12} /> Anotação Privada (só você vê)
+                              </span>
+                              {editingPrivateId !== s.id && (
+                                 <button onClick={() => { setEditingPrivateId(s.id); setEditPrivateNotes(s.privateNotes || ""); }} className="text-xs text-amber-700 hover:bg-amber-100 px-2 py-1 rounded-lg font-bold transition-colors">
+                                    {s.privateNotes ? "Editar" : "Adicionar"}
+                                 </button>
+                              )}
+                           </div>
+                           {editingPrivateId === s.id ? (
+                              <div className="space-y-2">
+                                 <textarea
+                                    autoFocus
+                                    value={editPrivateNotes}
+                                    onChange={e => setEditPrivateNotes(e.target.value)}
+                                    className="w-full bg-amber-50 border border-amber-200 rounded-xl p-3 min-h-[100px] outline-none focus:ring-2 focus:ring-amber-400 resize-y font-medium text-gray-700 text-sm"
+                                    placeholder="Impressões clínicas, hipóteses, lembretes antes de formalizar o prontuário..."
+                                 />
+                                 <div className="flex justify-end gap-2">
+                                    <button onClick={() => setEditingPrivateId(null)} className="px-3 py-1.5 text-xs text-gray-500 font-bold hover:bg-gray-100 rounded-lg transition-colors">Cancelar</button>
+                                    <button onClick={() => handleSavePrivateNotes(s.id)} className="bg-amber-600 text-white px-4 py-1.5 text-xs font-bold rounded-lg hover:bg-amber-700 transition-colors">Salvar</button>
+                                 </div>
+                              </div>
+                           ) : (
+                              s.privateNotes ? (
+                                 <p className="text-sm text-gray-600 bg-amber-50 border border-amber-100 rounded-xl p-3 whitespace-pre-wrap">{s.privateNotes}</p>
+                              ) : (
+                                 <p className="text-xs text-gray-400 italic">Nenhuma anotação privada ainda.</p>
+                              )
+                           )}
+                        </div>
+                     )}
+                  </div>
+               ) : (
+                  <>
+                     {isEditingThis ? (
+                        <div className="space-y-4">
+                           <textarea 
+                              autoFocus
+                              value={editNotes}
+                              onChange={e => setEditNotes(e.target.value)}
+                              className="w-full bg-white border border-gray-300 rounded-xl p-4 min-h-[150px] outline-none focus:ring-2 focus:ring-blue-500 resize-y font-medium text-gray-700"
+                           />
+                           <div className="flex items-center justify-end gap-2 border-t border-gray-100 pt-3">
+                              <button onClick={() => setEditingRecordId(null)} className="px-4 py-2 text-sm text-gray-500 font-bold hover:bg-gray-100 rounded-lg transition-colors">Cancelar</button>
+                              <button onClick={() => handleInlineSave(s.id)} className="bg-blue-600 text-white px-5 py-2 text-sm font-bold rounded-lg hover:bg-blue-700 transition-colors">Salvar Edição</button>
+                           </div>
+                        </div>
+                     ) : (
+                        <div className="text-gray-700 whitespace-pre-wrap">{s.notes}</div>
+                     )}
+
+                     {!isEditingThis && (s.canWritePrivateNotes ?? s.psicoId === currentUser?.id) && (
+                        <div className="mt-4 pt-4 border-t border-amber-200 border-dashed">
+                           <div className="flex items-center justify-between mb-2">
+                              <span className="flex items-center gap-1.5 text-xs font-bold text-amber-700 uppercase tracking-wide">
+                                 <Lock size={12} /> Anotação Privada (só você vê)
+                              </span>
+                              {editingPrivateId !== s.id && (
+                                 <button onClick={() => { setEditingPrivateId(s.id); setEditPrivateNotes(s.privateNotes || ""); }} className="text-xs text-amber-700 hover:bg-amber-100 px-2 py-1 rounded-lg font-bold transition-colors">
+                                    {s.privateNotes ? "Editar" : "Adicionar"}
+                                 </button>
+                              )}
+                           </div>
+                           {editingPrivateId === s.id ? (
+                              <div className="space-y-2">
+                                 <textarea
+                                    autoFocus
+                                    value={editPrivateNotes}
+                                    onChange={e => setEditPrivateNotes(e.target.value)}
+                                    className="w-full bg-amber-50 border border-amber-200 rounded-xl p-3 min-h-[100px] outline-none focus:ring-2 focus:ring-amber-400 resize-y font-medium text-gray-700 text-sm"
+                                 />
+                                 <div className="flex justify-end gap-2">
+                                    <button onClick={() => setEditingPrivateId(null)} className="px-3 py-1.5 text-xs text-gray-500 font-bold hover:bg-gray-100 rounded-lg transition-colors">Cancelar</button>
+                                    <button onClick={() => handleSavePrivateNotes(s.id)} className="bg-amber-600 text-white px-4 py-1.5 text-xs font-bold rounded-lg hover:bg-amber-700 transition-colors">Salvar</button>
+                                 </div>
+                              </div>
+                           ) : (
+                              s.privateNotes ? (
+                                 <p className="text-sm text-gray-600 bg-amber-50 border border-amber-100 rounded-xl p-3 whitespace-pre-wrap">{s.privateNotes}</p>
+                              ) : (
+                                 <p className="text-xs text-gray-400 italic">Nenhuma anotação privada para esta sessão.</p>
+                              )
+                           )}
+                        </div>
+                     )}
+                     
+                     {!isEditingThis && s.updatedAt && s.updatedAt !== s.createdAt && (
+                        <div className="mt-4 pt-4 border-t border-gray-200 border-dashed flex items-center justify-between text-xs text-gray-400 font-medium">
+                           <span>Editado em: {formatDateTimeBR(s.updatedAt)}</span>
+                           {s.versions && s.versions.length > 0 && (
+                              <button onClick={() => setViewingVersionsId(s.id)} className="flex items-center gap-1 hover:text-blue-500 transition-colors">
+                                 <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                                 Ver Histórico ({s.versions.length})
+                              </button>
+                           )}
+                        </div>
+                     )}
+                  </>
+               )}
+             </div>
            );
          })}
          {clientSessions.length === 0 && !isWritingAny && (
@@ -1986,182 +1791,6 @@ function ProntuarioView({ clientId }: { clientId: string }) {
        {/* VERSIONS MODAL */}
        {viewViewingVersionsModal(viewingVersionsId, sessions, () => setViewingVersionsId(null))}
 
-     </div>
-   );
-}
-
-/**
- * ABA "PRONTUÁRIO DE GRUPO" — só sessões de grupo deste paciente, agrupadas
- * por grupo. Quem chega aqui já passou pelo controle de acesso do
- * ClientProfile (`showGroupProntuarioTab`: condutor do grupo ou Supervisão),
- * então dentro deste componente não há novo filtro de permissão — só de
- * organização por grupo.
- *
- * Não oferece "Nova Sessão Avulsa": sessão de grupo nasce do agendamento do
- * grupo (`resolverProntuarioPorPresenca`), não é criada solta a partir do
- * cadastro do paciente. O que existe aqui é preencher um rascunho pendente e
- * editar/anotar um registro já existente — mesmas ações de sempre, só que
- * organizadas em um card por grupo, como pedido.
- */
-function GroupProntuarioView({ clientId }: { clientId: string }) {
-   const { sessions, addSession, updateSession, updatePrivateSessionNotes, currentUser, groups, users } = useStore();
-
-   const [writingSessionId, setWritingSessionId] = useState<string | null>(null);
-   const [notes, setNotes] = useState("");
-   const [privateNotesDraft, setPrivateNotesDraft] = useState("");
-   const [attendance, setAttendance] = useState<AttendanceValue>("PRESENTE");
-
-   const [editingRecordId, setEditingRecordId] = useState<string | null>(null);
-   const [editNotes, setEditNotes] = useState("");
-
-   const [editingPrivateId, setEditingPrivateId] = useState<string | null>(null);
-   const [editPrivateNotes, setEditPrivateNotes] = useState("");
-
-   const [viewingVersionsId, setViewingVersionsId] = useState<string | null>(null);
-
-   const clientGroupSessions = sessions.filter(s => s.clientId === clientId && !!s.groupId);
-
-   /**
-    * UM CARD POR GRUPO, com os prontuários individuais do paciente naquele
-    * grupo dentro — pedido explícito: "dentro do cadastro do paciente com
-    * uma aba de prontuário de grupo com um card do grupo e ali os
-    * prontuários individuais dele daquele grupo".
-    */
-   const sessionsByGroupId = new Map<string, typeof clientGroupSessions>();
-   for (const s of clientGroupSessions) {
-     const arr = sessionsByGroupId.get(s.groupId as string) ?? [];
-     arr.push(s);
-     sessionsByGroupId.set(s.groupId as string, arr);
-   }
-   const groupIdsOrdered = Array.from(sessionsByGroupId.keys()).sort((a, b) => {
-     const nameA = groups.find(g => g.id === a)?.name ?? "";
-     const nameB = groups.find(g => g.id === b)?.name ?? "";
-     return nameA.localeCompare(nameB);
-   });
-
-   const isWritingAny = writingSessionId !== null;
-
-   /**
-    * Preencher um rascunho pendente de sessão de grupo. Mesma regra de
-    * autoria de sempre: só quem conduziu aquele encontro (ou a Supervisão)
-    * escreve a evolução — um profissional que assumiu o grupo depois não
-    * assina atendimento alheio.
-    */
-   const handleEditDraft = (s: any) => {
-      if (s.psicoId !== currentUser?.id && currentUser?.role !== "SUPERVISOR") return;
-      setWritingSessionId(s.id);
-      setNotes(s.notes || "");
-      setPrivateNotesDraft(s.privateNotes || "");
-      setAttendance("PRESENTE");
-   };
-
-   const handleAttendanceChange = (val: AttendanceValue) => {
-      setAttendance(val);
-      if (val !== "PRESENTE" && !notes.trim()) {
-         setNotes("Paciente não compareceu à sessão.");
-      }
-   };
-
-   const handleSave = () => {
-     if (!notes.trim() || !writingSessionId) return;
-     const existing = sessions.find(s => s.id === writingSessionId);
-     if (!existing) return;
-     addSession({
-       id: writingSessionId,
-       clientId,
-       psicoId: currentUser!.id,
-       date: existing.date,
-       notes,
-       privateNotes: privateNotesDraft,
-       isDraft: false,
-       attendance,
-     } as any);
-     setWritingSessionId(null);
-     setNotes("");
-     setPrivateNotesDraft("");
-     setAttendance("PRESENTE");
-   };
-
-   const handleInlineSave = (id: string) => {
-     updateSession(id, editNotes);
-     setEditingRecordId(null);
-     setEditNotes("");
-   };
-
-   const handleSavePrivateNotes = (id: string) => {
-     updatePrivateSessionNotes(id, editPrivateNotes);
-     setEditingPrivateId(null);
-     setEditPrivateNotes("");
-   };
-
-   if (clientGroupSessions.length === 0) {
-      return <p className="text-gray-500 text-center py-10">Nenhum registro de sessão de grupo encontrado para este paciente.</p>;
-   }
-
-   return (
-     <div className="space-y-8">
-       {isWritingAny && (
-         <SessionWriteForm
-           title="Preenchendo Prontuário Pendente"
-           notes={notes}
-           setNotes={setNotes}
-           privateNotesDraft={privateNotesDraft}
-           setPrivateNotesDraft={setPrivateNotesDraft}
-           attendance={attendance}
-           onAttendanceChange={handleAttendanceChange}
-           onCancel={() => { setWritingSessionId(null); setNotes(""); setPrivateNotesDraft(""); setAttendance("PRESENTE"); }}
-           onSave={handleSave}
-         />
-       )}
-
-       {groupIdsOrdered.map(groupId => {
-         const group = groups.find(g => g.id === groupId);
-         const groupSessions = (sessionsByGroupId.get(groupId) ?? [])
-           .slice()
-           .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
-
-         return (
-           <div key={groupId} className="bg-purple-50/40 border border-purple-100 rounded-3xl p-6 space-y-6">
-             <div className="flex items-center gap-3">
-               <Users2 size={20} className="text-purple-600" />
-               <h3 className="text-lg font-bold text-purple-900">
-                 {group?.name ?? "Grupo"}
-                 {group?.protocolNumber ? ` (${group.protocolNumber})` : ""}
-               </h3>
-             </div>
-             <div className="space-y-6">
-               {groupSessions.map(s => (
-                 <SessionRecordCard
-                   key={s.id}
-                   s={s}
-                   group={group}
-                   numeroFormatado={typeof s.groupSessionNumber === "number" ? String(s.groupSessionNumber).padStart(2, "0") : "?"}
-                   users={users}
-                   currentUser={currentUser}
-                   isWritingAny={isWritingAny}
-                   onEditDraft={handleEditDraft}
-                   editingRecordId={editingRecordId}
-                   editNotes={editNotes}
-                   setEditNotes={setEditNotes}
-                   onStartEditRecord={(sess) => { setEditingRecordId(sess.id); setEditNotes(sess.notes); }}
-                   onCancelEditRecord={() => setEditingRecordId(null)}
-                   onSaveEditRecord={handleInlineSave}
-                   editingPrivateId={editingPrivateId}
-                   editPrivateNotes={editPrivateNotes}
-                   setEditPrivateNotes={setEditPrivateNotes}
-                   onStartEditPrivate={(sess) => { setEditingPrivateId(sess.id); setEditPrivateNotes(sess.privateNotes || ""); }}
-                   onCancelEditPrivate={() => setEditingPrivateId(null)}
-                   onSavePrivate={handleSavePrivateNotes}
-                   onViewVersions={(id) => setViewingVersionsId(id)}
-                 />
-               ))}
-             </div>
-           </div>
-         );
-       })}
-
-       {/* VERSIONS MODAL */}
-       {viewViewingVersionsModal(viewingVersionsId, sessions, () => setViewingVersionsId(null))}
      </div>
    );
 }

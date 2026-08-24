@@ -93,10 +93,6 @@ interface StoreContextType extends StoreState {
   removerDuplicatasDeGrupo: (aplicar: boolean) => Promise<any>;
   /** Gera os prontuários individuais faltantes nos encontros de grupo. */
   gerarProntuariosDeGrupo: (aplicar: boolean) => Promise<any>;
-  /** Gera prontuários de atendimento individual faltantes e corrige datas desalinhadas. */
-  gerarProntuariosDeAtendimento: (aplicar: boolean) => Promise<any>;
-  /** Recalcula o Controle de Sessões, excluindo sessão de grupo do pacote individual. */
-  recalcularSessoesConcluidas: (aplicar: boolean) => Promise<any>;
   /** Registra o desligamento de um integrante do grupo (não apaga o vínculo). */
   desligarIntegrante: (
     groupId: string,
@@ -520,18 +516,6 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     return r;
   };
 
-  const gerarProntuariosDeAtendimento: StoreContextType["gerarProntuariosDeAtendimento"] = async (aplicar) => {
-    const r = await api.post<any>(`/api/manutencao/gerar-prontuarios-de-atendimento?aplicar=${aplicar}`);
-    if (aplicar) await refreshAll();
-    return r;
-  };
-
-  const recalcularSessoesConcluidas: StoreContextType["recalcularSessoesConcluidas"] = async (aplicar) => {
-    const r = await api.post<any>(`/api/manutencao/recalcular-sessoes-concluidas?aplicar=${aplicar}`);
-    if (aplicar) await refreshAll();
-    return r;
-  };
-
   const markClientReviewed: StoreContextType["markClientReviewed"] = async (clientId) => {
     await api.post(`/api/clients/${clientId}/mark-reviewed`);
     await refreshAll();
@@ -650,8 +634,6 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
         realinharAutoria,
         removerDuplicatasDeGrupo,
         gerarProntuariosDeGrupo,
-        gerarProntuariosDeAtendimento,
-        recalcularSessoesConcluidas,
         desligarIntegrante,
         atualizarNumeroDoGrupo,
         saveGroupClientNote,
