@@ -2,7 +2,7 @@
 
 > **Antes de começar:** enquanto você não terminar, o recurso fica desligado e
 > **nada mais no sistema quebra**. Dá para parar no meio sem risco nenhum.
-
+....
 ⏱️ Cerca de 25 minutos, sem pressa. São **5 partes** — faça na ordem.
 
 ---
