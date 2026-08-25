@@ -1452,7 +1452,22 @@ function ProntuarioView({ clientId }: { clientId: string }) {
 
    const [viewingVersionsId, setViewingVersionsId] = useState<string | null>(null);
 
-   const clientSessions = sessions.filter(s => s.clientId === clientId).sort((a,b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+   /**
+    * A aba PRONTUÁRIO mostra apenas o atendimento INDIVIDUAL.
+    *
+    * Sessões de grupo aparecem na aba Grupo, com a numeração própria do
+    * grupo. Misturar as duas séries na mesma lista tornava impossível ler o
+    * percurso individual do paciente — e era o que estava acontecendo.
+    *
+    * Quem conduz o grupo continua vendo aqueles registros pela aba Grupo; o
+    * conteúdo em si permanece restrito conforme a regra de acesso do servidor.
+    */
+   const clientSessions = sessions
+     .filter(s => s.clientId === clientId && !s.groupId)
+     .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+
+   /** Sessões de grupo do paciente — contadas à parte, exibidas na aba Grupo. */
+   const groupSessions = sessions.filter(s => s.clientId === clientId && !!s.groupId);
 
    const handleSave = () => {
      if(!notes.trim()) return;
@@ -1527,6 +1542,14 @@ function ProntuarioView({ clientId }: { clientId: string }) {
      <div className="space-y-8">
        <div className="flex items-center justify-between">
          <h2 className="text-xl font-bold text-gray-900">Evolução de Sessões</h2>
+         {groupSessions.length > 0 && (
+           <p className="mb-4 text-xs text-purple-800 bg-purple-50 border border-purple-100 rounded-xl px-4 py-2.5">
+             Este paciente também participa de atendimento em grupo:{" "}
+             <strong>{groupSessions.length} encontro(s)</strong> registrado(s) na aba Grupo. Eles
+             não aparecem aqui para não se misturarem ao acompanhamento individual.
+           </p>
+         )}
+
          {!isWritingAny && (
            <button onClick={() => setIsWritingNew(true)} className="bg-blue-600 hover:bg-blue-700 text-white px-5 py-2.5 rounded-xl font-bold flex items-center gap-2 transition-colors">
              <PlusIcon size={16} /> Nova Sessão Avulsa
@@ -1693,7 +1716,15 @@ function ProntuarioView({ clientId }: { clientId: string }) {
                   <div>
                      <div className="flex justify-between items-center">
                         <p className="text-amber-700/60 text-sm italic">Sessão agendada. Aguardando preenchimento do prontuário após a realização.</p>
-                        {!isWritingAny && (s.psicoId === currentUser?.id || currentUser?.role === "SUPERVISOR") ? (
+                        {groupSessions.length > 0 && (
+           <p className="mb-4 text-xs text-purple-800 bg-purple-50 border border-purple-100 rounded-xl px-4 py-2.5">
+             Este paciente também participa de atendimento em grupo:{" "}
+             <strong>{groupSessions.length} encontro(s)</strong> registrado(s) na aba Grupo. Eles
+             não aparecem aqui para não se misturarem ao acompanhamento individual.
+           </p>
+         )}
+
+         {!isWritingAny && (s.psicoId === currentUser?.id || currentUser?.role === "SUPERVISOR") ? (
                            <button onClick={() => handleEditDraft(s)} className="text-amber-700 bg-amber-100/50 hover:bg-amber-100 px-4 py-2 rounded-xl text-sm font-bold transition-colors shrink-0">
                              Preencher Agora
                            </button>
@@ -1870,8 +1901,10 @@ function GroupTabView({ client, myGroupsWithClient, groupClientNotes, saveGroupC
   const [noteText, setNoteText] = useState("");
   const [saving, setSaving] = useState(false);
 
+  // Exportação e contagens da ficha: também sem as sessões de grupo, que têm
+  // documento próprio (ver pdfProntuarioGrupo.ts).
   const clientSessions = sessions
-    .filter(s => s.clientId === client.id && !s.isDraft)
+    .filter(s => s.clientId === client.id && !s.isDraft && !s.groupId)
     .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
 
   const handleSave = async (groupId: string) => {

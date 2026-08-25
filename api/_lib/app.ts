@@ -386,24 +386,44 @@ async function maybeIncrementCompletedSessions(
  * existe, e qualquer divergência se corrige sozinha na próxima atualização.
  */
 async function recalcularSessoesRealizadas(clientId: string): Promise<number> {
-  // 1. Agendamentos em que o paciente compareceu (individuais e de grupo).
-  const compareceu = await prisma.appointment.count({
-    where: { clientId, attendance: "COMPARECEU" },
-  });
-
-  // 2. Prontuários finalizados que NÃO vieram de um agendamento — sessões
-  //    registradas manualmente, sem passar pela agenda.
-  const avulsos = await prisma.sessionRecord.count({
+  /**
+   * A CONTAGEM É FEITA PELOS PRONTUÁRIOS, não pelos agendamentos.
+   *
+   * A fórmula anterior somava "agendamentos com presença COMPARECEU" mais
+   * "prontuários sem agendamento". Ela errava nos dois sentidos:
+   *
+   *  - IGNORAVA as sessões de GRUPO. O agendamento de grupo não tem
+   *    `clientId` (tem `groupId`), então nenhum encontro de grupo entrava na
+   *    conta — e o prontuário individual daquele encontro tinha
+   *    `appointmentId`, então também não caía no segundo termo.
+   *
+   *  - PODIA CONTAR DUAS VEZES o mesmo atendimento, quando existiam tanto o
+   *    agendamento com presença quanto um registro avulso da mesma sessão.
+   *
+   * Contar prontuários FINALIZADOS resolve os dois: cada sessão realizada
+   * gera exatamente um registro, seja individual ou de grupo, tenha vindo da
+   * agenda ou não. É também o critério mais defensável — o que conta como
+   * atendimento prestado é o que foi registrado no prontuário.
+   */
+  const total = await prisma.sessionRecord.count({
     where: {
       clientId,
       isDraft: false,
-      appointmentId: null,
-      // Falta registrada não é sessão realizada.
-      NOT: { attendance: { in: ["FALTA_JUSTIFICADA", "FALTA_INJUSTIFICADA"] } },
+      // Falta, cancelamento e reagendamento não são sessão realizada.
+      NOT: {
+        attendance: {
+          in: [
+            "FALTA_JUSTIFICADA",
+            "FALTA_INJUSTIFICADA",
+            "CANCELADO_PACIENTE",
+            "CANCELADO_PROFISSIONAL",
+            "REAGENDADO",
+          ],
+        },
+      },
     },
   });
 
-  const total = compareceu + avulsos;
   await prisma.client.update({ where: { id: clientId }, data: { completedSessions: total } });
   return total;
 }
@@ -4005,37 +4025,40 @@ app.post(
      * Agora são TRÊS consultas no total, independentemente do número de
      * pacientes: o banco agrupa e devolve as contagens prontas.
      */
-    const [clientes, porAgendamento, porRegistroAvulso] = await Promise.all([
+    const [clientes, porProntuario] = await Promise.all([
       prisma.client.findMany({
         select: { id: true, completedSessions: true, fullNameEnc: true, protocolNumber: true },
       }),
-      prisma.appointment.groupBy({
-        by: ["clientId"],
-        where: { attendance: "COMPARECEU", NOT: { clientId: null } },
-        _count: { _all: true },
-      }),
+      // Mesmo critério de recalcularSessoesRealizadas: conta PRONTUÁRIOS
+      // finalizados (individuais e de grupo), não agendamentos.
       prisma.sessionRecord.groupBy({
         by: ["clientId"],
         where: {
           isDraft: false,
-          appointmentId: null,
-          NOT: { attendance: { in: ["FALTA_JUSTIFICADA", "FALTA_INJUSTIFICADA"] } },
+          NOT: {
+            attendance: {
+              in: [
+                "FALTA_JUSTIFICADA",
+                "FALTA_INJUSTIFICADA",
+                "CANCELADO_PACIENTE",
+                "CANCELADO_PROFISSIONAL",
+                "REAGENDADO",
+              ],
+            },
+          },
         },
         _count: { _all: true },
       }),
     ]);
 
-    const contagemAgendamentos = new Map<string, number>(
-      porAgendamento.map((r: any) => [r.clientId, r._count._all])
-    );
-    const contagemAvulsos = new Map<string, number>(
-      porRegistroAvulso.map((r: any) => [r.clientId, r._count._all])
+    const contagem = new Map<string, number>(
+      porProntuario.map((r: any) => [r.clientId, r._count._all])
     );
 
     const divergentes: Array<{ id: string; nome: string; protocolo: string; atual: number; correto: number }> = [];
 
     for (const c of clientes) {
-      const correto = (contagemAgendamentos.get(c.id) ?? 0) + (contagemAvulsos.get(c.id) ?? 0);
+      const correto = contagem.get(c.id) ?? 0;
       if (correto !== (c.completedSessions ?? 0)) {
         divergentes.push({
           id: c.id,
