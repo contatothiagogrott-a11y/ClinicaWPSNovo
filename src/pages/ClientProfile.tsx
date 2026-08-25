@@ -17,6 +17,7 @@ import { getSessionTier } from "../lib/sessionTiers";
 
 import { TagInput } from "../components/TagInput";
 import TransferPsicoModal from "../components/TransferPsicoModal";
+import DeleteClientModal from "../components/DeleteClientModal";
 import { canTransferClient, canViewAuditTrail, roleLabel } from "../lib/roles";
 import { formatDateBR, formatDateTimeBR, formatTimelineBR, todayDateOnly } from "../lib/datetime";
 import type { HistoryLog } from "../types";
@@ -67,6 +68,7 @@ export default function ClientProfile() {
   const [selectedTestIds, setSelectedTestIds] = useState<Set<string>>(new Set());
   const [isTransferring, setIsTransferring] = useState(false);
   const [saveError, setSaveError] = useState("");
+  const [excluindoCadastro, setExcluindoCadastro] = useState(false);
   const [history, setHistory] = useState<HistoryLog[] | null>(null);
   const [historyError, setHistoryError] = useState("");
 
@@ -864,6 +866,22 @@ export default function ClientProfile() {
           </div>
         )}
 
+        {/*
+          Exclusão definitiva: deliberadamente discreta e fora do fluxo normal.
+          Não é uma ação de rotina — a guarda de prontuário é obrigatória, e
+          isto existe apenas para cadastros criados por engano.
+        */}
+        {currentUser?.role === "SUPERVISOR" && activeTab === "INFO" && (
+          <div className="mb-6 flex justify-end">
+            <button
+              onClick={() => setExcluindoCadastro(true)}
+              className="text-xs font-semibold text-gray-400 hover:text-red-600 transition-colors"
+            >
+              Excluir este cadastro
+            </button>
+          </div>
+        )}
+
         {saveError && (
           <p className="mb-4 text-sm text-red-700 bg-red-50 border border-red-200 rounded-xl px-4 py-3 font-semibold">
             {saveError}
@@ -1146,6 +1164,15 @@ export default function ClientProfile() {
             </div>
           </div>
         </div>
+      )}
+
+      {/* Exclusão definitiva — privativa do Supervisor */}
+      {excluindoCadastro && (
+        <DeleteClientModal
+          client={client}
+          onClose={() => setExcluindoCadastro(false)}
+          onDeleted={() => navigate("/waitlist")}
+        />
       )}
 
       {/* Transferência de responsável (item 4) — Supervisor e Administrativo */}

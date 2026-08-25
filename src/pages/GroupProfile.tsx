@@ -26,7 +26,7 @@ const EXIT_LABELS: Record<string, string> = {
 export default function GroupProfile() {
   const { id } = useParams();
   const navigate = useNavigate();
-  const { groups, users, clients, currentUser, updateGroup, groupRecords, addGroupRecord, updateClient, atualizarNumeroDoGrupo } = useStore();
+  const { groups, users, clients, currentUser, updateGroup, groupRecords, addGroupRecord, updateClient, atualizarNumeroDoGrupo, registrarTermoDoGrupo } = useStore();
   
   const group = groups.find(g => g.id === id);
   const [activeTab, setActiveTab] = useState<"INFO" | "MEMBROS" | "PRONTUARIO">("INFO");
@@ -331,9 +331,31 @@ export default function GroupProfile() {
                           </div>
                        </div>
                        {canManageGroup && (
+                          <div className="flex items-center gap-1">
+                          {(() => {
+                              const vinculo = (group.membros ?? []).find(m => m.clientId === member.id && !m.exitedAt);
+                              const assinado = !!vinculo?.agreementSignedAt;
+                              return (
+                                <button
+                                  onClick={() => registrarTermoDoGrupo(group.id, member.id, !assinado)}
+                                  title={assinado
+                                    ? "Termo de compromisso do grupo assinado — clique para desmarcar"
+                                    : "Termo de compromisso do grupo pendente — clique para registrar a assinatura"}
+                                  className={cn(
+                                    "text-[10px] font-bold px-2 py-1 rounded-md transition-colors mr-1",
+                                    assinado
+                                      ? "bg-emerald-100 text-emerald-700 hover:bg-emerald-200"
+                                      : "bg-amber-100 text-amber-700 hover:bg-amber-200"
+                                  )}
+                                >
+                                  {assinado ? "TERMO OK" : "TERMO PENDENTE"}
+                                </button>
+                              );
+                          })()}
                           <button onClick={() => setMembroSaindo(member.id)} title="Desligar do grupo (registra data e desfecho)" className="p-2 text-gray-400 hover:text-purple-600 hover:bg-purple-50 rounded-xl transition-colors">
                              <X size={18} />
                           </button>
+                          </div>
                        )}
                     </div>
                  ))}

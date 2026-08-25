@@ -213,6 +213,8 @@ export interface Group {
   membros?: Array<{
     clientId: string;
     joinedAt: string;
+    /** Termo de compromisso do grupo assinado (regras, sigilo, frequência). */
+    agreementSignedAt?: string;
     exitedAt?: string;
     exitOutcome?: string;
     exitReason?: string;

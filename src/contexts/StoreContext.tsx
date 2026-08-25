@@ -107,6 +107,10 @@ interface StoreContextType extends StoreState {
   consolidarVinculo: (de: string, para: string) => Promise<number>;
   /** Recalcula o contador de sessões realizadas de todos os pacientes. */
   recalcularSessoes: (aplicar: boolean) => Promise<any>;
+  /** Exclusão definitiva de cadastro — privativa do Supervisor. */
+  excluirPaciente: (clientId: string, confirmacaoNome: string, motivo: string) => Promise<void>;
+  /** Registra o termo de compromisso do grupo para um integrante. */
+  registrarTermoDoGrupo: (groupId: string, clientId: string, assinado: boolean) => Promise<void>;
   realinharAutoria: (aplicar: boolean) => Promise<{
     modo: string; total?: number; corrigidos?: number;
     exemplos?: Array<{ data: string; autorAtual: string; autorCorreto: string }>;
@@ -499,6 +503,16 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     await refreshAll();
   };
 
+  const excluirPaciente: StoreContextType["excluirPaciente"] = async (clientId, confirmacaoNome, motivo) => {
+    await api.deleteWithBody<{ ok: boolean }>(`/api/clients/${clientId}`, { confirmacaoNome, motivo });
+    await refreshAll();
+  };
+
+  const registrarTermoDoGrupo: StoreContextType["registrarTermoDoGrupo"] = async (groupId, clientId, assinado) => {
+    await api.patch(`/api/groups/${groupId}/members/${clientId}/agreement`, { assinado });
+    await refreshAll();
+  };
+
   const recalcularSessoes: StoreContextType["recalcularSessoes"] = async (aplicar) => {
     const r = await api.post<any>(`/api/manutencao/recalcular-sessoes?aplicar=${aplicar}`);
     if (aplicar) await refreshAll();
@@ -662,6 +676,8 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
         diagnosticoVinculos,
         consolidarVinculo,
         recalcularSessoes,
+        excluirPaciente,
+        registrarTermoDoGrupo,
         saveGroupClientNote,
       }}
     >

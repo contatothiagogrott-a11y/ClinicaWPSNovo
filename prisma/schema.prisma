@@ -433,6 +433,16 @@ model GroupMember {
   /** Data de ingresso — permite incluir alguém que entrou depois do início. */
   joinedAt      DateTime  @default(now())
 
+  /**
+   * Termo de compromisso do grupo.
+   *
+   * Grupos terapêuticos têm regras próprias — sigilo entre participantes,
+   * frequência, permanência — que são pactuadas no início. O termo assinado é
+   * o registro desse contrato, e sua ausência é informação relevante para a
+   * condução (o participante ainda não pactuou as regras do grupo).
+   */
+  agreementSignedAt DateTime?
+
   /** Preenchidos no desligamento; nulos enquanto o vínculo estiver ativo. */
   exitedAt      DateTime?
   exitReason    String?

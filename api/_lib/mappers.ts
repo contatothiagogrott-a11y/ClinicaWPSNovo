@@ -228,6 +228,7 @@ export function mapGroup(g: any) {
     membros: (g.members ?? []).map((m: any) => ({
       clientId: m.clientId,
       joinedAt: toISO(m.joinedAt),
+      agreementSignedAt: m.agreementSignedAt ? toISO(m.agreementSignedAt) : undefined,
       exitedAt: m.exitedAt ? toISO(m.exitedAt) : undefined,
       exitOutcome: m.exitOutcome ?? undefined,
       exitReason: m.exitReason ?? undefined,

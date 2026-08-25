@@ -3729,6 +3729,43 @@ app.post(
   })
 );
 
+/**
+ * Registro do termo de compromisso do grupo, por integrante.
+ * Ausência do termo não bloqueia a participação — é informação de condução,
+ * sinalizada ao profissional.
+ */
+app.patch(
+  "/api/groups/:id/members/:clientId/agreement",
+  asyncHandler(async (req, res) => {
+    const session = requireSession(req, res);
+    if (!session) return;
+    if (!(await hasGroupAccess(session, req.params.id))) {
+      res.status(403).json({ error: "Somente os profissionais responsáveis pelo grupo podem registrar o termo." });
+      return;
+    }
+    const assinado = req.body?.assinado !== false;
+    const data = assinado ? (parseDateInput(req.body?.assinadoEm) ?? new Date()) : null;
+
+    await prisma.groupMember.update({
+      where: { groupId_clientId: { groupId: req.params.id, clientId: req.params.clientId } },
+      data: { agreementSignedAt: data },
+    });
+
+    const grupo = await prisma.group.findUnique({ where: { id: req.params.id }, select: { name: true } });
+    await writeHistory({
+      clientId: req.params.clientId,
+      actor: actorOf(session),
+      category: "CLINICO",
+      action: assinado
+        ? "Termo de compromisso do grupo assinado"
+        : "Registro do termo de compromisso do grupo removido",
+      details: `Grupo: ${grupo?.name ?? "—"}.`,
+    });
+
+    res.json({ ok: true });
+  })
+);
+
 /** Desfechos disponíveis para o desligamento de integrante. */
 app.get(
   "/api/groups/exit-outcomes",
@@ -3958,43 +3995,74 @@ app.post(
     if (!session) return;
     const aplicar = req.query.aplicar === "true";
 
-    const clientes = await prisma.client.findMany({
-      select: { id: true, completedSessions: true, fullNameEnc: true, protocolNumber: true },
-    });
-
-    const divergentes: Array<{ nome: string; protocolo: string; atual: number; correto: number }> = [];
-
-    for (const c of clientes) {
-      const compareceu = await prisma.appointment.count({
-        where: { clientId: c.id, attendance: "COMPARECEU" },
-      });
-      const avulsos = await prisma.sessionRecord.count({
+    /**
+     * DESEMPENHO — por que aqui é tudo agregado.
+     *
+     * A versão anterior fazia DUAS consultas por paciente. Com algumas
+     * centenas de cadastros isso vira mais de mil idas e voltas sequenciais
+     * até o Neon, e a função estourava o limite de 60 segundos da Vercel.
+     *
+     * Agora são TRÊS consultas no total, independentemente do número de
+     * pacientes: o banco agrupa e devolve as contagens prontas.
+     */
+    const [clientes, porAgendamento, porRegistroAvulso] = await Promise.all([
+      prisma.client.findMany({
+        select: { id: true, completedSessions: true, fullNameEnc: true, protocolNumber: true },
+      }),
+      prisma.appointment.groupBy({
+        by: ["clientId"],
+        where: { attendance: "COMPARECEU", NOT: { clientId: null } },
+        _count: { _all: true },
+      }),
+      prisma.sessionRecord.groupBy({
+        by: ["clientId"],
         where: {
-          clientId: c.id,
           isDraft: false,
           appointmentId: null,
           NOT: { attendance: { in: ["FALTA_JUSTIFICADA", "FALTA_INJUSTIFICADA"] } },
         },
-      });
-      const correto = compareceu + avulsos;
+        _count: { _all: true },
+      }),
+    ]);
 
+    const contagemAgendamentos = new Map<string, number>(
+      porAgendamento.map((r: any) => [r.clientId, r._count._all])
+    );
+    const contagemAvulsos = new Map<string, number>(
+      porRegistroAvulso.map((r: any) => [r.clientId, r._count._all])
+    );
+
+    const divergentes: Array<{ id: string; nome: string; protocolo: string; atual: number; correto: number }> = [];
+
+    for (const c of clientes) {
+      const correto = (contagemAgendamentos.get(c.id) ?? 0) + (contagemAvulsos.get(c.id) ?? 0);
       if (correto !== (c.completedSessions ?? 0)) {
         divergentes.push({
+          id: c.id,
           nome: decryptField(c.fullNameEnc) || "—",
           protocolo: c.protocolNumber ?? "—",
           atual: c.completedSessions ?? 0,
           correto,
         });
-        if (aplicar) {
-          await prisma.client.update({
-            where: { id: c.id },
-            data: { completedSessions: correto },
-          });
-        }
       }
     }
 
     if (aplicar) {
+      /**
+       * Agrupa por VALOR: em vez de um UPDATE por paciente, um UPDATE por
+       * valor distinto de contagem. Na prática são poucas dezenas de
+       * instruções, mesmo com centenas de pacientes.
+       */
+      const porValor = new Map<number, string[]>();
+      for (const d of divergentes) {
+        porValor.set(d.correto, [...(porValor.get(d.correto) ?? []), d.id]);
+      }
+      for (const [valor, ids] of porValor) {
+        await prisma.client.updateMany({
+          where: { id: { in: ids } },
+          data: { completedSessions: valor },
+        });
+      }
       await logAccess({
         actor: actorOf(session),
         action: "RECALCULO_DE_SESSOES",
@@ -4006,8 +4074,120 @@ app.post(
     res.json({
       modo: aplicar ? "aplicado" : "previa",
       total: divergentes.length,
-      exemplos: divergentes.slice(0, 60),
+      exemplos: divergentes.slice(0, 60).map(({ id, ...resto }) => resto),
     });
+  })
+);
+
+/**
+ * EXCLUSÃO DEFINITIVA DE CADASTRO — privativa do Supervisor.
+ *
+ * ⚠️ Esta rota contraria a orientação geral de guarda do CFP (Res. nº 001/2009
+ * e Lei nº 13.787/2018, que preveem retenção de até 20 anos). Foi implementada
+ * a pedido expresso da coordenação do setor, para situações específicas da
+ * ALESC — tipicamente cadastros criados por engano, testes e duplicatas.
+ *
+ * Por isso, as salvaguardas NÃO são opcionais:
+ *
+ *  1. Somente SUPERVISOR.
+ *  2. Confirmação por digitação do nome completo do paciente — impede o
+ *     clique errado, que num sistema de prontuário é irreversível.
+ *  3. Justificativa obrigatória.
+ *  4. RECUSA quando há prontuário com conteúdo, documento emitido ou
+ *     atendimento realizado: nesses casos houve ato clínico, e apagar
+ *     destruiria registro documental. O caminho correto passa a ser o
+ *     encerramento do caso (status CANCELADO ou FINALIZADO).
+ *  5. Registro PERMANENTE da exclusão, gravado SEM vínculo com o paciente —
+ *     de outro modo a própria trilha seria apagada em cascata junto com ele.
+ *     Guarda protocolo, autor, data e motivo; nenhum dado pessoal.
+ */
+app.delete(
+  "/api/clients/:id",
+  asyncHandler(async (req, res) => {
+    const session = requireSession(req, res, ["SUPERVISOR"]);
+    if (!session) return;
+
+    const client = await prisma.client.findUnique({
+      where: { id: req.params.id },
+      select: { id: true, fullNameEnc: true, protocolNumber: true, status: true },
+    });
+    if (!client) {
+      res.status(404).json({ error: "Paciente não encontrado." });
+      return;
+    }
+
+    const nomeReal = decryptField(client.fullNameEnc) || "";
+    const confirmacao = String(req.body?.confirmacaoNome ?? "").trim();
+    const motivo = String(req.body?.motivo ?? "").trim();
+
+    const normalizar = (t: string) =>
+      t.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toUpperCase().replace(/\s+/g, " ").trim();
+
+    if (normalizar(confirmacao) !== normalizar(nomeReal)) {
+      res.status(400).json({
+        error: "O nome digitado não confere com o cadastro. A exclusão exige confirmação exata.",
+      });
+      return;
+    }
+    if (motivo.length < 15) {
+      res.status(400).json({
+        error: "Descreva o motivo da exclusão (mínimo de 15 caracteres). Fica registrado permanentemente.",
+      });
+      return;
+    }
+
+    // --- Salvaguarda: houve ato clínico? ---
+    const [prontuarios, documentos] = await Promise.all([
+      prisma.sessionRecord.findMany({ where: { clientId: client.id }, select: { notesEnc: true } }),
+      prisma.clinicalDocument.count({ where: { clientId: client.id } }),
+    ]);
+    const prontuariosComTexto = prontuarios.filter((r: any) => !!decryptField(r.notesEnc)).length;
+
+    if (prontuariosComTexto > 0 || documentos > 0) {
+      res.status(409).json({
+        error:
+          `Não é possível excluir: há ${prontuariosComTexto} prontuário(s) com registro escrito e ` +
+          `${documentos} documento(s) emitido(s). Houve atendimento, e o registro deve ser preservado ` +
+          `(Lei nº 13.787/2018). Encerre o caso como Finalizado ou Cancelado em vez de excluir.`,
+        prontuariosComTexto,
+        documentos,
+      });
+      return;
+    }
+
+    /**
+     * Trilha PERMANENTE, gravada ANTES da exclusão e sem vínculo com o
+     * paciente (clientId nulo) — se ficasse vinculada, seria apagada em
+     * cascata e a exclusão não deixaria rastro nenhum.
+     */
+    await logAccess({
+      actor: actorOf(session),
+      action: "EXCLUSAO_DEFINITIVA_DE_CADASTRO",
+      resource:
+        `Protocolo: ${client.protocolNumber ?? "sem número"} · Status: ${client.status} · Motivo: ${motivo}`,
+      clientId: null,
+      ip: clientIp(req),
+    });
+
+    await prisma.client.delete({ where: { id: client.id } });
+
+    res.json({ ok: true, protocolo: client.protocolNumber ?? null });
+  })
+);
+
+/** Histórico de exclusões — leitura restrita ao Supervisor. */
+app.get(
+  "/api/manutencao/exclusoes",
+  asyncHandler(async (req, res) => {
+    const session = requireSession(req, res, ["SUPERVISOR"]);
+    if (!session) return;
+    const registros = await prisma.accessLog.findMany({
+      where: { action: "EXCLUSAO_DEFINITIVA_DE_CADASTRO" },
+      include: { actor: true },
+      orderBy: { at: "desc" },
+      take: 200,
+    });
+    res.json({ exclusoes: registros.map(mapAccessLog) });
   })
 );
 
