@@ -101,6 +101,12 @@ interface StoreContextType extends StoreState {
   ) => Promise<void>;
   /** Corrige manualmente o número do prontuário do grupo (formato G000). */
   atualizarNumeroDoGrupo: (groupId: string, protocolNumber: string | null) => Promise<void>;
+  /** Diagnóstico dos vínculos institucionais (oficiais x divergentes). */
+  diagnosticoVinculos: () => Promise<any>;
+  /** Consolida um vínculo em outro, reatribuindo os pacientes. */
+  consolidarVinculo: (de: string, para: string) => Promise<number>;
+  /** Recalcula o contador de sessões realizadas de todos os pacientes. */
+  recalcularSessoes: (aplicar: boolean) => Promise<any>;
   realinharAutoria: (aplicar: boolean) => Promise<{
     modo: string; total?: number; corrigidos?: number;
     exemplos?: Array<{ data: string; autorAtual: string; autorCorreto: string }>;
@@ -493,6 +499,23 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     await refreshAll();
   };
 
+  const recalcularSessoes: StoreContextType["recalcularSessoes"] = async (aplicar) => {
+    const r = await api.post<any>(`/api/manutencao/recalcular-sessoes?aplicar=${aplicar}`);
+    if (aplicar) await refreshAll();
+    return r;
+  };
+
+  const diagnosticoVinculos: StoreContextType["diagnosticoVinculos"] = async () =>
+    api.get<any>("/api/manutencao/diagnostico-vinculos");
+
+  const consolidarVinculo: StoreContextType["consolidarVinculo"] = async (de, para) => {
+    const { reatribuidos } = await api.post<{ reatribuidos: number }>(
+      "/api/manutencao/consolidar-vinculo", { de, para }
+    );
+    await refreshAll();
+    return reatribuidos;
+  };
+
   const atualizarNumeroDoGrupo: StoreContextType["atualizarNumeroDoGrupo"] = async (groupId, protocolNumber) => {
     await api.patch(`/api/groups/${groupId}/protocol-number`, { protocolNumber });
     await refreshAll();
@@ -636,6 +659,9 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
         gerarProntuariosDeGrupo,
         desligarIntegrante,
         atualizarNumeroDoGrupo,
+        diagnosticoVinculos,
+        consolidarVinculo,
+        recalcularSessoes,
         saveGroupClientNote,
       }}
     >

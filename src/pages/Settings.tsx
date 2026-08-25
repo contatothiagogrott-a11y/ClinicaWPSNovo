@@ -72,7 +72,7 @@ function ConfigManager({ title, type, items, onAdd, onUpdate }: {
 }
 
 export default function Settings() {
-  const { config, addConfigItem, updateConfigItem, currentUser, limparProntuariosVazios, realinharAutoria, removerDuplicatasDeGrupo, gerarProntuariosDeGrupo } = useStore();
+  const { config, addConfigItem, updateConfigItem, currentUser, limparProntuariosVazios, realinharAutoria, removerDuplicatasDeGrupo, gerarProntuariosDeGrupo, diagnosticoVinculos, consolidarVinculo, recalcularSessoes } = useStore();
   const [limpando, setLimpando] = useState(false);
   const [resultadoLimpeza, setResultadoLimpeza] = useState<string>("");
   const [previaAutoria, setPreviaAutoria] = useState<any>(null);
@@ -81,6 +81,12 @@ export default function Settings() {
   const [dupOcupado, setDupOcupado] = useState(false);
   const [gerarGrupo, setGerarGrupo] = useState<any>(null);
   const [gerarOcupado, setGerarOcupado] = useState(false);
+  const [vinculos, setVinculos] = useState<any>(null);
+  const [vincOcupado, setVincOcupado] = useState(false);
+  const [consolidar, setConsolidar] = useState<{ de: string; para: string }>({ de: "", para: "" });
+  const [vincMsg, setVincMsg] = useState("");
+  const [sessoes, setSessoes] = useState<any>(null);
+  const [sessoesOcupado, setSessoesOcupado] = useState(false);
 
   const executarLimpeza = async () => {
     setLimpando(true);
@@ -97,6 +103,31 @@ export default function Settings() {
     } finally {
       setLimpando(false);
     }
+  };
+
+  const executarRecalculo = async (aplicar: boolean) => {
+    setSessoesOcupado(true);
+    try { setSessoes(await recalcularSessoes(aplicar)); }
+    finally { setSessoesOcupado(false); }
+  };
+
+  const carregarVinculos = async () => {
+    setVincOcupado(true); setVincMsg("");
+    try { setVinculos(await diagnosticoVinculos()); }
+    finally { setVincOcupado(false); }
+  };
+
+  const executarConsolidacao = async () => {
+    if (!consolidar.de || !consolidar.para) return;
+    setVincOcupado(true); setVincMsg("");
+    try {
+      const n = await consolidarVinculo(consolidar.de, consolidar.para);
+      setVincMsg(`${n} paciente(s) reatribuído(s) de "${consolidar.de}" para "${consolidar.para}".`);
+      setConsolidar({ de: "", para: "" });
+      setVinculos(await diagnosticoVinculos());
+    } catch (err: any) {
+      setVincMsg(err?.message || "Não foi possível consolidar.");
+    } finally { setVincOcupado(false); }
   };
 
   const executarGeracao = async (aplicar: boolean) => {
@@ -177,6 +208,136 @@ export default function Settings() {
         {resultadoLimpeza && (
           <p className="mt-3 text-sm font-semibold text-gray-700">{resultadoLimpeza}</p>
         )}
+
+        {/* Recálculo do contador de sessões */}
+        <div className="border-t border-gray-100 mt-6 pt-6">
+          <h3 className="font-bold text-gray-900">Conferir sessões realizadas</h3>
+          <p className="text-sm text-gray-500 mt-1 mb-4">
+            O contador era mantido somando 1 a cada evento, e qualquer falha ou remoção posterior
+            deixava o número divergente para sempre. Agora ele é <strong>recalculado a partir
+            dos fatos</strong>: agendamentos com presença registrada mais sessões lançadas fora
+            da agenda.
+          </p>
+          <div className="flex flex-wrap gap-2">
+            <button
+              onClick={() => executarRecalculo(false)}
+              disabled={sessoesOcupado}
+              className="bg-white border border-gray-300 hover:bg-gray-50 disabled:opacity-60 text-gray-800 font-bold px-5 py-3 rounded-xl text-sm transition-colors"
+            >
+              {sessoesOcupado ? "Conferindo..." : "Conferir divergências"}
+            </button>
+            {sessoes?.modo === "previa" && sessoes.total > 0 && (
+              <button
+                onClick={() => executarRecalculo(true)}
+                disabled={sessoesOcupado}
+                className="bg-gray-900 hover:bg-gray-800 disabled:opacity-60 text-white font-bold px-5 py-3 rounded-xl text-sm transition-colors"
+              >
+                Corrigir {sessoes.total} paciente(s)
+              </button>
+            )}
+          </div>
+          {sessoes && (
+            <div className="mt-3">
+              {sessoes.total === 0 ? (
+                <p className="text-sm font-semibold text-emerald-700">
+                  Todos os contadores estão corretos.
+                </p>
+              ) : (
+                <>
+                  <p className="text-sm font-semibold text-gray-700 mb-2">
+                    {sessoes.modo === "aplicado"
+                      ? `${sessoes.total} contador(es) corrigido(s):`
+                      : `${sessoes.total} paciente(s) com contagem divergente:`}
+                  </p>
+                  <div className="border border-gray-200 rounded-xl overflow-hidden max-h-60 overflow-y-auto">
+                    {sessoes.exemplos?.map((e: any, i: number) => (
+                      <div key={i} className="px-4 py-2 text-xs border-b border-gray-100 last:border-0 flex justify-between gap-3">
+                        <span className="text-gray-800 truncate">{e.nome}</span>
+                        <span className="shrink-0">
+                          <span className="text-gray-400 line-through">{e.atual}</span>
+                          {" → "}
+                          <strong className="text-gray-900">{e.correto}</strong>
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </>
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* Consolidação de vínculos */}
+        <div className="border-t border-gray-100 mt-6 pt-6">
+          <h3 className="font-bold text-gray-900">Organizar vínculos institucionais</h3>
+          <p className="text-sm text-gray-500 mt-1 mb-4">
+            As importações anteriores cadastravam como vínculo oficial qualquer texto vindo da
+            planilha. Como os formulários são preenchidos pelos próprios respondentes, entraram
+            variações e erros de digitação, que poluíram as métricas. Aqui você consolida cada
+            divergência na categoria correta.
+          </p>
+          <button
+            onClick={carregarVinculos}
+            disabled={vincOcupado}
+            className="bg-white border border-gray-300 hover:bg-gray-50 disabled:opacity-60 text-gray-800 font-bold px-5 py-3 rounded-xl text-sm transition-colors"
+          >
+            {vincOcupado ? "Carregando..." : "Analisar vínculos"}
+          </button>
+
+          {vinculos && (
+            <div className="mt-4 space-y-3">
+              <p className="text-sm text-gray-700">
+                <strong>{vinculos.categoriasOficiais}</strong> categoria(s) oficial(is) ·{" "}
+                <strong className="text-amber-700">{vinculos.categoriasNaoOficiais}</strong> divergente(s)
+              </p>
+              <div className="border border-gray-200 rounded-xl overflow-hidden max-h-60 overflow-y-auto">
+                {vinculos.linhas?.map((l: any) => (
+                  <div key={l.vinculo} className="px-4 py-2 text-xs border-b border-gray-100 last:border-0 flex justify-between gap-3">
+                    <span className={l.oficial ? "text-gray-800 font-semibold" : "text-amber-700"}>
+                      {l.vinculo} {!l.oficial && "· fora da lista"}
+                    </span>
+                    <span className="text-gray-500 shrink-0">{l.pacientes} paciente(s)</span>
+                  </div>
+                ))}
+              </div>
+
+              <div className="bg-gray-50 border border-gray-200 rounded-xl p-4 space-y-2">
+                <p className="text-xs font-bold text-gray-600 uppercase tracking-wider">Consolidar</p>
+                <div className="flex flex-wrap gap-2 items-center">
+                  <select
+                    value={consolidar.de}
+                    onChange={e => setConsolidar({ ...consolidar, de: e.target.value })}
+                    className="flex-1 min-w-[140px] border border-gray-200 rounded-lg px-3 py-2 text-sm outline-none"
+                  >
+                    <option value="">Vínculo de origem...</option>
+                    {vinculos.linhas?.filter((l: any) => !l.oficial).map((l: any) => (
+                      <option key={l.vinculo} value={l.vinculo}>{l.vinculo} ({l.pacientes})</option>
+                    ))}
+                  </select>
+                  <span className="text-gray-400">→</span>
+                  <select
+                    value={consolidar.para}
+                    onChange={e => setConsolidar({ ...consolidar, para: e.target.value })}
+                    className="flex-1 min-w-[140px] border border-gray-200 rounded-lg px-3 py-2 text-sm outline-none"
+                  >
+                    <option value="">Vínculo oficial...</option>
+                    {config.affiliations.filter(a => a.isActive).sort((a, b) => a.name.localeCompare(b.name, "pt-BR")).map(a => (
+                      <option key={a.id} value={a.name}>{a.name}</option>
+                    ))}
+                  </select>
+                  <button
+                    onClick={executarConsolidacao}
+                    disabled={vincOcupado || !consolidar.de || !consolidar.para}
+                    className="bg-gray-900 hover:bg-gray-800 disabled:opacity-40 text-white font-bold px-4 py-2 rounded-lg text-sm"
+                  >
+                    Consolidar
+                  </button>
+                </div>
+              </div>
+              {vincMsg && <p className="text-sm font-semibold text-gray-700">{vincMsg}</p>}
+            </div>
+          )}
+        </div>
 
         {/* Geração de prontuários de grupo faltantes */}
         <div className="border-t border-gray-100 mt-6 pt-6">

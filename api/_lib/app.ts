@@ -366,20 +366,55 @@ async function maybeIncrementCompletedSessions(
 
   // Sessão de grupo TAMBÉM consome o pacote do paciente: é atendimento
   // prestado pelo setor, independentemente da modalidade.
-
   if (wasDraft && !isNowDraft) {
-    await prisma.client.update({ where: { id: clientId }, data: { completedSessions: { increment: 1 } } });
+    await recalcularSessoesRealizadas(clientId);
   }
 }
 
+/**
+ * RECÁLCULO DO CONTADOR DE SESSÕES
+ * ================================
+ *
+ * O contador era mantido por INCREMENTOS: cada evento somava 1. Isso é
+ * frágil — se um evento falha, roda duas vezes, ou o registro é apagado
+ * depois, o número diverge da realidade e nunca mais volta a bater. Não havia
+ * nem como conferir, porque o número não era derivado de nada.
+ *
+ * Agora o valor é RECALCULADO a partir dos fatos: conta os agendamentos com
+ * presença "COMPARECEU" e os prontuários finalizados sem agendamento (sessões
+ * registradas fora da agenda). Assim o número sempre corresponde ao que
+ * existe, e qualquer divergência se corrige sozinha na próxima atualização.
+ */
+async function recalcularSessoesRealizadas(clientId: string): Promise<number> {
+  // 1. Agendamentos em que o paciente compareceu (individuais e de grupo).
+  const compareceu = await prisma.appointment.count({
+    where: { clientId, attendance: "COMPARECEU" },
+  });
+
+  // 2. Prontuários finalizados que NÃO vieram de um agendamento — sessões
+  //    registradas manualmente, sem passar pela agenda.
+  const avulsos = await prisma.sessionRecord.count({
+    where: {
+      clientId,
+      isDraft: false,
+      appointmentId: null,
+      // Falta registrada não é sessão realizada.
+      NOT: { attendance: { in: ["FALTA_JUSTIFICADA", "FALTA_INJUSTIFICADA"] } },
+    },
+  });
+
+  const total = compareceu + avulsos;
+  await prisma.client.update({ where: { id: clientId }, data: { completedSessions: total } });
+  return total;
+}
+
+/** Mantido como fachada: qualquer mudança de presença recalcula o total. */
 async function maybeIncrementCompletedSessionsOnAttendance(
   clientId: string,
-  wasAttendance: string | null,
-  isNowAttendance: string | null
+  _wasAttendance: string | null,
+  _isNowAttendance: string | null
 ) {
-  if (isNowAttendance === "COMPARECEU" && wasAttendance !== "COMPARECEU") {
-    await prisma.client.update({ where: { id: clientId }, data: { completedSessions: { increment: 1 } } });
-  }
+  await recalcularSessoesRealizadas(clientId);
 }
 
 // ---------------------------------------------------------------------------
@@ -824,10 +859,24 @@ app.post(
           reasons.push(`Já existe cadastro com este nome (${porNome.get(nomeNorm)}).`);
         }
 
-        const afiliacao = b.affiliation ? String(b.affiliation) : "";
+        /**
+         * VÍNCULO — não se cria mais automaticamente.
+         *
+         * A importação cadastrava como vínculo institucional QUALQUER texto
+         * que aparecesse na coluna. Como esses formulários são preenchidos
+         * pelos próprios respondentes, entravam variações e erros de
+         * digitação ("Terceirizado", "terceirizada", "TERCERIZADO") como se
+         * fossem categorias reais — e as métricas passaram a exibir dezenas
+         * de vínculos inexistentes.
+         *
+         * O valor da planilha é PRESERVADO no cadastro do paciente, mas só
+         * vira categoria oficial se corresponder a um vínculo já cadastrado
+         * pelo setor. Divergências entram sinalizadas para revisão, para
+         * alguém enquadrar na categoria certa.
+         */
+        const afiliacao = b.affiliation ? String(b.affiliation).trim() : "";
         if (afiliacao && !affiliationNames.has(afiliacao.toLowerCase())) {
-          novasAfiliacoes.add(afiliacao);
-          affiliationNames.add(afiliacao.toLowerCase());
+          reasons.push(`Vínculo "${afiliacao.slice(0, 30)}" não consta na lista oficial do setor.`);
         }
 
         const needsReview = reasons.length > 0;
@@ -925,12 +974,8 @@ app.post(
       }
     }
 
-    if (novasAfiliacoes.size > 0) {
-      await prisma.configItem.createMany({
-        data: Array.from(novasAfiliacoes).map((name) => ({ type: "AFFILIATION" as any, name, isActive: true })),
-        skipDuplicates: true,
-      });
-    }
+    // Nenhum vínculo é criado automaticamente (ver comentário acima).
+    void novasAfiliacoes;
 
     if (clientesParaCriar.length > 0) {
       await prisma.client.createMany({ data: clientesParaCriar });
@@ -1903,6 +1948,75 @@ app.patch(
     if ("date" in b) data.date = parseLocalDateTime(b.date, b.time ?? existing.time) ?? existing.date;
 
     const updated = await prisma.appointment.update({ where: { id: req.params.id }, data });
+
+    /**
+     * O PRONTUÁRIO ACOMPANHA A AGENDA.
+     *
+     * Ao remarcar um atendimento, o registro vinculado continuava na data
+     * ANTIGA. O profissional abria a agenda de hoje, encontrava o
+     * atendimento, mas o prontuário estava lá atrás (ou à frente) — parecia
+     * que não tinha sido gerado.
+     *
+     * Se o registro ainda está em branco, ele segue o agendamento. Se já tem
+     * texto escrito, NÃO se move: a evolução foi escrita sobre um encontro
+     * que aconteceu naquela data, e mudar isso falsificaria o registro.
+     */
+    if ("date" in b || "time" in b) {
+      const novaData = parseLocalDateTime(
+        b.date ?? toDateOnlyBRT(existing.date),
+        b.time ?? existing.time
+      );
+      if (novaData) {
+        const vinculados = await prisma.sessionRecord.findMany({
+          where: { appointmentId: updated.id },
+          include: { versions: true },
+        });
+        for (const r of vinculados) {
+          const temConteudo =
+            !!decryptField(r.notesEnc) ||
+            !!decryptField(r.privateNotesEnc) ||
+            (r.versions ?? []).length > 0;
+          if (temConteudo) continue;
+          await prisma.sessionRecord.update({ where: { id: r.id }, data: { date: novaData } });
+        }
+
+        // Registro coletivo do grupo, quando houver.
+        const coletivo = await prisma.groupRecord.findFirst({
+          where: { appointmentId: updated.id, isDraft: true },
+        });
+        if (coletivo && !decryptField(coletivo.contentEnc)) {
+          await prisma.groupRecord.update({
+            where: { id: coletivo.id },
+            data: { sessionDate: novaData },
+          });
+        }
+      }
+    }
+
+    /**
+     * Se o agendamento passou a existir sem registro (por exemplo, foi
+     * remarcado de uma data futura para hoje, e o registro havia sido
+     * removido pela limpeza de futuros), recria o pendente.
+     */
+    if (updated.clientId && !updated.groupId) {
+      const existeRegistro = await prisma.sessionRecord.findFirst({
+        where: { appointmentId: updated.id },
+        select: { id: true },
+      });
+      if (!existeRegistro) {
+        await prisma.sessionRecord.create({
+          data: {
+            clientId: updated.clientId,
+            psicoId: updated.psicoId,
+            date: updated.date,
+            notesEnc: "",
+            isDraft: true,
+            appointmentId: updated.id,
+            sessionType: (updated as any).appointmentType || "ATENDIMENTO",
+          },
+        });
+      }
+    }
 
     // Propagação para as ocorrências futuras da mesma série.
     let futureUpdated = 0;
@@ -3734,6 +3848,166 @@ app.patch(
       include: { members: true },
     });
     res.json({ group: mapGroup(group) });
+  })
+);
+
+/**
+ * Diagnóstico dos vínculos institucionais.
+ *
+ * A importação cadastrava como categoria oficial qualquer texto vindo da
+ * planilha — e como os formulários são preenchidos pelos próprios
+ * respondentes, entraram variações e erros de digitação. As métricas por
+ * vínculo passaram a exibir dezenas de categorias inexistentes.
+ *
+ * Esta rota mostra QUANTOS pacientes existem em cada vínculo, para que o setor
+ * identifique o que é categoria real e o que é ruído a consolidar.
+ */
+app.get(
+  "/api/manutencao/diagnostico-vinculos",
+  asyncHandler(async (req, res) => {
+    const session = requireSession(req, res, ["SUPERVISOR", "ADMIN"]);
+    if (!session) return;
+
+    const clientes = await prisma.client.findMany({ select: { affiliation: true } });
+    const cadastrados = await prisma.configItem.findMany({ where: { type: "AFFILIATION" } });
+    const oficiais = new Set(cadastrados.map((a: any) => a.name));
+
+    const contagem = new Map<string, number>();
+    for (const c of clientes) {
+      const v = (c.affiliation ?? "").trim() || "(em branco)";
+      contagem.set(v, (contagem.get(v) ?? 0) + 1);
+    }
+
+    const linhas = Array.from(contagem.entries())
+      .map(([vinculo, pacientes]) => ({
+        vinculo,
+        pacientes,
+        oficial: oficiais.has(vinculo),
+      }))
+      .sort((a, b) => b.pacientes - a.pacientes);
+
+    res.json({
+      total: clientes.length,
+      categoriasOficiais: linhas.filter((l) => l.oficial).length,
+      categoriasNaoOficiais: linhas.filter((l) => !l.oficial).length,
+      linhas,
+    });
+  })
+);
+
+/**
+ * Consolida um vínculo em outro (ex.: "terceirizada" -> "Terceirizado").
+ *
+ * Reatribui os pacientes e, se o vínculo de origem tiver sido criado por
+ * engano pela importação, remove a categoria.
+ */
+app.post(
+  "/api/manutencao/consolidar-vinculo",
+  asyncHandler(async (req, res) => {
+    const session = requireSession(req, res, ["SUPERVISOR", "ADMIN"]);
+    if (!session) return;
+
+    const de = String(req.body?.de ?? "").trim();
+    const para = String(req.body?.para ?? "").trim();
+    if (!de || !para) {
+      res.status(400).json({ error: "Informe o vínculo de origem e o de destino." });
+      return;
+    }
+
+    const destinoExiste = await prisma.configItem.findFirst({
+      where: { type: "AFFILIATION", name: para },
+      select: { id: true },
+    });
+    if (!destinoExiste) {
+      res.status(400).json({ error: `"${para}" não é um vínculo cadastrado no setor.` });
+      return;
+    }
+
+    const result = await prisma.client.updateMany({
+      where: { affiliation: de },
+      data: { affiliation: para },
+    });
+
+    // Remove a categoria de origem, se existir e não for mais usada.
+    await prisma.configItem.deleteMany({ where: { type: "AFFILIATION", name: de } });
+
+    await logAccess({
+      actor: actorOf(session),
+      action: "CONSOLIDACAO_DE_VINCULO",
+      resource: `${de} -> ${para} (${result.count} paciente(s))`,
+      ip: clientIp(req),
+    });
+
+    res.json({ reatribuidos: result.count });
+  })
+);
+
+/**
+ * Recalcula o contador de sessões de TODOS os pacientes.
+ *
+ * Necessária porque o valor vinha sendo mantido por incrementos, e qualquer
+ * falha ou remoção posterior deixava o número permanentemente divergente do
+ * que aconteceu de fato.
+ *
+ * `?aplicar=true` corrige; sem isso, apenas lista as divergências.
+ */
+app.post(
+  "/api/manutencao/recalcular-sessoes",
+  asyncHandler(async (req, res) => {
+    const session = requireSession(req, res, ["SUPERVISOR", "ADMIN"]);
+    if (!session) return;
+    const aplicar = req.query.aplicar === "true";
+
+    const clientes = await prisma.client.findMany({
+      select: { id: true, completedSessions: true, fullNameEnc: true, protocolNumber: true },
+    });
+
+    const divergentes: Array<{ nome: string; protocolo: string; atual: number; correto: number }> = [];
+
+    for (const c of clientes) {
+      const compareceu = await prisma.appointment.count({
+        where: { clientId: c.id, attendance: "COMPARECEU" },
+      });
+      const avulsos = await prisma.sessionRecord.count({
+        where: {
+          clientId: c.id,
+          isDraft: false,
+          appointmentId: null,
+          NOT: { attendance: { in: ["FALTA_JUSTIFICADA", "FALTA_INJUSTIFICADA"] } },
+        },
+      });
+      const correto = compareceu + avulsos;
+
+      if (correto !== (c.completedSessions ?? 0)) {
+        divergentes.push({
+          nome: decryptField(c.fullNameEnc) || "—",
+          protocolo: c.protocolNumber ?? "—",
+          atual: c.completedSessions ?? 0,
+          correto,
+        });
+        if (aplicar) {
+          await prisma.client.update({
+            where: { id: c.id },
+            data: { completedSessions: correto },
+          });
+        }
+      }
+    }
+
+    if (aplicar) {
+      await logAccess({
+        actor: actorOf(session),
+        action: "RECALCULO_DE_SESSOES",
+        resource: `${divergentes.length} paciente(s)`,
+        ip: clientIp(req),
+      });
+    }
+
+    res.json({
+      modo: aplicar ? "aplicado" : "previa",
+      total: divergentes.length,
+      exemplos: divergentes.slice(0, 60),
+    });
   })
 );
 

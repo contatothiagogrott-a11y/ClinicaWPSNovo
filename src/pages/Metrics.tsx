@@ -104,11 +104,41 @@ export default function Metrics() {
   
   const totalAvaliacoes = filteredLogs.reduce((acc, log) => acc + Math.abs(log.amount), 0);
   
-  const affiliations = config.affiliations.map(a => a.name);
-  const byAffiliation = affiliations.map(a => ({
-     name: a,
-     count: filteredClients.filter(c => c.affiliation === a).length
-  }));
+  /**
+   * MÉTRICAS POR VÍNCULO
+   * ====================
+   *
+   * A lista vinha das categorias CADASTRADAS, mas a importação criava uma
+   * categoria para cada texto encontrado na planilha — e como esses
+   * formulários são preenchidos pelos próprios respondentes, entraram
+   * variações e erros de digitação como se fossem vínculos institucionais.
+   *
+   * Agora partimos dos DADOS REAIS dos pacientes, e separamos o que é
+   * categoria oficial do setor do que é divergência a consolidar. Assim o
+   * gráfico deixa de misturar as duas coisas e o setor enxerga o ruído em vez
+   * de contá-lo como informação.
+   */
+  const vinculosOficiais = new Set(config.affiliations.filter(a => a.isActive).map(a => a.name));
+
+  const contagemPorVinculo = new Map<string, number>();
+  filteredClients.forEach(c => {
+    const v = (c.affiliation || "").trim();
+    if (!v) return;
+    contagemPorVinculo.set(v, (contagemPorVinculo.get(v) ?? 0) + 1);
+  });
+
+  const byAffiliation = Array.from(contagemPorVinculo.entries())
+    .filter(([nome]) => vinculosOficiais.has(nome))
+    .map(([name, count]) => ({ name, count }))
+    .sort((a, b) => b.count - a.count);
+
+  /** Valores fora da lista oficial — ruído da importação, exibido à parte. */
+  const vinculosDivergentes = Array.from(contagemPorVinculo.entries())
+    .filter(([nome]) => !vinculosOficiais.has(nome))
+    .map(([name, count]) => ({ name, count }))
+    .sort((a, b) => b.count - a.count);
+
+  const semVinculo = filteredClients.filter(c => !(c.affiliation || "").trim()).length;
 
   const totalDependentes = byAffiliation.find(a => a.name === "Dependente")?.count || 0;
   const totalTitulares = filteredClients.length - totalDependentes;
@@ -588,7 +618,7 @@ export default function Metrics() {
          <div className="bg-white p-6 rounded-3xl border border-gray-100 shadow-sm">
             <h3 className="text-lg font-bold text-gray-900 mb-6 flex items-center gap-2"><Users className="text-blue-600"/> Público por Vínculo</h3>
             <div className="space-y-4">
-               {byAffiliation.sort((a,b) => b.count - a.count).map(a => (
+               {byAffiliation.map(a => (
                   <div key={a.name}>
                      <div className="flex justify-between text-sm font-semibold text-gray-700 mb-1">
                         <span>{a.name}</span>
@@ -599,6 +629,46 @@ export default function Metrics() {
                      </div>
                   </div>
                ))}
+               {byAffiliation.length === 0 && (
+                  <p className="text-sm text-gray-500">Nenhum paciente com vínculo oficial informado.</p>
+               )}
+
+               {/*
+                 Ruído da importação, exibido SEPARADAMENTE.
+                 Estes valores vieram das planilhas preenchidas pelos próprios
+                 respondentes e não correspondem a vínculos institucionais.
+                 Mostrar junto do gráfico faria o setor tomar erro de digitação
+                 por categoria real.
+               */}
+               {vinculosDivergentes.length > 0 && (
+                  <div className="mt-6 pt-5 border-t border-gray-100">
+                     <p className="text-sm font-bold text-amber-700 mb-1">
+                        {vinculosDivergentes.length} valor(es) fora da lista oficial
+                     </p>
+                     <p className="text-xs text-gray-500 mb-3">
+                        Vieram das planilhas, preenchidos pelos respondentes. Não entram no gráfico
+                        acima. Consolide em Configurações → Manutenção para que passem a contar.
+                     </p>
+                     <div className="flex flex-wrap gap-1.5">
+                        {vinculosDivergentes.slice(0, 12).map(v => (
+                           <span key={v.name} className="text-[11px] bg-amber-50 border border-amber-200 text-amber-800 px-2 py-1 rounded-lg">
+                              {v.name} <strong>({v.count})</strong>
+                           </span>
+                        ))}
+                        {vinculosDivergentes.length > 12 && (
+                           <span className="text-[11px] text-gray-500 px-2 py-1">
+                              +{vinculosDivergentes.length - 12} outros
+                           </span>
+                        )}
+                     </div>
+                  </div>
+               )}
+
+               {semVinculo > 0 && (
+                  <p className="text-xs text-gray-500 mt-3">
+                     {semVinculo} paciente(s) sem vínculo informado.
+                  </p>
+               )}
             </div>
          </div>
          

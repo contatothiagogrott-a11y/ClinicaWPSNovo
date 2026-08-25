@@ -560,7 +560,16 @@ export default function AgendaModal({ open, onClose, initialData, existingAppoin
                            Falta s/ Justif.
                          </button>
                        </div>
+                    </div>
 
+                    {/*
+                      CANCELAMENTO E REAGENDAMENTO — vale para atendimento
+                      individual E para encontro de grupo.
+                      Estava DENTRO do bloco de presença individual, que fica
+                      oculto em grupos — por isso o grupo só exibia o título,
+                      sem nenhum botão.
+                    */}
+                    <div className="flex flex-col gap-2">
                        {/*
                          CANCELAMENTO E REAGENDAMENTO.
                          Faltar é diferente de cancelar: quem avisou e desmarcou
@@ -597,9 +606,9 @@ export default function AgendaModal({ open, onClose, initialData, existingAppoin
                            Reagendado
                          </button>
                          <p className="text-[10px] text-gray-500 mt-2 leading-tight">
-                           Cancelamento e reagendamento <strong>não contam como falta</strong> e não
-                           consomem sessão do pacote do paciente. Para marcar a nova data, use o
-                           botão de agendar no dia desejado.
+                           {existingAppointment.groupId
+                             ? "O encontro não ocorreu: os prontuários pendentes de todos os integrantes daquele dia são removidos, preservando o que já foi escrito."
+                             : "Cancelamento e reagendamento não contam como falta e não consomem sessão do pacote do paciente."} Para marcar a nova data, use o botão de agendar no dia desejado.
                          </p>
                        </div>
                     </div>
