@@ -26,7 +26,7 @@ const EXIT_LABELS: Record<string, string> = {
 export default function GroupProfile() {
   const { id } = useParams();
   const navigate = useNavigate();
-  const { groups, users, clients, currentUser, updateGroup, groupRecords, addGroupRecord, updateClient, atualizarNumeroDoGrupo, registrarTermoDoGrupo } = useStore();
+  const { groups, users, clients, currentUser, updateGroup, groupRecords, addGroupRecord, updateClient, atualizarNumeroDoGrupo, registrarTermoDoGrupo, reverterDesligamento } = useStore();
   
   const group = groups.find(g => g.id === id);
   const [activeTab, setActiveTab] = useState<"INFO" | "MEMBROS" | "PRONTUARIO">("INFO");
@@ -501,6 +501,23 @@ export default function GroupProfile() {
                     </p>
                   )}
                   {m.exitReason && <p className="text-xs text-gray-600 mt-1">{m.exitReason}</p>}
+                  {/*
+                    Reverter desligamento feito por engano. Recria os
+                    prontuários dos encontros futuros e devolve o acesso.
+                  */}
+                  {canManageGroup && (
+                    <button
+                      onClick={async () => {
+                        const n = await reverterDesligamento(group.id, m.clientId);
+                        alert(n > 0
+                          ? `Participação retomada. ${n} prontuário(s) de encontros futuros recriado(s).`
+                          : "Participação retomada.");
+                      }}
+                      className="mt-2 text-xs font-bold text-purple-600 hover:underline"
+                    >
+                      Reverter desligamento
+                    </button>
+                  )}
                 </div>
               );
             })}

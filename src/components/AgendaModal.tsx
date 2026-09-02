@@ -147,9 +147,24 @@ export default function AgendaModal({ open, onClose, initialData, existingAppoin
     const startMs = new Date(`1970-01-01T${startTime}:00`).getTime();
     const endMs = new Date(`1970-01-01T${endTime}:00`).getTime();
 
+    /**
+     * CONFLITO DE SALA — dois defeitos corrigidos.
+     *
+     * 1. Encontros CANCELADOS e REAGENDADOS continuavam ocupando a sala. Se o
+     *    atendimento não vai acontecer, o horário está livre e precisa poder
+     *    ser reaproveitado — era o que impedia remarcar outra pessoa ali.
+     *
+     * 2. A comparação usava `initialData.date` (a data em que o modal foi
+     *    aberto) em vez de `appointmentDate` (a data escolhida). Ao remarcar
+     *    para outro dia, o conflito era conferido no dia errado — deixando
+     *    passar choque real e barrando horário livre.
+     */
+    const NAO_OCUPA_SALA = ["CANCELADO_PACIENTE", "CANCELADO_PROFISSIONAL", "REAGENDADO"];
+
     const conflict = appointments.find(a => {
       if (existingAppointment && a.id === existingAppointment.id) return false;
-      if (a.date !== initialData.date || a.roomId !== roomId) return false;
+      if (NAO_OCUPA_SALA.includes(a.attendance ?? "")) return false;
+      if (a.date !== appointmentDate || a.roomId !== roomId) return false;
 
       const tStart = new Date(`1970-01-01T${a.time}:00`).getTime();
       const tEnd = new Date(`1970-01-01T${a.endTime || a.time}:00`).getTime() || (tStart + 60 * 60 * 1000); 

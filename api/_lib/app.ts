@@ -568,6 +568,13 @@ app.get(
         );
 
     // Quais pacientes este usuário pode ver CLINICAMENTE.
+    /**
+     * `myGroupMemberClientIds` inclui quem JÁ FOI DESLIGADO do grupo — de
+     * propósito. O profissional precisa continuar acessando os prontuários
+     * dos encontros de que a pessoa participou, e conseguir reverter um
+     * desligamento feito por engano. O vínculo encerrado some da lista de
+     * participantes ativos (ver mapGroup), não do acesso ao que já aconteceu.
+     */
     const clinicalClientIds = new Set<string>(
       isAdmin
         ? []
@@ -588,11 +595,28 @@ app.get(
 
     // O Administrativo recebe as sessões SEM conteúdo (só metadados), para
     // continuar contando pendências e ocupação sem ler evolução clínica.
+    /**
+     * Sessões que chegam a este profissional.
+     *
+     * A condição `myLedGroupIds.has(s.groupId)` é essencial: sem ela, o
+     * registro de um encontro de grupo dependia de o PACIENTE estar na lista
+     * de acesso — e ao desligar alguém do grupo, o profissional perdia os
+     * prontuários pendentes dos encontros de que a pessoa participou,
+     * ficando sem como concluir o registro de um atendimento que aconteceu.
+     *
+     * Agora o critério é o GRUPO: quem conduz alcança todos os registros
+     * daquele grupo, inclusive de quem já saiu.
+     */
     const visibleSessions = isSupervisor
       ? sessionsRaw
       : isAdmin
       ? sessionsRaw
-      : sessionsRaw.filter((s: any) => s.psicoId === session.userId || clinicalClientIds.has(s.clientId));
+      : sessionsRaw.filter(
+          (s: any) =>
+            s.psicoId === session.userId ||
+            clinicalClientIds.has(s.clientId) ||
+            (s.groupId && myLedGroupIds.has(s.groupId))
+        );
 
     /**
      * SIGILO ENTRE CONTEXTOS DE ATENDIMENTO
@@ -3871,6 +3895,86 @@ app.post(
     });
 
     res.json({ ok: true, prontuariosFuturosRemovidos: removiveis.length });
+  })
+);
+
+/**
+ * REVERTER o desligamento de um integrante.
+ *
+ * Desligar alguém por engano acontece — e antes não havia volta: o vínculo
+ * ficava marcado como encerrado para sempre, e os prontuários pendentes
+ * daquela pessoa ficavam inacessíveis.
+ *
+ * A reversão limpa a marcação de saída e recria os prontuários dos encontros
+ * futuros do grupo, para que a participação continue normalmente. O histórico
+ * da tentativa fica registrado na trilha do paciente.
+ */
+app.post(
+  "/api/groups/:id/members/:clientId/undo-exit",
+  asyncHandler(async (req, res) => {
+    const session = requireSession(req, res);
+    if (!session) return;
+    if (!(await hasGroupAccess(session, req.params.id))) {
+      res.status(403).json({ error: "Somente os profissionais responsáveis pelo grupo podem reverter o desligamento." });
+      return;
+    }
+
+    const vinculo = await prisma.groupMember.findUnique({
+      where: { groupId_clientId: { groupId: req.params.id, clientId: req.params.clientId } },
+    });
+    if (!vinculo) {
+      res.status(404).json({ error: "Vínculo não encontrado." });
+      return;
+    }
+    if (!vinculo.exitedAt) {
+      res.status(400).json({ error: "Este integrante já está ativo no grupo." });
+      return;
+    }
+
+    await prisma.groupMember.update({
+      where: { groupId_clientId: { groupId: req.params.id, clientId: req.params.clientId } },
+      data: { exitedAt: null, exitOutcome: null, exitReason: null },
+    });
+
+    // Recria os prontuários dos encontros futuros que haviam sido removidos.
+    const agora = new Date();
+    const futuros = await prisma.appointment.findMany({
+      where: { groupId: req.params.id, date: { gte: agora } },
+    });
+    let recriados = 0;
+    for (const appt of futuros) {
+      if (["CANCELADO_PACIENTE", "CANCELADO_PROFISSIONAL", "REAGENDADO"].includes(appt.attendance ?? "")) continue;
+      const existe = await prisma.sessionRecord.findFirst({
+        where: { clientId: req.params.clientId, groupId: req.params.id, date: appt.date },
+        select: { id: true },
+      });
+      if (existe) continue;
+      await prisma.sessionRecord.create({
+        data: {
+          clientId: req.params.clientId,
+          psicoId: appt.psicoId,
+          date: appt.date,
+          notesEnc: "",
+          isDraft: true,
+          status: "PENDENTE",
+          groupId: req.params.id,
+          appointmentId: appt.id,
+          sessionType: "ATENDIMENTO",
+        },
+      });
+      recriados++;
+    }
+
+    const grupo = await prisma.group.findUnique({ where: { id: req.params.id }, select: { name: true } });
+    await writeHistory({
+      clientId: req.params.clientId,
+      actor: actorOf(session),
+      category: "CLINICO",
+      action: "Desligamento de grupo revertido",
+      details: `Grupo: ${grupo?.name ?? "—"}. Participação retomada.`,
+    });
+
+    res.json({ ok: true, prontuariosRecriados: recriados });
   })
 );
 
