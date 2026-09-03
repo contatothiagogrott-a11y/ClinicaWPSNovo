@@ -1256,6 +1256,7 @@ app.patch(
     if ("medications" in b) data.medicationsEnc = encryptField(b.medications);
     if ("contactObservations" in b) data.contactObservationsEnc = encryptField(b.contactObservations);
     if ("cancellationReason" in b) data.cancellationReasonEnc = encryptField(b.cancellationReason);
+    if ("closureInitiative" in b) data.closureInitiative = b.closureInitiative || null;
     // Diagnóstico/CID: dado de saúde, criptografado como os demais sensíveis.
     if ("diagnosis" in b) data.diagnosisEnc = encryptField(b.diagnosis);
     if ("alescEntryDate" in b) data.alescEntryDate = parseDateInput(b.alescEntryDate);
@@ -3807,6 +3808,90 @@ app.patch(
     });
 
     res.json({ ok: true });
+  })
+);
+
+/**
+ * REPOSIÇÃO DE SESSÃO.
+ *
+ * Quando o paciente falta, o encontro é perdido mas o tratamento não deveria
+ * encurtar por isso: se restavam duas semanas, a última passa a ser uma semana
+ * depois. Esta rota acrescenta um encontro ao FINAL da série, mantendo o
+ * mesmo dia da semana, horário, sala e profissional.
+ *
+ * É opcional e explícita — a decisão de repor é clínica, não automática.
+ */
+app.post(
+  "/api/appointments/:id/repor",
+  asyncHandler(async (req, res) => {
+    const session = requireSession(req, res);
+    if (!session) return;
+
+    const original = await prisma.appointment.findUnique({ where: { id: req.params.id } });
+    if (!original) {
+      res.status(404).json({ error: "Agendamento não encontrado." });
+      return;
+    }
+    if (session.role === "PSICO" && original.psicoId !== session.userId) {
+      res.status(403).json({ error: "Você só pode repor os seus próprios atendimentos." });
+      return;
+    }
+
+    // Última ocorrência da série (ou o próprio, se for avulso).
+    const ultima = original.seriesId
+      ? await prisma.appointment.findFirst({
+          where: { seriesId: original.seriesId },
+          orderBy: { date: "desc" },
+        })
+      : original;
+    if (!ultima) {
+      res.status(404).json({ error: "Série não encontrada." });
+      return;
+    }
+
+    // Intervalo da série: semanal por padrão, quinzenal quando indicado.
+    const dias = original.recurrence === "biweekly" ? 14 : 7;
+    const novaData = new Date(ultima.date.getTime());
+    novaData.setDate(novaData.getDate() + dias);
+
+    const reposicao = await prisma.appointment.create({
+      data: {
+        clientId: original.clientId,
+        groupId: original.groupId,
+        psicoId: original.psicoId,
+        roomId: original.roomId,
+        date: novaData,
+        time: original.time,
+        endTime: original.endTime,
+        seriesId: original.seriesId,
+        recurrence: original.recurrence,
+        appointmentType: (original as any).appointmentType || "ATENDIMENTO",
+      },
+    });
+
+    // Prontuário pendente do encontro reposto.
+    if (reposicao.clientId) {
+      await prisma.sessionRecord.create({
+        data: {
+          clientId: reposicao.clientId,
+          psicoId: reposicao.psicoId,
+          date: novaData,
+          notesEnc: "",
+          isDraft: true,
+          appointmentId: reposicao.id,
+          sessionType: "ATENDIMENTO",
+        },
+      });
+      await writeHistory({
+        clientId: reposicao.clientId,
+        actor: actorOf(session),
+        category: "FLUXO",
+        action: "Sessão reposta ao final da série",
+        details: `Reposição referente ao encontro de ${formatBR(original.date)}.`,
+      });
+    }
+
+    res.json({ appointment: mapAppointment(reposicao), novaData: toDateOnlyBRT(novaData) });
   })
 );
 

@@ -18,7 +18,7 @@ const STATUS_LABELS: Record<string, string> = {
 };
 
 export default function AgendaModal({ open, onClose, initialData, existingAppointment }: { open: boolean, onClose: () => void, initialData: { date: string, time: string, endTime?: string, roomId: string }, existingAppointment?: Appointment }) {
-  const { clients, users, groups, currentUser, addAppointment, updateAppointment, deleteAppointment, appointments, markAttendance, config, updateClient } = useStore();
+  const { clients, users, groups, currentUser, addAppointment, updateAppointment, deleteAppointment, appointments, markAttendance, config, updateClient, reporSessao } = useStore();
 
   const activeRooms = config.rooms.filter(r => r.isActive).sort((a, b) => a.name.localeCompare(b.name, "pt-BR")).map(r => r.name);
   const [roomId, setRoomId] = useState(initialData.roomId || activeRooms[0] || "");
@@ -120,6 +120,18 @@ export default function AgendaModal({ open, onClose, initialData, existingAppoin
   /** Profissional designado para conduzir um evento que não é atendimento. */
   const [eventPsicoId, setEventPsicoId] = useState<string>("");
 
+  /**
+   * Quantidade de repetições.
+   *
+   * Era fixa em 12, e as séries reais do setor tinham 9, 11, 12... — sobrava
+   * agendamento para apagar toda vez. Agora quem marca decide, e o padrão
+   * acompanha o limite de sessões previstas do paciente quando houver.
+   */
+  const [repeticoes, setRepeticoes] = useState<number>(12);
+
+  /** Paciente selecionado, usado para sugerir o restante do pacote. */
+  const selectedClient = bookingType === "client" ? clients.find(c => c.id === selectedId) : undefined;
+
   const [appointmentDate, setAppointmentDate] = useState(initialData.date);
   const [applyToFuture, setApplyToFuture] = useState(false);
   const [futureFeedback, setFutureFeedback] = useState("");
@@ -198,7 +210,6 @@ export default function AgendaModal({ open, onClose, initialData, existingAppoin
         if ((statusTransition === "TRIAGEM" || statusTransition === "EM_ATENDIMENTO") && responsiblePsicoId) {
           resolvedPsicoId = responsiblePsicoId;
         } else {
-          const selectedClient = clients.find(c => c.id === selectedId);
           resolvedPsicoId = selectedClient?.assignedPsicoId || currentUser?.id || "";
         }
       } else {
@@ -229,7 +240,7 @@ export default function AgendaModal({ open, onClose, initialData, existingAppoin
          if (count > 0) setFutureFeedback(`${count} atendimento(s) futuro(s) da série também foram atualizados.`);
        });
     } else {
-       const instances = recurrence === "none" ? 1 : 12; // Generate 12 occurrences for recurring
+       const instances = recurrence === "none" ? 1 : Math.max(1, Math.min(52, repeticoes));
        for (let i = 0; i < instances; i++) {
           // toDate() interpreta "YYYY-MM-DD" como meio-dia local, então somar
           // dias nunca "pula" ou "volta" um dia por causa de fuso.
@@ -253,8 +264,13 @@ export default function AgendaModal({ open, onClose, initialData, existingAppoin
      * Transferir é ato próprio, com justificativa e trilha (privativo de
      * Supervisor e Administrativo). Agendar não transfere.
      */
-    if (bookingType === "client" && statusTransition) {
-      const selectedClient = clients.find(c => c.id === selectedId);
+    /**
+     * ACOLHIMENTO EMERGENCIAL não mexe no fluxo do paciente.
+     * A pessoa é atendida pontualmente numa situação de urgência: quem está na
+     * fila continua na fila, quem está em acompanhamento continua com o seu
+     * profissional. Só o registro daquele atendimento é criado.
+     */
+    if (bookingType === "client" && statusTransition && appointmentType !== "ACOLHIMENTO") {
       const updates: any = { status: statusTransition };
 
       const semResponsavel = selectedClient && !selectedClient.assignedPsicoId;
@@ -316,6 +332,7 @@ export default function AgendaModal({ open, onClose, initialData, existingAppoin
                <div className="grid grid-cols-2 gap-2">
                  {([
                    ["ATENDIMENTO", "Atendimento"],
+                   ["ACOLHIMENTO", "Acolhimento emergencial"],
                    ["TRIAGEM_GRUPO", "Triagem para grupo"],
                    ["ENTREVISTA", "Entrevista"],
                    ["DEVOLUTIVA", "Devolutiva"],
@@ -338,6 +355,8 @@ export default function AgendaModal({ open, onClose, initialData, existingAppoin
                <p className="text-[11px] text-gray-500 mt-2 leading-relaxed">
                  {appointmentType === "ATENDIMENTO"
                    ? "Abre um registro pendente para a evolução do atendimento."
+                   : appointmentType === "ACOLHIMENTO"
+                   ? "Atendimento pontual em situação de urgência. Gera prontuário próprio e NÃO altera o status do paciente — quem está na fila continua na fila, quem está em atendimento continua com seu profissional."
                    : "Abre um registro pendente próprio deste evento, para o profissional designado escrever a evolução. Não altera o responsável pelo acompanhamento do paciente."}
                </p>
 
@@ -406,6 +425,37 @@ export default function AgendaModal({ open, onClose, initialData, existingAppoin
                  <strong>{outroResponsavel}</strong>. Este agendamento é um atendimento à parte
                  (triagem, grupo ou avaliação) e <strong>não altera</strong> o profissional responsável
                  pelo caso.
+               </div>
+             )}
+
+             {/* Quantidade de repetições, quando a série for recorrente */}
+             {!existingAppointment && recurrence !== "none" && (
+               <div className="bg-gray-50 border border-gray-200 rounded-2xl p-4">
+                 <label className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2 block">
+                   Quantas repetições
+                 </label>
+                 <div className="flex items-center gap-3">
+                   <input
+                     type="number"
+                     min={1}
+                     max={52}
+                     value={repeticoes}
+                     onChange={e => setRepeticoes(Number(e.target.value) || 1)}
+                     className="w-24 bg-white border border-gray-200 focus:border-blue-500 rounded-xl px-4 py-2.5 outline-none font-bold text-gray-900"
+                   />
+                   <span className="text-sm text-gray-600">
+                     encontro(s) {recurrence === "weekly" ? "semanais" : "quinzenais"}
+                   </span>
+                 </div>
+                 {selectedClient?.maxSessions ? (
+                   <button
+                     type="button"
+                     onClick={() => setRepeticoes(Math.max(1, (selectedClient.maxSessions || 0) - (selectedClient.completedSessions || 0)))}
+                     className="mt-2 text-xs font-bold text-blue-600 hover:underline"
+                   >
+                     Usar o restante do pacote ({Math.max(0, (selectedClient.maxSessions || 0) - (selectedClient.completedSessions || 0))} sessões)
+                   </button>
+                 ) : null}
                </div>
              )}
 
@@ -562,14 +612,34 @@ export default function AgendaModal({ open, onClose, initialData, existingAppoin
                        <div className="flex gap-2">
                          <button 
                            type="button" 
-                           onClick={() => { markAttendance(existingAppointment.id, "FALTA_JUSTIFICADA"); onClose(); }}
+                           onClick={async () => {
+                             await markAttendance(existingAppointment.id, "FALTA_JUSTIFICADA");
+                             if (window.confirm("Falta justificada registrada.\n\nDeseja repor esta sessão, acrescentando um encontro ao final da série?")) {
+                               const novaData = await reporSessao(existingAppointment.id);
+                               window.alert(`Sessão reposta para ${novaData.split("-").reverse().join("/")}.`);
+                             }
+                             onClose();
+                           }}
                            className={`flex-1 py-2 rounded-lg font-bold text-sm transition-colors border ${existingAppointment.attendance === 'FALTA_JUSTIFICADA' ? 'bg-orange-100 text-orange-700 border-orange-200' : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'}`}
                          >
                            Falta Justificada
                          </button>
                          <button 
                            type="button" 
-                           onClick={() => { markAttendance(existingAppointment.id, "FALTA_INJUSTIFICADA"); onClose(); }}
+                           onClick={async () => {
+                             await markAttendance(existingAppointment.id, "FALTA_INJUSTIFICADA");
+                             /*
+                               Falta não deve encurtar o tratamento: se restavam
+                               duas semanas, a última passa a ser uma semana
+                               depois. A reposição é oferecida, não automática —
+                               a decisão é clínica.
+                             */
+                             if (window.confirm("Falta registrada.\n\nDeseja repor esta sessão, acrescentando um encontro ao final da série?")) {
+                               const novaData = await reporSessao(existingAppointment.id);
+                               window.alert(`Sessão reposta para ${novaData.split("-").reverse().join("/")}.`);
+                             }
+                             onClose();
+                           }}
                            className={`flex-1 py-2 rounded-lg font-bold text-sm transition-colors border ${existingAppointment.attendance === 'FALTA_INJUSTIFICADA' ? 'bg-red-100 text-red-700 border-red-200' : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'}`}
                          >
                            Falta s/ Justif.

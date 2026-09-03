@@ -151,6 +151,7 @@ export function mapClient(c: any, options: ClientMapOptions = {}) {
     needsReview: c.needsReview ?? false,
     reviewNotes: c.reviewNotes ?? undefined,
     cancellationReason: decryptField(c.cancellationReasonEnc),
+    closureInitiative: c.closureInitiative ?? undefined,
     importBatchId: c.importBatchId ?? undefined,
     finalizedAt: c.finalizedAt ? toISO(c.finalizedAt) : undefined,
     retentionUntil: c.retentionUntil ? toDateOnly(c.retentionUntil) : undefined,

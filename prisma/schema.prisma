@@ -224,6 +224,16 @@ model Client {
   // Criptografado: pode conter informação sobre a situação da pessoa.
   cancellationReasonEnc  String?
 
+  /**
+   * Quem tomou a iniciativa do encerramento.
+   *
+   * Alta clínica dada pelo profissional e interrupção decidida pelo paciente
+   * são desfechos diferentes: o primeiro indica objetivo alcançado, o segundo
+   * pode indicar insatisfação, dificuldade de vínculo ou barreira de acesso.
+   * Somá-los como "finalizado" apaga uma informação de gestão relevante.
+   */
+  closureInitiative      String?
+
   // Identifica o lote de importação, permitindo desfazer uma importação
   // inteira caso o mapeamento de colunas tenha saído errado.
   importBatchId          String?

@@ -113,6 +113,8 @@ interface StoreContextType extends StoreState {
   registrarTermoDoGrupo: (groupId: string, clientId: string, assinado: boolean) => Promise<void>;
   /** Reverte o desligamento de um integrante do grupo. */
   reverterDesligamento: (groupId: string, clientId: string) => Promise<number>;
+  /** Acrescenta um encontro ao final da série, repondo uma falta. */
+  reporSessao: (appointmentId: string) => Promise<string>;
   realinharAutoria: (aplicar: boolean) => Promise<{
     modo: string; total?: number; corrigidos?: number;
     exemplos?: Array<{ data: string; autorAtual: string; autorCorreto: string }>;
@@ -510,6 +512,12 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     await refreshAll();
   };
 
+  const reporSessao: StoreContextType["reporSessao"] = async (appointmentId) => {
+    const { novaData } = await api.post<{ novaData: string }>(`/api/appointments/${appointmentId}/repor`);
+    await refreshAll();
+    return novaData;
+  };
+
   const reverterDesligamento: StoreContextType["reverterDesligamento"] = async (groupId, clientId) => {
     const { prontuariosRecriados } = await api.post<{ prontuariosRecriados: number }>(
       `/api/groups/${groupId}/members/${clientId}/undo-exit`
@@ -689,6 +697,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
         excluirPaciente,
         registrarTermoDoGrupo,
         reverterDesligamento,
+        reporSessao,
         saveGroupClientNote,
       }}
     >

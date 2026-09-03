@@ -24,6 +24,7 @@ import type { HistoryLog } from "../types";
 
 /** Natureza de cada registro, exibida no prontuário. */
 const SESSION_TYPE_LABELS: Record<string, string> = {
+  ACOLHIMENTO: "Acolhimento emergencial",
   TRIAGEM_GRUPO: "Triagem para grupo",
   ENTREVISTA: "Entrevista",
   DEVOLUTIVA: "Devolutiva",

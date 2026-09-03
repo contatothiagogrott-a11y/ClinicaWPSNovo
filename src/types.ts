@@ -132,6 +132,8 @@ export interface Client {
   limitedView?: boolean;
   /** Motivo do encerramento sem atendimento (status CANCELADO). */
   cancellationReason?: string;
+  /** Iniciativa do encerramento: alta clínica ou decisão do paciente. */
+  closureInitiative?: "PROFISSIONAL" | "PACIENTE" | "INSTITUCIONAL";
   /** Lote de importação (permite desfazer uma importação inteira). */
   importBatchId?: string;
   /** Encerramento do caso e prazo de guarda do registro documental. */
@@ -169,7 +171,7 @@ export interface RecordVersion {
 export interface SessionRecord {
   appointmentId?: string;
   /** Natureza do registro: atendimento, triagem de grupo, entrevista, devolutiva. */
-  sessionType?: "ATENDIMENTO" | "TRIAGEM_GRUPO" | "ENTREVISTA" | "DEVOLUTIVA";
+  sessionType?: "ATENDIMENTO" | "ACOLHIMENTO" | "TRIAGEM_GRUPO" | "ENTREVISTA" | "DEVOLUTIVA";
   /** Número do encontro dentro do grupo (1º, 2º...), separado da contagem individual. */
   groupSessionNumber?: number;
   id: string;
@@ -257,7 +259,7 @@ export interface Appointment {
    * triagem, entrevista, devolutiva e reunião ocupam a agenda sem gerar
    * registro clínico.
    */
-  appointmentType?: "ATENDIMENTO" | "TRIAGEM_GRUPO" | "ENTREVISTA" | "DEVOLUTIVA" | "REUNIAO";
+  appointmentType?: "ATENDIMENTO" | "ACOLHIMENTO" | "TRIAGEM_GRUPO" | "ENTREVISTA" | "DEVOLUTIVA" | "REUNIAO";
   attendance?:
     | "PENDENTE"
     | "COMPARECEU"
