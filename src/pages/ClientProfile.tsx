@@ -1902,10 +1902,20 @@ function GroupTabView({ client, myGroupsWithClient, groupClientNotes, saveGroupC
   const [noteText, setNoteText] = useState("");
   const [saving, setSaving] = useState(false);
 
-  // Exportação e contagens da ficha: também sem as sessões de grupo, que têm
-  // documento próprio (ver pdfProntuarioGrupo.ts).
+  /**
+   * BUG CORRIGIDO — os registros de grupo tinham sumido de todas as abas.
+   *
+   * Ao separar as sessões de grupo da aba PRONTUÁRIO, apliquei o mesmo filtro
+   * `!s.groupId` aqui na aba GRUPO por engano. Só que esta aba deve mostrar
+   * exatamente o OPOSTO: os encontros de grupo. Resultado: os registros
+   * existiam no banco, mas nenhuma tela os exibia.
+   *
+   * Inclui os rascunhos (`isDraft`), que são justamente os pendentes de
+   * preenchimento — sem eles, o profissional não teria como registrar a
+   * evolução dos encontros.
+   */
   const clientSessions = sessions
-    .filter(s => s.clientId === client.id && !s.isDraft && !s.groupId)
+    .filter(s => s.clientId === client.id && !!s.groupId)
     .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
 
   const handleSave = async (groupId: string) => {

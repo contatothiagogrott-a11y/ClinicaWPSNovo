@@ -1132,7 +1132,22 @@ app.patch(
         // ainda não tem responsável (fluxo de agendamento pela própria agenda).
         const isFirstAssignment = !existing.assignedPsicoId && nextId === session.userId;
 
-        if (!canTransfer && !isFirstAssignment) {
+        /**
+         * PASSAGEM DA TRIAGEM PARA O ATENDIMENTO.
+         *
+         * Quem faz a triagem não é necessariamente quem vai acompanhar o caso.
+         * Ao sair da triagem para EM_ATENDIMENTO, definir o terapeuta é parte
+         * do fluxo normal — não é transferência.
+         *
+         * Sem esta exceção, o psicólogo agendava o primeiro atendimento e o
+         * paciente continuava vinculado a quem apenas o triou, obrigando
+         * alguém a corrigir na ficha depois.
+         */
+        const saindoDaTriagem =
+          (existing.status === "TRIAGEM" || existing.status === "TRIADOS") &&
+          b.status === "EM_ATENDIMENTO";
+
+        if (!canTransfer && !isFirstAssignment && !saindoDaTriagem) {
           res.status(403).json({
             error:
               "Somente Supervisor e Administrativo podem transferir um paciente entre profissionais.",
@@ -1140,7 +1155,7 @@ app.patch(
           return;
         }
 
-        if (canTransfer && existing.assignedPsicoId) {
+        if (canTransfer && existing.assignedPsicoId && !saindoDaTriagem) {
           const reason = String(b.transferReason ?? "").trim();
           if (reason.length < 10) {
             res.status(400).json({

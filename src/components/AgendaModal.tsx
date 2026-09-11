@@ -118,7 +118,7 @@ export default function AgendaModal({ open, onClose, initialData, existingAppoin
   );
 
   /** Profissional designado para conduzir um evento que não é atendimento. */
-  const [eventPsicoId, setEventPsicoId] = useState<string>("");
+  const [eventPsicoId, setEventPsicoId] = useState<string>(currentUser?.id || "");
 
   /**
    * Quantidade de repetições.
@@ -199,9 +199,20 @@ export default function AgendaModal({ open, onClose, initialData, existingAppoin
     // não necessariamente quem está preenchendo a agenda — senão o
     // agendamento não aparecia na agenda do psicólogo certo, e a cor exibida
     // também ficava errada.
+    /**
+     * Quem conduz o compromisso.
+     *
+     * Para tudo que NÃO é atendimento comum (acolhimento, triagem de grupo,
+     * entrevista, devolutiva), quem conduz é o profissional escolhido no
+     * seletor — nunca o responsável pelo acompanhamento do paciente.
+     *
+     * `eventPsicoId` começa vazio e o seletor exibe `currentUser` como valor
+     * padrão SEM gravar no estado. Quem não mexia no campo caía no
+     * `currentUser` — por isso o acolhimento ia sempre para o mesmo
+     * profissional, independentemente do que estava selecionado na tela.
+     * Agora o estado é inicializado, então o que aparece é o que vale.
+     */
     let resolvedPsicoId = existingAppointment?.psicoId;
-    // Evento que não é atendimento: quem conduz é quem foi designado (ou quem
-    // está agendando), e não o responsável pelo acompanhamento do paciente.
     if (appointmentType !== "ATENDIMENTO") {
       resolvedPsicoId = eventPsicoId || currentUser?.id || "";
     }
@@ -273,10 +284,27 @@ export default function AgendaModal({ open, onClose, initialData, existingAppoin
     if (bookingType === "client" && statusTransition && appointmentType !== "ACOLHIMENTO") {
       const updates: any = { status: statusTransition };
 
+      /**
+       * ATRIBUIÇÃO DO RESPONSÁVEL.
+       *
+       * Ao restringir a transferência, eu bloqueei também a passagem LEGÍTIMA
+       * da triagem para o atendimento: o paciente ficava preso ao psicólogo
+       * que apenas o triou, e alguém tinha de corrigir na ficha depois.
+       *
+       * Regra correta:
+       *  - sem responsável   -> atribui a quem foi escolhido (primeira vez);
+       *  - saindo da TRIAGEM -> atribui ao profissional escolhido, porque é
+       *    justamente esse o momento em que o caso passa a ter um terapeuta;
+       *  - já em atendimento -> NÃO mexe. Trocar aí é transferência, e
+       *    transferência tem rota própria, com justificativa e trilha.
+       */
       const semResponsavel = selectedClient && !selectedClient.assignedPsicoId;
-      if (semResponsavel) {
-        // Primeira atribuição: quem foi escolhido no formulário, ou quem agenda.
-        updates.assignedPsicoId = responsiblePsicoId || currentUser?.id;
+      const saindoDaTriagem =
+        (selectedClient?.status === "TRIAGEM" || selectedClient?.status === "TRIADOS") &&
+        statusTransition === "EM_ATENDIMENTO";
+
+      if (semResponsavel || saindoDaTriagem) {
+        updates.assignedPsicoId = responsiblePsicoId || resolvedPsicoId || currentUser?.id;
       }
 
       updateClient(selectedId, updates, `Status alterado para ${statusTransition} ao agendar atendimento.`);
@@ -373,7 +401,7 @@ export default function AgendaModal({ open, onClose, initialData, existingAppoin
                      Profissional que vai conduzir
                    </label>
                    <select
-                     value={eventPsicoId || currentUser?.id || ""}
+                     value={eventPsicoId}
                      onChange={e => setEventPsicoId(e.target.value)}
                      className="w-full bg-white border border-gray-200 focus:border-blue-500 rounded-xl px-4 py-2.5 outline-none font-medium text-sm"
                    >

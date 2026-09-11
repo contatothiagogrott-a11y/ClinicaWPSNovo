@@ -15,7 +15,14 @@ export default function Atendimentos() {
 
   // Derive "atendimentos" from sessions since sessions track attendance and session numbers
   const atendimentos = useMemo(() => {
-     let list = sessions.filter(s => s.clientId); // individual sessions only for now
+     /**
+      * Lista de atendimentos.
+      *
+      * O comentário anterior dizia "individual sessions only", mas o filtro
+      * não excluía nada: sessões de GRUPO entravam misturadas, já que também
+      * têm `clientId`. Agora a separação é explícita.
+      */
+     let list = sessions.filter(s => s.clientId && !s.groupId);
      
      if (startDate) {
         const start = startOfDay(parseISO(startDate));

@@ -56,7 +56,20 @@ export default function Dashboard() {
 
   const threeDaysAgo = new Date();
   threeDaysAgo.setDate(threeDaysAgo.getDate() - 3);
-  const pendingDrafts = sessions.filter(s => s.isDraft && new Date(s.date) < threeDaysAgo);
+  /**
+   * Pendências de preenchimento.
+   *
+   * Passa a ignorar os rascunhos de encontros que NÃO ACONTECERAM (faltas,
+   * cancelamentos e reagendamentos). Antes eles ficavam cobrando para sempre
+   * uma evolução que nunca viria, inflando o painel de pendências com
+   * trabalho inexistente.
+   */
+  const NAO_EXIGEM_EVOLUCAO = ["FALTA_JUSTIFICADA", "FALTA_INJUSTIFICADA", "CANCELADO_PACIENTE", "CANCELADO_PROFISSIONAL", "REAGENDADO"];
+  const pendingDrafts = sessions.filter(
+    s => s.isDraft
+      && new Date(s.date) < threeDaysAgo
+      && !NAO_EXIGEM_EVOLUCAO.includes(s.attendance ?? "")
+  );
   const pendingClientsIds = new Set(pendingDrafts.map(d => d.clientId));
   const pendingNotes = (isPsico ? myClients : clients).filter(c => pendingClientsIds.has(c.id));
   const almostExceeding = emAtendimento.filter(c => c.completedSessions > 0 && c.completedSessions >= c.maxSessions - 2);
