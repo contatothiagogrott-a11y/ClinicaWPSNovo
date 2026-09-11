@@ -147,7 +147,15 @@ export default function GroupProfile() {
   const desligados = (group.membros ?? []).filter(m => m.exitedAt);
   const groupRecs = groupRecords.filter(r => r.groupId === group.id).sort((a,b) => new Date(b.sessionDate).getTime() - new Date(a.sessionDate).getTime());
 
-  const canManageGroup = currentUser?.role === "SUPERVISOR" || currentUser?.role === "ADMIN" || currentUser?.id === group.psychologistId;
+  /**
+   * O COTERAPEUTA estava de fora: conduz o grupo junto, mas não conseguia
+   * incluir ou desligar integrantes, nem registrar o termo de compromisso.
+   */
+  const canManageGroup =
+    currentUser?.role === "SUPERVISOR" ||
+    currentUser?.role === "ADMIN" ||
+    currentUser?.id === group.psychologistId ||
+    currentUser?.id === group.coPsychologistId;
   const canViewProntuario = currentUser?.role === "SUPERVISOR" || currentUser?.id === group.psychologistId; // prontuário de grupo é conteúdo clínico restrito
 
   return (

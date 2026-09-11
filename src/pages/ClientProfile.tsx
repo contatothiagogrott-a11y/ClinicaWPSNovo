@@ -171,9 +171,23 @@ export default function ClientProfile() {
   // Grupos que o usuário atual lidera e dos quais este paciente participa —
   // cobre o caso de grupo com um psicólogo e atendimento individual com outro.
   // Responsável OU coterapeuta: ambos conduzem o grupo.
+  /**
+   * Grupos deste paciente aos quais o usuário tem acesso clínico.
+   *
+   * O SUPERVISOR estava de fora: o filtro exigia ser o responsável ou o
+   * coterapeuta, e ele não é nenhum dos dois — mesmo tendo acesso a todo o
+   * conteúdo clínico por supervisão. Resultado: a aba Grupo não aparecia para
+   * ele em nenhum paciente.
+   *
+   * O servidor já liberava esses registros ao Supervisor; era a tela que os
+   * escondia.
+   */
   const myGroupsWithClient = groups.filter(
-    g => (g.psychologistId === currentUser?.id || g.coPsychologistId === currentUser?.id)
-      && g.memberIds.includes(client.id)
+    g => (
+      currentUser?.role === "SUPERVISOR" ||
+      g.psychologistId === currentUser?.id ||
+      g.coPsychologistId === currentUser?.id
+    ) && g.memberIds.includes(client.id)
   );
 
   /**
