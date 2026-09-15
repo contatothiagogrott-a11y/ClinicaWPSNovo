@@ -1912,9 +1912,41 @@ function GroupTabView({ client, myGroupsWithClient, groupClientNotes, saveGroupC
   sessions: SessionRecord[];
   currentUser: User | null;
 }) {
+  const { addSession, groups: todosGrupos } = useStore();
+
   const [editingGroupId, setEditingGroupId] = useState<string | null>(null);
   const [noteText, setNoteText] = useState("");
   const [saving, setSaving] = useState(false);
+
+  /** Edição da evolução de um encontro de grupo. */
+  const [editandoSessao, setEditandoSessao] = useState<string | null>(null);
+  const [textoEvolucao, setTextoEvolucao] = useState("");
+  const [salvandoEvolucao, setSalvandoEvolucao] = useState(false);
+
+  const abrirEvolucao = (s: SessionRecord) => {
+    setEditandoSessao(s.id);
+    setTextoEvolucao(s.notes || "");
+  };
+
+  const salvarEvolucao = async (s: SessionRecord) => {
+    if (!textoEvolucao.trim()) return;
+    setSalvandoEvolucao(true);
+    try {
+      await addSession({
+        id: s.id,
+        clientId: s.clientId,
+        psicoId: s.psicoId,
+        date: s.date,
+        notes: textoEvolucao,
+        isDraft: false,
+        groupId: s.groupId,
+      } as any);
+      setEditandoSessao(null);
+      setTextoEvolucao("");
+    } finally {
+      setSalvandoEvolucao(false);
+    }
+  };
 
   /**
    * BUG CORRIGIDO — os registros de grupo tinham sumido de todas as abas.
@@ -1992,20 +2024,107 @@ function GroupTabView({ client, myGroupsWithClient, groupClientNotes, saveGroupC
         );
       })}
 
+      {/*
+        EVOLUÇÃO INDIVIDUAL DOS ENCONTROS DE GRUPO.
+        Esta seção era "somente visualização" — uma janela para o psicólogo do
+        grupo consultar o prontuário individual. Depois que os registros de
+        grupo passaram a aparecer aqui, ela precisou virar área de trabalho:
+        cada integrante precisa da documentação individual do encontro
+        (art. 5º da Resolução CFP nº 001/2009), e quem escreve é quem conduziu.
+      */}
       <div>
-        <h3 className="font-bold text-gray-800 mb-3">Prontuário do Paciente (somente visualização)</h3>
+        <h3 className="font-bold text-gray-800 mb-1">Evolução dos encontros de grupo</h3>
+        <p className="text-xs text-gray-500 mb-3">
+          Documentação individual de {client.fullName} em cada encontro. Registre apenas o que
+          diz respeito a este participante — o relato coletivo vai no prontuário do grupo.
+        </p>
+
         {clientSessions.length === 0 ? (
           <div className="p-8 text-center bg-gray-50 rounded-2xl border border-dashed border-gray-200 text-gray-400 text-sm">
-            Nenhuma evolução de sessão registrada ainda.
+            Nenhum encontro de grupo registrado ainda.
           </div>
         ) : (
           <div className="space-y-3">
-            {clientSessions.map(s => (
-              <div key={s.id} className="bg-gray-50 border border-gray-100 rounded-2xl p-4">
-                <p className="text-xs font-bold text-gray-500 mb-2">{formatDateBR(s.date)}</p>
-                <p className="text-sm text-gray-700 whitespace-pre-wrap">{s.notes || "(sem registro de evolução)"}</p>
-              </div>
-            ))}
+            {clientSessions.map(s => {
+              const grupo = todosGrupos.find(g => g.id === s.groupId);
+              const souAutor = s.psicoId === currentUser?.id;
+              const podeEscrever = souAutor || currentUser?.role === "SUPERVISOR";
+              const emEdicao = editandoSessao === s.id;
+
+              return (
+                <div
+                  key={s.id}
+                  className={cn(
+                    "border rounded-2xl p-4",
+                    s.isDraft ? "bg-amber-50/50 border-amber-200" : "bg-gray-50 border-gray-100"
+                  )}
+                >
+                  <div className="flex items-center justify-between gap-3 flex-wrap mb-2">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <p className="text-xs font-bold text-gray-500">{formatDateBR(s.date)}</p>
+                      {s.groupSessionNumber && (
+                        <span className="bg-purple-100 text-purple-700 text-[10px] font-bold px-2 py-0.5 rounded-md">
+                          Sessão {s.groupSessionNumber}{grupo ? ` · ${grupo.name}` : ""}
+                        </span>
+                      )}
+                      {s.isDraft && (
+                        <span className="bg-amber-200 text-amber-800 text-[10px] font-bold px-2 py-0.5 rounded-md">
+                          PENDENTE
+                        </span>
+                      )}
+                    </div>
+                    {!emEdicao && podeEscrever && (
+                      <button
+                        onClick={() => abrirEvolucao(s)}
+                        className="text-xs font-bold text-purple-700 bg-purple-100 hover:bg-purple-200 px-3 py-1.5 rounded-lg transition-colors"
+                      >
+                        {s.isDraft ? "Preencher" : "Editar"}
+                      </button>
+                    )}
+                    {!emEdicao && !podeEscrever && (
+                      <span className="text-[11px] text-gray-400 font-semibold">
+                        Registro de outro profissional
+                      </span>
+                    )}
+                  </div>
+
+                  {emEdicao ? (
+                    <div className="space-y-2">
+                      <textarea
+                        value={textoEvolucao}
+                        onChange={e => setTextoEvolucao(e.target.value)}
+                        rows={5}
+                        autoFocus
+                        className="w-full bg-white border border-purple-200 focus:border-purple-500 rounded-xl p-3 outline-none text-sm resize-y"
+                        placeholder="Participação, vínculo com o grupo, evolução observada neste encontro..."
+                      />
+                      <div className="flex gap-2">
+                        <button
+                          onClick={() => { setEditandoSessao(null); setTextoEvolucao(""); }}
+                          className="px-4 py-2 rounded-lg border border-gray-200 text-gray-700 font-bold text-xs hover:bg-gray-50"
+                        >
+                          Cancelar
+                        </button>
+                        <button
+                          onClick={() => salvarEvolucao(s)}
+                          disabled={salvandoEvolucao || !textoEvolucao.trim()}
+                          className="flex-1 bg-purple-600 hover:bg-purple-700 disabled:opacity-50 text-white font-bold text-xs py-2 rounded-lg transition-colors"
+                        >
+                          {salvandoEvolucao ? "Salvando..." : "Salvar evolução"}
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <p className={cn(
+                      "text-sm whitespace-pre-wrap",
+                      s.notes ? "text-gray-700" : "text-amber-700/70 italic"
+                    )}>
+                      {s.notes || "Aguardando preenchimento da evolução deste participante."}
+                    </p>
+                  )}
+                </div>
+              );
+            })}
           </div>
         )}
       </div>
