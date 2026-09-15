@@ -20,6 +20,7 @@ import TransferPsicoModal from "../components/TransferPsicoModal";
 import DeleteClientModal from "../components/DeleteClientModal";
 import { canTransferClient, canViewAuditTrail, roleLabel } from "../lib/roles";
 import { formatDateBR, formatDateTimeBR, formatTimelineBR, todayDateOnly } from "../lib/datetime";
+import { numerarTodosOsGrupos } from "../lib/groupSessions";
 import type { HistoryLog } from "../types";
 
 /** Natureza de cada registro, exibida no prontuário. */
@@ -1484,6 +1485,14 @@ function ProntuarioView({ clientId }: { clientId: string }) {
    /** Sessões de grupo do paciente — contadas à parte, exibidas na aba Grupo. */
    const groupSessions = sessions.filter(s => s.clientId === clientId && !!s.groupId);
 
+   /**
+    * Numeração CALCULADA dos encontros de grupo.
+    * O valor gravado no banco vinha de duas fontes que discordavam entre si e
+    * congelava no momento da criação — cancelar um encontro deixava a
+    * sequência furada. Ver src/lib/groupSessions.ts.
+    */
+   const numerosDeGrupo = numerarTodosOsGrupos(sessions);
+
    const handleSave = () => {
      if(!notes.trim()) return;
      /**
@@ -1663,7 +1672,7 @@ function ProntuarioView({ clientId }: { clientId: string }) {
                    */}
                    {group && (
                      <span className="bg-purple-100 text-purple-700 text-xs font-bold px-2 py-0.5 rounded-md">
-                       {s.groupSessionNumber ? `Sessão ${s.groupSessionNumber} · ` : ""}Grupo: {group.name}
+                       {numerosDeGrupo.get(s.id) ? `Sessão ${numerosDeGrupo.get(s.id)} · ` : ""}Grupo: {group.name}
                        {group.protocolNumber ? ` (${group.protocolNumber})` : ""}
                      </span>
                    )}
@@ -1912,7 +1921,14 @@ function GroupTabView({ client, myGroupsWithClient, groupClientNotes, saveGroupC
   sessions: SessionRecord[];
   currentUser: User | null;
 }) {
-  const { addSession, groups: todosGrupos } = useStore();
+  const { addSession, updatePrivateSessionNotes, groups: todosGrupos } = useStore();
+
+  /** Numeração calculada (ver src/lib/groupSessions.ts). */
+  const numerosDeGrupo = numerarTodosOsGrupos(sessions);
+
+  /** Anotação privada do terapeuta, por encontro. */
+  const [editandoPrivada, setEditandoPrivada] = useState<string | null>(null);
+  const [textoPrivado, setTextoPrivado] = useState("");
 
   const [editingGroupId, setEditingGroupId] = useState<string | null>(null);
   const [noteText, setNoteText] = useState("");
@@ -2062,9 +2078,9 @@ function GroupTabView({ client, myGroupsWithClient, groupClientNotes, saveGroupC
                   <div className="flex items-center justify-between gap-3 flex-wrap mb-2">
                     <div className="flex items-center gap-2 flex-wrap">
                       <p className="text-xs font-bold text-gray-500">{formatDateBR(s.date)}</p>
-                      {s.groupSessionNumber && (
+                      {numerosDeGrupo.get(s.id) && (
                         <span className="bg-purple-100 text-purple-700 text-[10px] font-bold px-2 py-0.5 rounded-md">
-                          Sessão {s.groupSessionNumber}{grupo ? ` · ${grupo.name}` : ""}
+                          Sessão {numerosDeGrupo.get(s.id)}{grupo ? ` · ${grupo.name}` : ""}
                         </span>
                       )}
                       {s.isDraft && (
@@ -2121,6 +2137,70 @@ function GroupTabView({ client, myGroupsWithClient, groupClientNotes, saveGroupC
                     )}>
                       {s.notes || "Aguardando preenchimento da evolução deste participante."}
                     </p>
+                  )}
+
+                  {/*
+                    ANOTAÇÃO PRIVADA do terapeuta, também nos encontros de
+                    grupo — faltava aqui, existindo só no atendimento
+                    individual. Não compõe o prontuário oficial, não sai em
+                    PDF e só o autor enxerga.
+                  */}
+                  {(s.canWritePrivateNotes ?? souAutor) && (
+                    <div className="mt-3 pt-3 border-t border-dashed border-amber-200">
+                      {editandoPrivada === s.id ? (
+                        <div className="space-y-2">
+                          <label className="flex items-center gap-1.5 text-[11px] font-bold text-amber-700 uppercase tracking-wide">
+                            <Lock size={11} /> Anotação privada — somente você vê
+                          </label>
+                          <textarea
+                            value={textoPrivado}
+                            onChange={e => setTextoPrivado(e.target.value)}
+                            rows={3}
+                            autoFocus
+                            className="w-full bg-white border border-amber-200 focus:border-amber-400 rounded-xl p-3 outline-none text-sm resize-y"
+                            placeholder="Impressões sobre a participação desta pessoa no grupo, hipóteses, lembretes..."
+                          />
+                          <div className="flex gap-2">
+                            <button
+                              onClick={() => { setEditandoPrivada(null); setTextoPrivado(""); }}
+                              className="px-3 py-1.5 rounded-lg border border-gray-200 text-gray-600 font-bold text-xs hover:bg-gray-50"
+                            >
+                              Cancelar
+                            </button>
+                            <button
+                              onClick={async () => {
+                                await updatePrivateSessionNotes(s.id, textoPrivado);
+                                setEditandoPrivada(null);
+                                setTextoPrivado("");
+                              }}
+                              className="flex-1 bg-amber-600 hover:bg-amber-700 text-white font-bold text-xs py-1.5 rounded-lg transition-colors"
+                            >
+                              Salvar anotação privada
+                            </button>
+                          </div>
+                        </div>
+                      ) : s.privateNotes ? (
+                        <div>
+                          <p className="flex items-center gap-1.5 text-[11px] font-bold text-amber-700 uppercase tracking-wide mb-1">
+                            <Lock size={11} /> Anotação privada
+                          </p>
+                          <p className="text-sm text-gray-700 whitespace-pre-wrap">{s.privateNotes}</p>
+                          <button
+                            onClick={() => { setEditandoPrivada(s.id); setTextoPrivado(s.privateNotes || ""); }}
+                            className="mt-1 text-[11px] font-bold text-amber-700 hover:underline"
+                          >
+                            Editar
+                          </button>
+                        </div>
+                      ) : (
+                        <button
+                          onClick={() => { setEditandoPrivada(s.id); setTextoPrivado(""); }}
+                          className="flex items-center gap-1.5 text-[11px] font-bold text-amber-600 hover:text-amber-700"
+                        >
+                          <Lock size={11} /> Adicionar anotação privada
+                        </button>
+                      )}
+                    </div>
                   )}
                 </div>
               );

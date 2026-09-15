@@ -1,6 +1,7 @@
 import { Client, SessionRecord, User, InstrumentApplication, Instrument } from "../types";
 import { letterheadHeader, letterheadFooter, letterheadBackground, PAGE_MARGINS, documentStyles } from "./pdfGenerator";
 import { formatDateBR, formatDateExtenso, toDate } from "./datetime";
+import { numerarTodosOsGrupos } from "./groupSessions";
 
 /**
  * ATENÇÃO — identidade do supervisor.
@@ -57,6 +58,7 @@ export function buildProntuarioDocDefinition(
     DEVOLUTIVA: "Devolutiva",
   };
 
+  const numerosDeGrupo = numerarTodosOsGrupos(sessions);
   const sessionBlocks: any[] = [];
   nonDraftSessions.forEach(s => {
     // Autor da sessão: preferencialmente da equipe; se não achar, cai no
@@ -67,7 +69,9 @@ export function buildProntuarioDocDefinition(
       : "Profissional não identificado";
     const natureza = s.sessionType && TIPOS[s.sessionType] ? ` · ${TIPOS[s.sessionType]}` : "";
     // Identifica o encontro do grupo, quando for o caso.
-    const grupo = s.groupId && s.groupSessionNumber ? ` · Sessão ${s.groupSessionNumber} de grupo` : "";
+    // Numeração calculada, para bater com o que a tela mostra.
+    const numeroGrupo = numerosDeGrupo.get(s.id);
+    const grupo = s.groupId && numeroGrupo ? ` · Sessão ${numeroGrupo} de grupo` : "";
 
     sessionBlocks.push({
       margin: [0, 10, 0, 0],

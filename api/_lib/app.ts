@@ -2456,13 +2456,53 @@ app.post(
 
     const attendanceList: Array<{ clientId: string; status: string }> = Array.isArray(b.attendance) ? b.attendance : [];
 
-    async function saveAttendance(groupRecordId: string) {
+    async function saveAttendance(groupRecordId: string, sessionDate?: Date) {
       for (const a of attendanceList) {
         await prisma.groupAttendance.upsert({
           where: { groupRecordId_clientId: { groupRecordId, clientId: a.clientId } },
           update: { status: a.status },
           create: { groupRecordId, clientId: a.clientId, status: a.status },
         });
+
+        /**
+         * A presença registrada no grupo precisa CHEGAR ao prontuário
+         * individual daquele participante.
+         *
+         * Antes ficava só na tabela do grupo: o registro individual do
+         * encontro não sabia se a pessoa compareceu, e por isso a falta não
+         * aparecia na ficha dela nem era descontada da contagem de sessões
+         * realizadas.
+         */
+        if (!sessionDate) continue;
+        const individual = await prisma.sessionRecord.findFirst({
+          where: { clientId: a.clientId, groupId: b.groupId, date: sessionDate },
+        });
+        if (!individual) continue;
+
+        const faltou = a.status === "FALTA_JUSTIFICADA" || a.status === "FALTA_INJUSTIFICADA";
+        const jaEscrito = !!decryptField(individual.notesEnc);
+
+        await prisma.sessionRecord.update({
+          where: { id: individual.id },
+          data: {
+            attendance: a.status,
+            // Falta sem evolução escrita é fechada com o registro do fato:
+            // não há evolução a redigir, mas a ausência é dado do
+            // acompanhamento e deve constar.
+            ...(faltou && !jaEscrito
+              ? {
+                  notesEnc: encryptField(
+                    a.status === "FALTA_JUSTIFICADA"
+                      ? "Participante não compareceu ao encontro do grupo — falta justificada."
+                      : "Participante não compareceu ao encontro do grupo — falta sem justificativa."
+                  ),
+                  isDraft: false,
+                }
+              : {}),
+          },
+        });
+
+        await recalcularSessoesRealizadas(a.clientId);
       }
     }
 
@@ -2477,7 +2517,7 @@ app.post(
           where: { id: b.id },
           data: { contentEnc: encryptField(b.content), isDraft: false },
         });
-        await saveAttendance(updated.id);
+        await saveAttendance(updated.id, updated.sessionDate);
         const withAttendance = await prisma.groupRecord.findUnique({
           where: { id: updated.id },
           include: { attendances: true },
@@ -2548,7 +2588,7 @@ app.post(
         }
       }
     }
-    await saveAttendance(record.id);
+    await saveAttendance(record.id, record.sessionDate);
     const recordWithAttendance = await prisma.groupRecord.findUnique({
       where: { id: record.id },
       include: { attendances: true },
