@@ -75,5 +75,47 @@ const serializado = JSON.stringify(rotulos);
 check("Log NÃO contém o valor do nome", serializado.includes("Maria"), false);
 check("Log NÃO contém o telefone", serializado.includes("48999"), false);
 
+
+
+// ---------------------------------------------------------------------------
+// NUMERAÇÃO DOS ENCONTROS DE GRUPO
+// ---------------------------------------------------------------------------
+// O número identifica o ENCONTRO, não a participação: quem entrou no meio do
+// grupo vê o mesmo número dos demais no mesmo dia. E encontros cancelados não
+// entram na contagem, renumerando os seguintes.
+{
+  const { numerarTodosOsGrupos } = await import("../src/lib/groupSessions");
+
+  const ses = (id: string, cli: string, data: string, att?: string) =>
+    ({ id, clientId: cli, groupId: "g1", date: `${data}T15:00:00.000Z`, attendance: att }) as any;
+  const apt = (data: string, att?: string) =>
+    ({ id: `a-${data}`, groupId: "g1", date: data, attendance: att }) as any;
+
+  const datas = [
+    "2026-03-02","2026-03-09","2026-03-16","2026-03-23","2026-03-30","2026-04-06","2026-04-13",
+    "2026-04-20","2026-04-27","2026-05-04","2026-05-11","2026-05-18","2026-05-25","2026-06-01",
+  ];
+  const appointments = datas.map(d => apt(d));
+  const sessoes: any[] = [];
+  datas.forEach((d, i) => {
+    sessoes.push(ses(`maria-${i + 1}`, "maria", d));
+    if (i >= 4) sessoes.push(ses(`ana-${i + 1}`, "ana", d)); // Ana entrou no 5º encontro
+  });
+
+  const n = numerarTodosOsGrupos(sessoes, { appointments });
+  check("Grupo: 14º encontro para quem está desde o início", n.get("maria-14"), 14);
+  check("Grupo: 14º encontro para quem entrou no 5º", n.get("ana-14"), 14);
+  check("Grupo: participantes do mesmo dia têm o mesmo nº", n.get("maria-9") === n.get("ana-9"), true);
+
+  const comCancelamento = datas.map((d, i) =>
+    apt(d, i === 2 ? "CANCELADO_PROFISSIONAL" : undefined)
+  );
+  const n2 = numerarTodosOsGrupos(
+    sessoes.filter(s => !s.id.endsWith("-3")),
+    { appointments: comCancelamento }
+  );
+  check("Grupo: encontro cancelado não conta", n2.get("maria-4"), 3);
+}
+
 console.log(`\n${falhas === 0 ? "TODOS OS TESTES PASSARAM" : falhas + " FALHA(S)"}\n`);
 process.exit(falhas === 0 ? 0 : 1);

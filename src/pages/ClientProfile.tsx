@@ -51,7 +51,7 @@ const HISTORY_CATEGORY_STYLE: Record<string, { label: string; dot: string; ring:
 export default function ClientProfile() {
   const { id } = useParams();
   const navigate = useNavigate();
-  const { clients, users, sessions, currentUser, updateClient, reactivateClient, config, addConfigItem, clinicalDocuments, addClinicalDocument, updateClinicalDocument, instruments, groups, groupClientNotes, saveGroupClientNote, clinicalClientIds, markClientReviewed, fetchClientHistory, registerClientAccess, registerDocumentExport } = useStore();
+  const { clients, users, sessions, currentUser, updateClient, reactivateClient, config, addConfigItem, clinicalDocuments, addClinicalDocument, updateClinicalDocument, instruments, groups, groupClientNotes, saveGroupClientNote, clinicalClientIds, appointments, groupRecords, markClientReviewed, fetchClientHistory, registerClientAccess, registerDocumentExport } = useStore();
   const client = clients.find(c => c.id === id);
 
   const [activeTab, setActiveTab] = useState<"INFO" | "PRONTUARIO" | "HISTORICO" | "INSTRUMENTOS" | "DOCUMENTOS" | "GRUPO">("INFO");
@@ -207,7 +207,7 @@ export default function ClientProfile() {
 
   const handleExportProntuario = () => {
     if (!client.instruments || client.instruments.length === 0) {
-      const docDef = buildProntuarioDocDefinition(client, sessions, assignedPsico, undefined, undefined, users);
+      const docDef = buildProntuarioDocDefinition(client, sessions, assignedPsico, undefined, undefined, users, { appointments, groupRecords });
       exportWithAudit(docDef, "Prontuário completo");
       return;
     }
@@ -217,7 +217,7 @@ export default function ClientProfile() {
 
   const finalizeExportProntuario = (includeTests: boolean) => {
     const includedApps = includeTests ? (client.instruments || []).filter(a => selectedTestIds.has(a.id)) : undefined;
-    const docDef = buildProntuarioDocDefinition(client, sessions, assignedPsico, includedApps, instruments, users);
+    const docDef = buildProntuarioDocDefinition(client, sessions, assignedPsico, includedApps, instruments, users, { appointments, groupRecords });
     exportWithAudit(docDef, "Prontuário completo");
     setShowExportPrompt(false);
   };
@@ -1453,7 +1453,7 @@ function InstrumentosView({ clientId }: { clientId: string }) {
 }
 
 function ProntuarioView({ clientId }: { clientId: string }) {
-   const { sessions, addSession, updateSession, updatePrivateSessionNotes, currentUser, groups, users } = useStore();
+   const { sessions, addSession, updateSession, updatePrivateSessionNotes, currentUser, groups, users, appointments, groupRecords } = useStore();
    const [writingSessionId, setWritingSessionId] = useState<string | null>(null);
    const [isWritingNew, setIsWritingNew] = useState(false);
    const [notes, setNotes] = useState("");
@@ -1491,7 +1491,7 @@ function ProntuarioView({ clientId }: { clientId: string }) {
     * congelava no momento da criação — cancelar um encontro deixava a
     * sequência furada. Ver src/lib/groupSessions.ts.
     */
-   const numerosDeGrupo = numerarTodosOsGrupos(sessions);
+   const numerosDeGrupo = numerarTodosOsGrupos(sessions, { appointments, groupRecords });
 
    const handleSave = () => {
      if(!notes.trim()) return;
@@ -1921,10 +1921,14 @@ function GroupTabView({ client, myGroupsWithClient, groupClientNotes, saveGroupC
   sessions: SessionRecord[];
   currentUser: User | null;
 }) {
-  const { addSession, updatePrivateSessionNotes, groups: todosGrupos } = useStore();
+  const { addSession, updatePrivateSessionNotes, groups: todosGrupos, appointments, groupRecords } = useStore();
 
-  /** Numeração calculada (ver src/lib/groupSessions.ts). */
-  const numerosDeGrupo = numerarTodosOsGrupos(sessions);
+  /**
+   * Numeração calculada a partir da LINHA DO TEMPO DO GRUPO — agendamentos e
+   * registros coletivos —, não das sessões do paciente. Sem isso, quem entrou
+   * no meio do grupo via um número menor que os demais no mesmo encontro.
+   */
+  const numerosDeGrupo = numerarTodosOsGrupos(sessions, { appointments, groupRecords });
 
   /** Anotação privada do terapeuta, por encontro. */
   const [editandoPrivada, setEditandoPrivada] = useState<string | null>(null);

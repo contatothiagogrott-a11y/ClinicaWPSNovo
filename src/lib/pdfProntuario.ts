@@ -35,7 +35,13 @@ export function buildProntuarioDocDefinition(
    * respondeu por qual ato — e a identificação com nome e CRP é exigida
    * (Resolução CFP nº 06/2019).
    */
-  equipe?: User[]
+  equipe?: User[],
+  /**
+   * Linha do tempo dos grupos, para numerar os encontros igual à tela.
+   * Sem isso o PDF numeraria a partir das sessões do paciente, e quem entrou
+   * no meio do grupo apareceria com número menor que os demais.
+   */
+  fontesDeGrupo?: { appointments?: any[]; groupRecords?: any[] }
 ) {
   /**
    * O prontuário INDIVIDUAL não inclui sessões de grupo.
@@ -58,7 +64,7 @@ export function buildProntuarioDocDefinition(
     DEVOLUTIVA: "Devolutiva",
   };
 
-  const numerosDeGrupo = numerarTodosOsGrupos(sessions);
+  const numerosDeGrupo = numerarTodosOsGrupos(sessions, fontesDeGrupo ?? {});
   const sessionBlocks: any[] = [];
   nonDraftSessions.forEach(s => {
     // Autor da sessão: preferencialmente da equipe; se não achar, cai no
