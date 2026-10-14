@@ -26,7 +26,7 @@ const EXIT_LABELS: Record<string, string> = {
 export default function GroupProfile() {
   const { id } = useParams();
   const navigate = useNavigate();
-  const { groups, users, clients, currentUser, updateGroup, groupRecords, addGroupRecord, updateClient, atualizarNumeroDoGrupo, registrarTermoDoGrupo, reverterDesligamento } = useStore();
+  const { groups, users, clients, currentUser, updateGroup, groupRecords, addGroupRecord, updateClient, atualizarNumeroDoGrupo, registrarTermoDoGrupo, reverterDesligamento, sessions, groupClientNotes, appointments } = useStore();
   
   const group = groups.find(g => g.id === id);
   const [activeTab, setActiveTab] = useState<"INFO" | "MEMBROS" | "PRONTUARIO">("INFO");
@@ -64,11 +64,27 @@ export default function GroupProfile() {
     currentUser?.id === group.coPsychologistId ||
     currentUser?.role === "SUPERVISOR";
 
+  /**
+   * O PDF passa a receber TODAS as fontes do registro, não só a coletiva:
+   * os prontuários individuais dos integrantes e as anotações de
+   * acompanhamento. É o que o art. 5º da Resolução CFP nº 001/2009 exige —
+   * documentação do grupo somada à documentação de cada participante.
+   *
+   * Os membros incluem quem JÁ SAIU do grupo: o prontuário é histórico do
+   * processo, e um integrante desligado participou dos encontros anteriores.
+   * Omiti-lo produziria um documento que contradiz os próprios registros.
+   */
   const exportarProntuarioDoGrupo = () => {
-    const membros = clients.filter(c => group.memberIds.includes(c.id));
+    const idsNoProntuario = new Set<string>([
+      ...group.memberIds,
+      ...sessions.filter(s => s.groupId === group.id).map(s => s.clientId),
+      ...groupClientNotes.filter(n => n.groupId === group.id).map(n => n.clientId),
+    ]);
+    const membros = clients.filter(c => idsNoProntuario.has(c.id));
+
     const docDef = buildProntuarioGrupoDocDefinition(
       group,
-      groupRecords,
+      { groupRecords, sessions, groupClientNotes, appointments },
       membros,
       users,
       group.protocolNumber || "não atribuído"

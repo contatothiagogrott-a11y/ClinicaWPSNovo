@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import { NAO_EXIGE_EVOLUCAO } from "../lib/attendance";
 import { useStore } from "../contexts/StoreContext";
 import {
   AlertCircle, Users, Activity, CheckCircle, Clock, Calendar as CalendarIcon,
@@ -64,7 +65,8 @@ export default function Dashboard() {
    * uma evolução que nunca viria, inflando o painel de pendências com
    * trabalho inexistente.
    */
-  const NAO_EXIGEM_EVOLUCAO = ["FALTA_JUSTIFICADA", "FALTA_INJUSTIFICADA", "CANCELADO_PACIENTE", "CANCELADO_PROFISSIONAL", "REAGENDADO"];
+  // Regra única em src/lib/attendance.ts — inclui SUSPENSO (férias).
+  const NAO_EXIGEM_EVOLUCAO = NAO_EXIGE_EVOLUCAO as readonly string[];
   const pendingDrafts = sessions.filter(
     s => s.isDraft
       && new Date(s.date) < threeDaysAgo

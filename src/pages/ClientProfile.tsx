@@ -21,6 +21,7 @@ import DeleteClientModal from "../components/DeleteClientModal";
 import { canTransferClient, canViewAuditTrail, roleLabel } from "../lib/roles";
 import { formatDateBR, formatDateTimeBR, formatTimelineBR, todayDateOnly } from "../lib/datetime";
 import { numerarTodosOsGrupos } from "../lib/groupSessions";
+import { numerarSessoesRealizadas, rotuloDoRegistro, consomeSessao } from "../lib/attendance";
 import type { HistoryLog } from "../types";
 
 /** Natureza de cada registro, exibida no prontuário. */
@@ -1482,6 +1483,15 @@ function ProntuarioView({ clientId }: { clientId: string }) {
      .filter(s => s.clientId === clientId && !s.groupId)
      .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
 
+   /**
+    * NÚMERO DE SESSÃO — só para o que foi realizado.
+    *
+    * Antes era a posição na lista, então falta e cancelamento também recebiam
+    * número e o prontuário contradizia o Controle de Sessões. Agora quem não
+    * consumiu sessão recebe o rótulo do desfecho no lugar do número.
+    */
+   const numerosDeSessao = numerarSessoesRealizadas(clientSessions);
+
    /** Sessões de grupo do paciente — contadas à parte, exibidas na aba Grupo. */
    const groupSessions = sessions.filter(s => s.clientId === clientId && !!s.groupId);
 
@@ -1661,9 +1671,25 @@ function ProntuarioView({ clientId }: { clientId: string }) {
              <div key={s.id} className={cn("p-6 rounded-3xl border", s.isDraft ? "bg-amber-50 border-amber-100" : "bg-gray-50 border-gray-100")}>
                <div className="flex items-center justify-between mb-4 pb-4 border-b border-gray-200 border-dashed">
                  <div className="flex items-center gap-3 flex-wrap">
-                   <h4 className={cn("font-bold", s.isDraft ? "text-amber-900" : "text-gray-900")}>
-                      Sessão {clientSessions.length - i}
-                   </h4>
+                   {numerosDeSessao.get(s.id) ? (
+                     <h4 className={cn("font-bold", s.isDraft ? "text-amber-900" : "text-gray-900")}>
+                        Sessão {numerosDeSessao.get(s.id)}
+                     </h4>
+                   ) : (
+                     /*
+                       Ocorrência que NÃO consumiu sessão: cancelamento, falta,
+                       reagendamento ou suspensão. Aparece no prontuário — é o
+                       curso do acompanhamento (Res. CFP nº 001/2009, art. 1º) —
+                       mas sem número, porque número de sessão pertence só ao
+                       que foi efetivamente realizado.
+                     */
+                     <h4 className={cn(
+                       "font-bold",
+                       s.isDraft ? "text-amber-900" : "text-gray-500"
+                     )}>
+                        {rotuloDoRegistro(s)}
+                     </h4>
+                   )}
                    {/*
                      Sessão de grupo identificada com a numeração PRÓPRIA do
                      grupo ("Sessão 3"), que é uma série separada da contagem

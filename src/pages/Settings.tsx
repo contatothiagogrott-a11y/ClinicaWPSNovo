@@ -72,7 +72,7 @@ function ConfigManager({ title, type, items, onAdd, onUpdate }: {
 }
 
 export default function Settings() {
-  const { config, addConfigItem, updateConfigItem, currentUser, limparProntuariosVazios, realinharAutoria, removerDuplicatasDeGrupo, gerarProntuariosDeGrupo, diagnosticoVinculos, consolidarVinculo, recalcularSessoes } = useStore();
+  const { config, addConfigItem, updateConfigItem, currentUser, limparProntuariosVazios, realinharAutoria, removerDuplicatasDeGrupo, gerarProntuariosDeGrupo, diagnosticoVinculos, consolidarVinculo, recalcularSessoes, registrarCancelamentos } = useStore();
   const [limpando, setLimpando] = useState(false);
   const [resultadoLimpeza, setResultadoLimpeza] = useState<string>("");
   const [previaAutoria, setPreviaAutoria] = useState<any>(null);
@@ -87,6 +87,14 @@ export default function Settings() {
   const [vincMsg, setVincMsg] = useState("");
   const [sessoes, setSessoes] = useState<any>(null);
   const [sessoesOcupado, setSessoesOcupado] = useState(false);
+  const [cancel, setCancel] = useState<any>(null);
+  const [cancelOcupado, setCancelOcupado] = useState(false);
+
+  const executarCancelamentos = async (aplicar: boolean) => {
+    setCancelOcupado(true);
+    try { setCancel(await registrarCancelamentos(aplicar)); }
+    finally { setCancelOcupado(false); }
+  };
 
   const executarLimpeza = async () => {
     setLimpando(true);
@@ -208,6 +216,63 @@ export default function Settings() {
         {resultadoLimpeza && (
           <p className="mt-3 text-sm font-semibold text-gray-700">{resultadoLimpeza}</p>
         )}
+
+        {/* Reconstrução dos cancelamentos no prontuário */}
+        <div className="border-t border-gray-100 mt-6 pt-6">
+          <h3 className="font-bold text-gray-900">Registrar cancelamentos no prontuário</h3>
+          <p className="text-sm text-gray-500 mt-1 mb-4">
+            Até agora, cancelar ou reagendar um atendimento <strong>apagava</strong> o prontuário
+            pendente em branco — e o documento ficava com intervalos sem explicação. Os
+            agendamentos continuam no banco com a marcação, então dá para reconstruir o que foi
+            perdido sem inventar nada. As ocorrências aparecem no prontuário <strong>sem número de
+            sessão</strong> e não alteram o Controle de Sessões.
+          </p>
+          <div className="flex flex-wrap gap-2">
+            <button
+              onClick={() => executarCancelamentos(false)}
+              disabled={cancelOcupado}
+              className="bg-white border border-gray-300 hover:bg-gray-50 disabled:opacity-60 text-gray-800 font-bold px-5 py-3 rounded-xl text-sm transition-colors"
+            >
+              {cancelOcupado ? "Conferindo..." : "Conferir o que falta"}
+            </button>
+            {cancel?.previa && cancel.totalDeOcorrenciasSemRegistro > 0 && (
+              <button
+                onClick={() => executarCancelamentos(true)}
+                disabled={cancelOcupado}
+                className="bg-gray-900 hover:bg-gray-800 disabled:opacity-60 text-white font-bold px-5 py-3 rounded-xl text-sm transition-colors"
+              >
+                Registrar {cancel.totalDeOcorrenciasSemRegistro} ocorrência(s)
+              </button>
+            )}
+          </div>
+          {cancel && (
+            <div className="mt-3 text-sm">
+              {cancel.previa ? (
+                cancel.totalDeOcorrenciasSemRegistro === 0 ? (
+                  <p className="font-semibold text-emerald-700">
+                    Nenhuma ocorrência faltando. Todos os cancelamentos já estão nos prontuários.
+                  </p>
+                ) : (
+                  <>
+                    <p className="font-semibold text-gray-700">
+                      {cancel.totalDeOcorrenciasSemRegistro} ocorrência(s) sem registro, em{" "}
+                      {cancel.pacientesAfetados} paciente(s):
+                    </p>
+                    <ul className="mt-2 text-gray-600 list-disc pl-5">
+                      {Object.entries(cancel.porSituacao || {}).map(([k, v]: any) => (
+                        <li key={k}>{k}: {v}</li>
+                      ))}
+                    </ul>
+                  </>
+                )
+              ) : (
+                <p className="font-semibold text-emerald-700">
+                  {cancel.registrosCriados} registro(s) criado(s) em {cancel.pacientesAfetados} prontuário(s).
+                </p>
+              )}
+            </div>
+          )}
+        </div>
 
         {/* Recálculo do contador de sessões */}
         <div className="border-t border-gray-100 mt-6 pt-6">

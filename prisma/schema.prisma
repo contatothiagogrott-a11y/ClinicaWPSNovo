@@ -144,6 +144,9 @@ model User {
   clinicalDocuments ClinicalDocument[]
   groupClientNotes  GroupClientNote[]
   coLedGroups       Group[]           @relation("GroupCoPsychologist")
+  suspensoesDaAgenda SuspensionPeriod[] @relation("SuspensaoDoProfissional")
+  suspensoesCriadas  SuspensionPeriod[] @relation("SuspensaoCriadaPor")
+  suspensoesDesfeitas SuspensionPeriod[] @relation("SuspensaoDesfeitaPor")
 }
 
 model Client {
@@ -258,6 +261,7 @@ model Client {
   clinicalDocuments      ClinicalDocument[]
   groupAttendances       GroupAttendance[]
   groupClientNotes       GroupClientNote[]
+  suspensoes             SuspensionPeriod[]
 
   @@index([status])
   @@index([assignedPsicoId])
@@ -367,6 +371,18 @@ model SessionRecord {
    * das sessões de atendimento individual, que é outra série.
    */
   groupSessionNumber Int?
+
+  /**
+   * Período de suspensão que gerou este registro.
+   *
+   * Existe para que desfazer uma suspensão lançada por engano remova
+   * EXATAMENTE as entradas que ela criou, sem tocar em nada escrito pelo
+   * profissional. Sem esta coluna, desfazer seria uma busca por data e texto —
+   * frágil, e capaz de apagar registro clínico legítimo.
+   */
+  suspensionId  String?
+  suspension    SuspensionPeriod? @relation(fields: [suspensionId], references: [id], onDelete: SetNull)
+
   attendance    String?
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
@@ -627,4 +643,70 @@ model GroupClientNote {
   updatedAt  DateTime @updatedAt
 
   @@unique([groupId, clientId, authorId])
+}
+
+/**
+ * PERÍODO DE SUSPENSÃO DE ATENDIMENTOS
+ * ====================================
+ *
+ * Férias, licença ou afastamento — do PACIENTE ou do PROFISSIONAL. Não é
+ * cancelamento: ninguém desmarcou aquele atendimento por decisão clínica ou de
+ * escala; o acompanhamento ficou em pausa por um período conhecido.
+ *
+ * POR QUE É UMA TABELA, E NÃO UMA MARCA EM CADA AGENDAMENTO
+ * --------------------------------------------------------
+ * Marcar atendimento por atendimento resolveria a agenda, mas não permitiria
+ * desfazer uma suspensão lançada por engano — seria preciso reverter cada dia
+ * na mão, adivinhando quais eram. Guardando o período, o sistema sabe
+ * exatamente o que marcou e consegue devolver tudo ao estado anterior.
+ *
+ * É também o que permite uma ÚNICA entrada no prontuário cobrindo o período
+ * ("atendimentos suspensos de X até Y por motivo de Z"), em vez de uma linha
+ * por semana ausente.
+ *
+ * COMPLIANCE
+ * ----------
+ * - `reasonEnc` é CRIPTOGRAFADO. Um campo livre de motivo recebe com
+ *   frequência dado de saúde ("paciente em tratamento oncológico", "licença
+ *   para tratamento de familiar"), que é dado pessoal sensível na LGPD
+ *   (Art. 5º, II) e exige proteção específica (Art. 46). O Neon nunca vê o
+ *   texto em claro.
+ * - A suspensão é registrada no prontuário porque o art. 1º da Resolução CFP
+ *   nº 001/2009 trata o prontuário como registro do CURSO do acompanhamento.
+ *   Um intervalo de dois meses sem explicação no documento é lacuna, e lacuna
+ *   em prontuário é falha de fidedignidade.
+ * - `revokedAt` em vez de exclusão: desfazer é um ato, e atos sobre prontuário
+ *   deixam rastro. O registro do período permanece, marcado como desfeito.
+ */
+model SuspensionPeriod {
+  id          String    @id @default(uuid())
+
+  /** "PACIENTE" (o paciente se afastou) ou "PROFISSIONAL" (a agenda parou). */
+  scope       String
+
+  clientId    String?
+  client      Client?   @relation(fields: [clientId], references: [id], onDelete: Cascade)
+
+  psicoId     String?
+  psico       User?     @relation("SuspensaoDoProfissional", fields: [psicoId], references: [id])
+
+  startDate   DateTime
+  endDate     DateTime
+
+  /** Motivo em texto livre — criptografado (pode conter dado de saúde). */
+  reasonEnc   String    @default("")
+
+  createdById String
+  createdBy   User      @relation("SuspensaoCriadaPor", fields: [createdById], references: [id])
+  createdAt   DateTime  @default(now())
+
+  revokedAt   DateTime?
+  revokedById String?
+  revokedBy   User?     @relation("SuspensaoDesfeitaPor", fields: [revokedById], references: [id])
+
+  records     SessionRecord[]
+
+  @@index([clientId])
+  @@index([psicoId])
+  @@index([startDate, endDate])
 }

@@ -2,6 +2,7 @@ import { Client, SessionRecord, User, InstrumentApplication, Instrument } from "
 import { letterheadHeader, letterheadFooter, letterheadBackground, PAGE_MARGINS, documentStyles } from "./pdfGenerator";
 import { formatDateBR, formatDateExtenso, toDate } from "./datetime";
 import { numerarTodosOsGrupos } from "./groupSessions";
+import { numerarSessoesRealizadas, rotuloDoRegistro, consomeSessao } from "./attendance";
 
 /**
  * ATENÇÃO — identidade do supervisor.
@@ -65,6 +66,20 @@ export function buildProntuarioDocDefinition(
   };
 
   const numerosDeGrupo = numerarTodosOsGrupos(sessions, fontesDeGrupo ?? {});
+
+  /**
+   * O documento impresso mostra as MESMAS ocorrências da tela — inclusive as
+   * que não aconteceram (faltas, cancelamentos, reagendamentos, suspensões).
+   *
+   * Um prontuário impresso que omite os cancelamentos contradiz o sistema e
+   * deixa intervalos sem explicação no documento assinado. O art. 1º da
+   * Resolução CFP nº 001/2009 trata o prontuário como registro do curso do
+   * acompanhamento, e o curso inclui o que foi desmarcado.
+   *
+   * O número de sessão, porém, pertence só ao que foi realizado: as demais
+   * ocorrências saem rotuladas pelo desfecho.
+   */
+  const numerosDeSessao = numerarSessoesRealizadas(nonDraftSessions);
   const sessionBlocks: any[] = [];
   nonDraftSessions.forEach(s => {
     // Autor da sessão: preferencialmente da equipe; se não achar, cai no
@@ -79,19 +94,39 @@ export function buildProntuarioDocDefinition(
     const numeroGrupo = numerosDeGrupo.get(s.id);
     const grupo = s.groupId && numeroGrupo ? ` · Sessão ${numeroGrupo} de grupo` : "";
 
+    const numero = numerosDeSessao.get(s.id);
+    const realizada = consomeSessao(s.attendance);
+    const identificacao = numero
+      ? `SESSÃO ${numero} · ${formatDateBR(s.date)}`
+      : `${rotuloDoRegistro(s).toUpperCase()} · ${formatDateBR(s.date)}`;
+
     sessionBlocks.push({
       margin: [0, 10, 0, 0],
       table: {
         widths: ["*"],
         body: [
-          [{ text: `DATA: ${formatDateBR(s.date)}${natureza}${grupo}`, bold: true, fillColor: "#f1f5f9" }],
           [{
-            text: `Sessão realizada por: ${assinatura}`,
+            text: `${identificacao}${natureza}${grupo}`,
+            bold: true,
+            fillColor: realizada ? "#f1f5f9" : "#f8f5ee",
+            color: realizada ? undefined : "#6b5b3e",
+          }],
+          [{
+            text: realizada
+              ? `Sessão realizada por: ${assinatura}`
+              : `Profissional responsável: ${assinatura}`,
             fontSize: 8.5,
             color: "#444444",
             margin: [4, 4, 4, 0],
           }],
-          [{ text: s.notes || "(sem registro de evolução)", margin: [4, 8, 4, 20], minHeight: 60 }],
+          [{
+            text: s.notes || "(sem registro de evolução)",
+            margin: [4, 8, 4, realizada ? 20 : 8],
+            // Ocorrência não realizada não reserva espaço de evolução: não há
+            // evolução a escrever, e o espaço em branco sugeriria omissão.
+            minHeight: realizada ? 60 : 0,
+            italics: !realizada,
+          }],
         ],
       },
       layout: "lightHorizontalLines",

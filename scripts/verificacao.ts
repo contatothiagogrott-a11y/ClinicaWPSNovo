@@ -117,5 +117,236 @@ check("Log NÃO contém o telefone", serializado.includes("48999"), false);
   check("Grupo: encontro cancelado não conta", n2.get("maria-4"), 3);
 }
 
+// ---------------------------------------------------------------------------
+// REGRAS DE PRESENÇA — cópia única entre servidor e navegador
+// ---------------------------------------------------------------------------
+// A lista de situações em que "o encontro não aconteceu" vive em dois arquivos
+// idênticos porque o front-end e o servidor têm compiladores separados. Este
+// teste falha se alguém alterar um e esquecer o outro — que foi exatamente o
+// tipo de divergência responsável por reagendamentos sumirem de algumas telas
+// e aparecerem em outras.
+{
+  const fs = await import("fs");
+  const a = fs.readFileSync("api/_lib/attendance.ts", "utf-8");
+  const b = fs.readFileSync("src/lib/attendance.ts", "utf-8");
+  check("Presença: as duas cópias de attendance.ts são idênticas", a === b, true);
+
+  const { NAO_OCORREU, NAO_CONSOME_SESSAO, consomeSessao, liberaHorario, exigeEvolucao } =
+    await import("../src/lib/attendance");
+
+  check("Presença: SUSPENSO libera o horário", liberaHorario("SUSPENSO"), true);
+  check("Presença: SUSPENSO não consome sessão", consomeSessao("SUSPENSO"), false);
+  check("Presença: SUSPENSO não cobra evolução", exigeEvolucao("SUSPENSO"), false);
+  check("Presença: SUSPENSO não é cancelamento", NAO_OCORREU.includes("SUSPENSO") &&
+        !["CANCELADO_PACIENTE", "CANCELADO_PROFISSIONAL"].includes("SUSPENSO"), true);
+  check("Presença: comparecimento consome sessão", consomeSessao("COMPARECEU"), true);
+  check("Presença: falta não consome sessão", consomeSessao("FALTA_JUSTIFICADA"), false);
+  check("Presença: falta NÃO libera o horário", liberaHorario("FALTA_INJUSTIFICADA"), false);
+  check("Presença: toda situação de NAO_OCORREU também não consome sessão",
+        NAO_OCORREU.every(a => NAO_CONSOME_SESSAO.includes(a)), true);
+}
+
+// ---------------------------------------------------------------------------
+// ACOLHIMENTO EMERGENCIAL — sem profissional escolhido, não grava
+// ---------------------------------------------------------------------------
+// Antes, o compromisso nascia atribuído a quem estava operando a agenda, e
+// todos os acolhimentos acabavam concentrados numa pessoa só. A regra agora é
+// que a escolha é obrigatória e explícita.
+{
+  const EQUIPE = [
+    { id: "u-ana", role: "PSICO" },
+    { id: "u-rafael", role: "SUPERVISOR" },
+    { id: "u-admin", role: "ADMIN" },
+  ];
+
+  /** Mesma decisão do AgendaModal + validação do servidor. */
+  function designar(tipo: string, escolhido: string, quemAgenda: string) {
+    if (tipo !== "ATENDIMENTO") {
+      if (!escolhido) return { erro: "sem escolha" };
+      const u = EQUIPE.find(e => e.id === escolhido);
+      if (!u || !["PSICO", "SUPERVISOR"].includes(u.role)) return { erro: "não é profissional" };
+      return { psicoId: escolhido };
+    }
+    return { psicoId: escolhido || quemAgenda };
+  }
+
+  check("Acolhimento: sem escolha, é bloqueado",
+        !!designar("ACOLHIMENTO", "", "u-admin").erro, true);
+  check("Acolhimento: nunca cai em quem está agendando",
+        designar("ACOLHIMENTO", "", "u-admin").psicoId, undefined);
+  check("Acolhimento: grava exatamente quem foi escolhido",
+        designar("ACOLHIMENTO", "u-ana", "u-admin").psicoId, "u-ana");
+  check("Acolhimento: administrativo não pode ser designado",
+        !!designar("ACOLHIMENTO", "u-admin", "u-admin").erro, true);
+  check("Triagem de grupo segue a mesma regra",
+        !!designar("TRIAGEM_GRUPO", "", "u-ana").erro, true);
+}
+
+// ---------------------------------------------------------------------------
+// PRONTUÁRIO DE GRUPO — imprime o coletivo E o individual
+// ---------------------------------------------------------------------------
+// Art. 5º da Resolução CFP nº 001/2009: a documentação do grupo é somada à
+// documentação individual de cada participante. E a anotação privada do
+// profissional (art. 1º, § 2º) nunca entra no documento.
+{
+  const { buildProntuarioGrupoDocDefinition } = await import("../src/lib/pdfProntuarioGrupo");
+
+  const grupo: any = { id: "g1", name: "Grupo A", isActive: true, objective: "—",
+    psychologistId: "u1", memberIds: ["c1", "c2"], protocolNumber: "G001" };
+  const equipe: any[] = [{ id: "u1", name: "Ana", crp: "12/1", role: "PSICO" }];
+  const membros: any[] = [
+    { id: "c1", fullName: "Maria Silva" },
+    { id: "c2", fullName: "Ana Souza" },
+  ];
+  const appointments: any[] = [{ id: "a1", groupId: "g1", date: "2026-03-05" }];
+  const groupRecords: any[] = [{ id: "gr1", groupId: "g1", sessionDate: "2026-03-05",
+    authorId: "u1", isDraft: false, content: "CONTEUDO_COLETIVO",
+    attendance: [{ clientId: "c1", status: "COMPARECEU" }] }];
+  const sessions: any[] = [
+    { id: "s1", clientId: "c1", groupId: "g1", psicoId: "u1", date: "2026-03-05",
+      isDraft: false, notes: "EVOLUCAO_DA_MARIA", privateNotes: "ANOTACAO_PRIVADA",
+      attendance: "COMPARECEU" },
+    { id: "s2", clientId: "c2", groupId: "g1", psicoId: "u1", date: "2026-03-05",
+      isDraft: false, notes: "EVOLUCAO_DA_ANA", attendance: "COMPARECEU" },
+  ];
+  const groupClientNotes: any[] = [{ id: "n1", groupId: "g1", clientId: "c1",
+    authorId: "u1", content: "ACOMPANHAMENTO_CONTINUO", updatedAt: "2026-03-05" }];
+
+  const doc: any = buildProntuarioGrupoDocDefinition(
+    grupo, { groupRecords, sessions, groupClientNotes, appointments }, membros, equipe, "G001");
+  const texto = JSON.stringify(doc);
+
+  check("PDF do grupo: traz o registro coletivo", texto.includes("CONTEUDO_COLETIVO"), true);
+  check("PDF do grupo: traz a evolução individual de cada membro",
+        texto.includes("EVOLUCAO_DA_MARIA") && texto.includes("EVOLUCAO_DA_ANA"), true);
+  check("PDF do grupo: traz a anotação de acompanhamento",
+        texto.includes("ACOMPANHAMENTO_CONTINUO"), true);
+  check("PDF do grupo: NÃO vaza a anotação privada",
+        texto.includes("ANOTACAO_PRIVADA"), false);
+  check("PDF do grupo: numera o encontro", texto.includes("ENCONTRO Nº 1"), true);
+}
+
+// ---------------------------------------------------------------------------
+// SUSPENSÃO — paciente e profissional são situações distintas
+// ---------------------------------------------------------------------------
+{
+  const { consomeSessao, liberaHorario, ehSuspensao, ehCancelamento, exigeEvolucao } =
+    await import("../src/lib/attendance");
+
+  for (const s of ["SUSPENSO_PACIENTE", "SUSPENSO_PROFISSIONAL"]) {
+    check(`${s}: libera o horário`, liberaHorario(s), true);
+    check(`${s}: não consome sessão`, consomeSessao(s), false);
+    check(`${s}: não cobra evolução`, exigeEvolucao(s), false);
+    check(`${s}: NÃO é cancelamento`, ehCancelamento(s), false);
+    check(`${s}: é suspensão`, ehSuspensao(s), true);
+  }
+  const { SUSPENSOES } = await import("../src/lib/attendance");
+  check("Há marcações separadas para paciente e profissional",
+        SUSPENSOES.includes("SUSPENSO_PACIENTE") && SUSPENSOES.includes("SUSPENSO_PROFISSIONAL"),
+        true);
+  check("Valor antigo SUSPENSO continua reconhecido", ehSuspensao("SUSPENSO"), true);
+  check("Cancelamento não é suspensão", ehSuspensao("CANCELADO_PACIENTE"), false);
+}
+
+// ---------------------------------------------------------------------------
+// NÚMERO DE SESSÃO — só o que foi realizado recebe número
+// ---------------------------------------------------------------------------
+// DEFEITO CORRIGIDO: o número era a POSIÇÃO NA LISTA, então falta e
+// cancelamento também recebiam número e o prontuário contradizia o Controle de
+// Sessões — que é o que define alta e renovação de pacote.
+{
+  const { numerarSessoesRealizadas, rotuloDoRegistro } =
+    await import("../src/lib/attendance");
+
+  const reg = (id: string, data: string, att?: string, isDraft = false) =>
+    ({ id, date: `${data}T15:00:00.000Z`, attendance: att, isDraft }) as any;
+
+  // Cinco ocorrências; só três foram atendimento de fato.
+  const lista = [
+    reg("a", "2026-03-05", "COMPARECEU"),
+    reg("b", "2026-03-12", "CANCELADO_PACIENTE"),
+    reg("c", "2026-03-19", "COMPARECEU"),
+    reg("d", "2026-03-26", "FALTA_INJUSTIFICADA"),
+    reg("e", "2026-04-02", "SUSPENSO_PROFISSIONAL"),
+    reg("f", "2026-04-09", "COMPARECEU"),
+    reg("g", "2026-04-16", undefined, true), // ainda pendente
+  ];
+
+  const n = numerarSessoesRealizadas(lista);
+  check("Numeração: 1ª realizada é a Sessão 1", n.get("a"), 1);
+  check("Numeração: cancelamento NÃO recebe número", n.get("b"), null);
+  check("Numeração: a seguinte continua de onde parou", n.get("c"), 2);
+  check("Numeração: falta NÃO recebe número", n.get("d"), null);
+  check("Numeração: suspensão NÃO recebe número", n.get("e"), null);
+  check("Numeração: terceira realizada é a Sessão 3", n.get("f"), 3);
+  check("Numeração: rascunho pendente NÃO recebe número", n.get("g"), null);
+
+  const realizadas = [...n.values()].filter(v => v !== null).length;
+  check("Numeração: total numerado = total que consome sessão", realizadas, 3);
+
+  check("Rótulo do cancelamento", rotuloDoRegistro(lista[1]), "Cancelada pelo paciente");
+  check("Rótulo da falta", rotuloDoRegistro(lista[3]), "Falta");
+  check("Rótulo da suspensão", rotuloDoRegistro(lista[4]), "Suspensa");
+  check("Rótulo do pendente", rotuloDoRegistro(lista[6]), "Aguardando evolução");
+
+  // A ordem da lista não pode alterar a numeração: o prontuário é exibido do
+  // mais recente para o mais antigo, mas a sessão 1 é sempre a mais antiga.
+  const invertida = [...lista].reverse();
+  const n2 = numerarSessoesRealizadas(invertida);
+  check("Numeração independe da ordem recebida", n2.get("f"), 3);
+}
+
+// ---------------------------------------------------------------------------
+// TODO DESFECHO DEIXA RASTRO NO PRONTUÁRIO
+// ---------------------------------------------------------------------------
+// Res. CFP nº 001/2009, art. 1º: o prontuário registra o CURSO do
+// acompanhamento. Um cancelamento apagado deixa um vão sem explicação.
+{
+  const { TEXTO_DO_REGISTRO, NAO_CONSOME_SESSAO } = await import("../src/lib/attendance");
+
+  for (const situacao of NAO_CONSOME_SESSAO) {
+    check(`${situacao}: tem texto de registro definido`,
+          !!TEXTO_DO_REGISTRO[situacao], true);
+  }
+  check("O texto do cancelamento não interpreta clinicamente",
+        /resistente|desinteresse|abandono/i.test(TEXTO_DO_REGISTRO.CANCELADO_PACIENTE ?? ""), false);
+}
+
+// ---------------------------------------------------------------------------
+// JANELA DA SUSPENSÃO — o primeiro e o último dia precisam entrar inteiros
+// ---------------------------------------------------------------------------
+// Este projeto já teve bug de fuso (atestado saindo com um dia a menos). Aqui o
+// risco é o mesmo: se a janela fechar ao meio-dia, os atendimentos da tarde do
+// último dia escapam da suspensão e continuam cobrando evolução.
+{
+  const { startOfDayBRT, parseDateInput, parseLocalDateTime } =
+    await import("../api/_lib/datetime");
+
+  // Mesma conta da rota POST /api/suspensoes.
+  const inicio = startOfDayBRT("2026-07-06")!;
+  const fimDia = parseDateInput("2026-07-10")!;
+  const fim = new Date(fimDia.getTime());
+  fim.setUTCHours(fim.getUTCHours() + 12);
+
+  const dentro = (dia: string, hora: string) => {
+    const d = parseLocalDateTime(dia, hora)!;
+    return d >= inicio && d <= fim;
+  };
+
+  check("Suspensão: 1º dia às 08:00 entra", dentro("2026-07-06", "08:00"), true);
+  check("Suspensão: 1º dia às 07:00 entra", dentro("2026-07-06", "07:00"), true);
+  check("Suspensão: último dia às 17:00 entra", dentro("2026-07-10", "17:00"), true);
+  check("Suspensão: último dia às 19:30 entra", dentro("2026-07-10", "19:30"), true);
+  check("Suspensão: véspera às 17:00 fica de fora", dentro("2026-07-05", "17:00"), false);
+  check("Suspensão: dia seguinte às 08:00 fica de fora", dentro("2026-07-11", "08:00"), false);
+  check("Suspensão: período de um dia só funciona", (() => {
+    const i = startOfDayBRT("2026-07-06")!;
+    const f = new Date(parseDateInput("2026-07-06")!.getTime());
+    f.setUTCHours(f.getUTCHours() + 12);
+    const d = parseLocalDateTime("2026-07-06", "16:00")!;
+    return d >= i && d <= f;
+  })(), true);
+}
+
 console.log(`\n${falhas === 0 ? "TODOS OS TESTES PASSARAM" : falhas + " FALHA(S)"}\n`);
 process.exit(falhas === 0 ? 0 : 1);

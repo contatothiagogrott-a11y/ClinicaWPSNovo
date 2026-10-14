@@ -1,4 +1,7 @@
 import { useMemo, useState, useCallback } from "react";
+import { liberaHorario, ehSuspensao } from "../lib/attendance";
+import SuspensaoModal from "../components/SuspensaoModal";
+import { CalendarOff } from "lucide-react";
 import { useStore } from "../contexts/StoreContext";
 import { Calendar, dateFnsLocalizer, Views, type View } from "react-big-calendar";
 import withDragAndDrop from "react-big-calendar/lib/addons/dragAndDrop";
@@ -57,6 +60,7 @@ export default function AgendaPage() {
   const [viewMode, setViewMode] = useState<"geral" | "porSala">("geral");
   const [scopeFilter, setScopeFilter] = useState<"GERAL" | "MEUS">("GERAL");
   const [roomFilter, setRoomFilter] = useState<string>("");
+  const [suspensaoAberta, setSuspensaoAberta] = useState(false);
 
   const [modalData, setModalData] = useState<{ time: string; endTime?: string; roomId: string; date: string } | null>(null);
   const [editAppt, setEditAppt] = useState<Appointment | null>(null);
@@ -99,16 +103,21 @@ export default function AgendaPage() {
      * visualmente "não conta" mais, mas o registro permanece na agenda como
      * histórico de que aquele encontro estava marcado.
      */
-    const cancelado =
-      event.appt.attendance === "CANCELADO_PACIENTE" ||
-      event.appt.attendance === "CANCELADO_PROFISSIONAL" ||
-      event.appt.attendance === "REAGENDADO";
+    /**
+     * SUSPENSO tem aparência PRÓPRIA, diferente de cancelado.
+     * Férias do profissional não são desistência do paciente nem falha do
+     * serviço: quem olha a agenda precisa distinguir à primeira vista um
+     * horário suspenso (que pode ser reocupado) de um atendimento cancelado.
+     */
+    const suspenso = ehSuspensao(event.appt.attendance);
+    const cancelado = !suspenso && liberaHorario(event.appt.attendance);
+    const inativo = suspenso || cancelado;
     return {
       style: {
-        backgroundColor: cancelado ? "#f3f4f6" : `${color}22`,
-        borderLeft: `4px solid ${cancelado ? "#9ca3af" : color}`,
+        backgroundColor: suspenso ? "#fffbeb" : cancelado ? "#f3f4f6" : `${color}22`,
+        borderLeft: `4px ${suspenso ? "dashed" : "solid"} ${suspenso ? "#d97706" : cancelado ? "#9ca3af" : color}`,
         color: "#1f2937",
-        opacity: cancelado ? 0.5 : noShow ? 0.55 : 1,
+        opacity: inativo ? 0.55 : noShow ? 0.55 : 1,
         textDecoration: cancelado ? "line-through" : "none",
         borderRadius: 8,
       },
@@ -206,6 +215,16 @@ export default function AgendaPage() {
             </select>
           )}
 
+          {/* Férias e afastamentos: um período inteiro de uma vez, em vez de
+              marcar atendimento por atendimento. */}
+          <button
+            onClick={() => setSuspensaoAberta(true)}
+            title="Suspender atendimentos por férias ou afastamento"
+            className="bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 px-4 py-2.5 rounded-xl text-sm font-bold transition-colors flex items-center gap-1.5"
+          >
+            <CalendarOff size={16} /> Suspender período
+          </button>
+
           <button onClick={handleNovo} className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2.5 rounded-xl text-sm font-bold transition-colors shadow-sm flex items-center gap-1.5">
             <Plus size={16} /> Novo
           </button>
@@ -243,6 +262,8 @@ export default function AgendaPage() {
           resizableAccessor={(e: CalEvent) => canEdit(e.appt)}
         />
       </div>
+
+      <SuspensaoModal open={suspensaoAberta} onClose={() => setSuspensaoAberta(false)} />
 
       {(modalData || editAppt) && (
         <AgendaModal

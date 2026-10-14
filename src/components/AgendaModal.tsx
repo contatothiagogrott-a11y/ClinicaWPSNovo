@@ -8,6 +8,7 @@ import { Appointment } from "../types";
 import { Link } from "react-router-dom";
 import { cn } from "../lib/utils";
 import { clinicians } from "../lib/roles";
+import { liberaHorario } from "../lib/attendance";
 
 const STATUS_LABELS: Record<string, string> = {
   FILA_ESPERA: "Fila de Espera",
@@ -117,8 +118,32 @@ export default function AgendaModal({ open, onClose, initialData, existingAppoin
     (existingAppointment as any)?.appointmentType || "ATENDIMENTO"
   );
 
-  /** Profissional designado para conduzir um evento que não é atendimento. */
-  const [eventPsicoId, setEventPsicoId] = useState<string>(currentUser?.id || "");
+  /**
+   * Profissional designado para conduzir um evento que não é atendimento
+   * comum — em especial o ACOLHIMENTO EMERGENCIAL.
+   *
+   * DEFEITO CORRIGIDO — por que todo acolhimento caía na mesma pessoa
+   * -----------------------------------------------------------------
+   * O campo nascia preenchido com quem estava agendando (`currentUser`). Quem
+   * não mexesse no seletor gravava a si próprio, então todos os acolhimentos
+   * lançados pela mesma pessoa ficavam com ela.
+   *
+   * Pior: o Administrativo NÃO aparece na lista de profissionais (não tem
+   * CRP). Um `<select>` cujo valor não corresponde a nenhuma opção exibe a
+   * PRIMEIRA da lista — então a tela mostrava o nome de uma psicóloga
+   * enquanto o sistema gravava o Administrativo. A pessoa via uma escolha que
+   * o sistema não tinha feito.
+   *
+   * A correção é estrutural, não um ajuste de valor padrão: o campo começa
+   * VAZIO e o agendamento é BLOQUEADO enquanto ninguém for escolhido. Não
+   * existe mais um caminho silencioso — é impossível gravar um profissional
+   * que não tenha sido apontado na tela.
+   *
+   * Em edição, parte de quem já está designado.
+   */
+  const [eventPsicoId, setEventPsicoId] = useState<string>(
+    existingAppointment?.psicoId || ""
+  );
 
   /**
    * Quantidade de repetições.
@@ -171,11 +196,9 @@ export default function AgendaModal({ open, onClose, initialData, existingAppoin
      *    para outro dia, o conflito era conferido no dia errado — deixando
      *    passar choque real e barrando horário livre.
      */
-    const NAO_OCUPA_SALA = ["CANCELADO_PACIENTE", "CANCELADO_PROFISSIONAL", "REAGENDADO"];
-
     const conflict = appointments.find(a => {
       if (existingAppointment && a.id === existingAppointment.id) return false;
-      if (NAO_OCUPA_SALA.includes(a.attendance ?? "")) return false;
+      if (liberaHorario(a.attendance)) return false;
       if (a.date !== appointmentDate || a.roomId !== roomId) return false;
 
       const tStart = new Date(`1970-01-01T${a.time}:00`).getTime();
@@ -202,19 +225,31 @@ export default function AgendaModal({ open, onClose, initialData, existingAppoin
     /**
      * Quem conduz o compromisso.
      *
-     * Para tudo que NÃO é atendimento comum (acolhimento, triagem de grupo,
-     * entrevista, devolutiva), quem conduz é o profissional escolhido no
-     * seletor — nunca o responsável pelo acompanhamento do paciente.
+     * Para tudo que NÃO é atendimento comum (acolhimento emergencial, triagem
+     * de grupo, entrevista, devolutiva), quem conduz é o profissional
+     * ESCOLHIDO NA TELA — nunca quem está agendando, nunca o responsável pelo
+     * acompanhamento do paciente.
      *
-     * `eventPsicoId` começa vazio e o seletor exibe `currentUser` como valor
-     * padrão SEM gravar no estado. Quem não mexia no campo caía no
-     * `currentUser` — por isso o acolhimento ia sempre para o mesmo
-     * profissional, independentemente do que estava selecionado na tela.
-     * Agora o estado é inicializado, então o que aparece é o que vale.
+     * Sem escolha explícita, o agendamento não é gravado. É de propósito:
+     * qualquer valor assumido em silêncio volta a concentrar todos os
+     * acolhimentos numa só pessoa, que foi exatamente o defeito relatado.
+     *
+     * Compliance: o profissional designado aqui é quem assinará a evolução
+     * daquele atendimento. O art. 1º da Resolução CFP nº 001/2009 atribui o
+     * registro a quem prestou o serviço, e a Resolução CFP nº 06/2019 exige
+     * que o documento identifique o psicólogo responsável pelo ato. Deixar o
+     * sistema escolher por conta própria produziria registro assinado por
+     * quem não atendeu.
      */
     let resolvedPsicoId = existingAppointment?.psicoId;
     if (appointmentType !== "ATENDIMENTO") {
-      resolvedPsicoId = eventPsicoId || currentUser?.id || "";
+      if (!eventPsicoId) {
+        setErrorMsg(
+          "Escolha o profissional que vai conduzir este compromisso e escrever a evolução."
+        );
+        return;
+      }
+      resolvedPsicoId = eventPsicoId;
     }
     if (!resolvedPsicoId) {
       if (bookingType === "client") {
@@ -398,17 +433,44 @@ export default function AgendaModal({ open, onClose, initialData, existingAppoin
                {appointmentType !== "ATENDIMENTO" && (
                  <div className="mt-3">
                    <label className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-1 block">
-                     Profissional que vai conduzir
+                     {appointmentType === "ACOLHIMENTO"
+                       ? "Quem fará o acolhimento e a evolução"
+                       : "Profissional que vai conduzir"}
+                     <span className="text-red-500"> *</span>
                    </label>
+                   {/*
+                     A primeira opção é VAZIA e obrigatória.
+
+                     Sem ela o campo nunca ficava "por preencher": abria já
+                     mostrando alguém, e quem não mexesse gravava essa pessoa
+                     sem perceber. Além disso, se o valor guardado não
+                     correspondesse a nenhuma opção — caso do Administrativo,
+                     que não é profissional de psicologia — o navegador exibia
+                     a primeira da lista e o sistema gravava outra.
+
+                     Com a opção vazia, o que está na tela é sempre o que será
+                     gravado, e o formulário barra o envio sem escolha.
+                   */}
                    <select
                      value={eventPsicoId}
                      onChange={e => setEventPsicoId(e.target.value)}
-                     className="w-full bg-white border border-gray-200 focus:border-blue-500 rounded-xl px-4 py-2.5 outline-none font-medium text-sm"
+                     required
+                     className={cn(
+                       "w-full bg-white border rounded-xl px-4 py-2.5 outline-none font-medium text-sm transition-colors",
+                       eventPsicoId
+                         ? "border-gray-200 focus:border-blue-500"
+                         : "border-red-300 focus:border-red-500 text-gray-500"
+                     )}
                    >
+                     <option value="">— escolha o profissional —</option>
                      {psicos.map(p => (
                        <option key={p.id} value={p.id}>{p.name}{p.crp ? ` — CRP ${p.crp}` : ""}</option>
                      ))}
                    </select>
+                   <p className="text-[11px] text-gray-500 mt-1.5 leading-relaxed">
+                     A evolução deste compromisso ficará com quem for escolhido aqui —
+                     e só essa pessoa poderá escrevê-la.
+                   </p>
                  </div>
                )}
              </div>
@@ -718,10 +780,61 @@ export default function AgendaModal({ open, onClose, initialData, existingAppoin
                          >
                            Reagendado
                          </button>
-                         <p className="text-[10px] text-gray-500 mt-2 leading-tight">
+                         {/*
+                           SUSPENSO — férias ou afastamento do profissional.
+
+                           Fica FORA do bloco de cancelamento de propósito. O
+                           atendimento não foi desmarcado por ninguém: o serviço
+                           é que não estava disponível naquele período. Tratar
+                           isso como "cancelado pelo serviço" contaminaria os
+                           indicadores de adesão do setor — férias apareceriam
+                           como falha de escala.
+
+                           Efeito prático: o horário e a sala ficam livres para
+                           receber outro agendamento, o paciente não perde
+                           sessão do pacote e nenhuma evolução é cobrada.
+                         */}
+                         {/*
+                           SUSPENSÃO — duas marcações, não uma.
+
+                           Férias do paciente e férias do profissional produzem
+                           indicadores opostos: a primeira fala da
+                           disponibilidade de quem é atendido, a segunda da
+                           capacidade do serviço. Num rótulo só, o setor perde a
+                           única informação que serve para planejar escala.
+
+                           Para um período inteiro, use "Suspender período" na
+                           tela da Agenda: lança tudo de uma vez e grava o
+                           intervalo no prontuário, com o motivo.
+                         */}
+                         <div className="pt-3 mt-3 border-t border-gray-200">
+                           <p className="text-[11px] font-bold text-gray-500 uppercase tracking-wider mb-2 text-center">
+                             Suspensão deste atendimento
+                           </p>
+                           <div className="flex gap-2">
+                             {(["SUSPENSO_PACIENTE", "SUSPENSO_PROFISSIONAL"] as const).map(valor => (
+                               <button
+                                 key={valor}
+                                 type="button"
+                                 onClick={() => { markAttendance(existingAppointment.id, valor); onClose(); }}
+                                 className={`flex-1 py-2 px-2 rounded-lg font-bold text-xs leading-tight transition-colors border ${existingAppointment.attendance === valor ? 'bg-amber-100 text-amber-800 border-amber-300' : 'bg-white text-gray-600 border-gray-200 hover:bg-amber-50'}`}
+                               >
+                                 {valor === "SUSPENSO_PACIENTE" ? "Afastamento do paciente" : "Afastamento do profissional"}
+                               </button>
+                             ))}
+                           </div>
+                           <p className="text-[10px] text-gray-500 mt-2 leading-tight">
+                             Férias, licença ou afastamento. Não é cancelamento: o horário
+                             permanece na agenda como histórico, mas a sala fica
+                             <strong> liberada para outro agendamento</strong> e o paciente
+                             não perde a sessão. Para várias semanas de uma vez, use
+                             <strong> Suspender período</strong> na Agenda.
+                           </p>
+                         </div>
+                         <p className="text-[10px] text-gray-500 mt-3 leading-tight">
                            {existingAppointment.groupId
-                             ? "O encontro não ocorreu: os prontuários pendentes de todos os integrantes daquele dia são removidos, preservando o que já foi escrito."
-                             : "Cancelamento e reagendamento não contam como falta e não consomem sessão do pacote do paciente."} Para marcar a nova data, use o botão de agendar no dia desejado.
+                             ? "O encontro não ocorreu: entra como ocorrência no prontuário de cada integrante, preservando o que já foi escrito."
+                             : "Falta, cancelamento, reagendamento e suspensão aparecem no prontuário como ocorrência, sem número de sessão e sem consumir o pacote do paciente."} Para marcar a nova data, use o botão de agendar no dia desejado.
                          </p>
                        </div>
                     </div>

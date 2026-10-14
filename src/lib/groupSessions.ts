@@ -1,5 +1,6 @@
 import type { Appointment, GroupRecord, SessionRecord } from "../types";
 import { toDateOnly } from "./datetime";
+import { naoOcorreu } from "./attendance";
 
 /**
  * NUMERAÇÃO DOS ENCONTROS DE GRUPO
@@ -26,8 +27,6 @@ import { toDateOnly } from "./datetime";
  * buracos na sequência.
  */
 
-const NAO_CONTAM = ["CANCELADO_PACIENTE", "CANCELADO_PROFISSIONAL", "REAGENDADO"];
-
 export interface FontesDeEncontro {
   /** Agendamentos do grupo — a fonte primária da linha do tempo. */
   appointments?: Appointment[];
@@ -46,7 +45,7 @@ function datasDosEncontros(groupId: string, fontes: FontesDeEncontro): string[] 
 
   for (const a of fontes.appointments ?? []) {
     if (a.groupId !== groupId) continue;
-    if (NAO_CONTAM.includes(a.attendance ?? "")) continue;
+    if (naoOcorreu(a.attendance)) continue;
     const d = toDateOnly(a.date);
     if (d) datas.add(d);
   }
@@ -61,7 +60,7 @@ function datasDosEncontros(groupId: string, fontes: FontesDeEncontro): string[] 
   // agendamento nem registro coletivo (casos antigos, lançados na mão).
   for (const s of fontes.sessions ?? []) {
     if (s.groupId !== groupId) continue;
-    if (NAO_CONTAM.includes(s.attendance ?? "")) continue;
+    if (naoOcorreu(s.attendance)) continue;
     const d = toDateOnly(s.date);
     if (d) datas.add(d);
   }
@@ -101,7 +100,7 @@ export function numerarTodosOsGrupos(
     const porData = numerarDatasDoGrupo(groupId, { ...fontes, sessions });
     for (const s of sessions) {
       if (s.groupId !== groupId) continue;
-      if (NAO_CONTAM.includes(s.attendance ?? "")) continue;
+      if (naoOcorreu(s.attendance)) continue;
       const n = porData.get(toDateOnly(s.date));
       if (n) resultado.set(s.id, n);
     }

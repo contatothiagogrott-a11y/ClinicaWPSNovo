@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useEffect, useState, useCallback } from "react";
-import { User, Client, SessionRecord, AppConfig, ClientStatus, ConfigItem, Appointment, Group, GroupRecord, Instrument, InstrumentLog, ClinicalDocument, ClinicalDocumentType, GroupClientNote, HistoryLog, AccessLogEntry } from "../types";
+import { User, Client, SessionRecord, AppConfig, ClientStatus, ConfigItem, Appointment, Group, GroupRecord, Instrument, InstrumentLog, ClinicalDocument, ClinicalDocumentType, GroupClientNote, HistoryLog, AccessLogEntry, SuspensionPeriod } from "../types";
 import { api, ApiError } from "../lib/api";
 import { clearAppCache } from "../lib/pwa";
 
@@ -61,6 +61,17 @@ interface StoreContextType extends StoreState {
   updateAppointment: (id: string, updates: Partial<Appointment>, applyToFuture?: boolean) => Promise<number>;
   deleteAppointment: (id: string, deleteFuture?: boolean) => Promise<void>;
   markAttendance: (appointmentId: string, attendance: NonNullable<Appointment["attendance"]>) => Promise<void>;
+  /** Períodos de suspensão (férias/afastamento) lançados no setor. */
+  suspensoes: SuspensionPeriod[];
+  criarSuspensao: (dados: {
+    scope: "PACIENTE" | "PROFISSIONAL";
+    clientId?: string;
+    psicoId?: string;
+    startDate: string;
+    endDate: string;
+    reason: string;
+  }) => Promise<{ agendamentosAfetados: number; pacientesAtingidos: number }>;
+  desfazerSuspensao: (id: string) => Promise<{ agendamentosRevertidos: number; registrosRemovidos: number }>;
   updateConfig: (config: AppConfig) => void;
   addConfigItem: (type: "affiliations" | "allocations" | "rooms" | "tags", name: string) => Promise<void>;
   updateConfigItem: (type: "affiliations" | "allocations" | "rooms" | "tags", id: string, updates: Partial<ConfigItem>) => Promise<void>;
@@ -88,6 +99,8 @@ interface StoreContextType extends StoreState {
   markClientReviewed: (clientId: string) => Promise<void>;
   /** Remove prontuários pendentes vazios (órfãos, futuros e de encontros que não ocorreram). */
   limparProntuariosVazios: () => Promise<number>;
+  /** Reconstrói no prontuário os cancelamentos antigos, que eram apagados. */
+  registrarCancelamentos: (aplicar: boolean) => Promise<any>;
   /** Prévia ou aplicação do realinhamento de autoria dos prontuários. */
   /** Prévia ou remoção das duplicatas de registros de grupo. */
   removerDuplicatasDeGrupo: (aplicar: boolean) => Promise<any>;
@@ -363,6 +376,48 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     await refreshAll();
   };
 
+  /**
+   * SUSPENSÕES.
+   *
+   * Carregadas sob demanda, fora do /api/bootstrap: são poucas, mudam pouco e
+   * só interessam a quem abre a tela de agenda. Entrar no bootstrap faria toda
+   * sincronização carregar dado que quase nunca é lido.
+   */
+  const [suspensoes, setSuspensoes] = useState<SuspensionPeriod[]>([]);
+
+  const recarregarSuspensoes = useCallback(async () => {
+    try {
+      const r = await api.get<{ suspensoes: SuspensionPeriod[] }>("/api/suspensoes");
+      setSuspensoes(r.suspensoes ?? []);
+    } catch {
+      // Falha aqui não pode derrubar a agenda: a lista fica vazia.
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!currentUser || mustChangePassword) return;
+    void recarregarSuspensoes();
+  }, [currentUser, mustChangePassword, recarregarSuspensoes]);
+
+  const criarSuspensao: StoreContextType["criarSuspensao"] = async (dados) => {
+    const r = await api.post<{ agendamentosAfetados: number; pacientesAtingidos: number }>(
+      "/api/suspensoes",
+      dados
+    );
+    await recarregarSuspensoes();
+    await refreshAll();
+    return r;
+  };
+
+  const desfazerSuspensao: StoreContextType["desfazerSuspensao"] = async (id) => {
+    const r = await api.delete<{ agendamentosRevertidos: number; registrosRemovidos: number }>(
+      `/api/suspensoes/${id}`
+    );
+    await recarregarSuspensoes();
+    await refreshAll();
+    return r;
+  };
+
   const updateConfig = (newConfig: AppConfig) => {
     // A tela de configurações usa addConfigItem/updateConfigItem para persistir;
     // isso aqui só reflete o estado local (ex.: reordenações puramente visuais).
@@ -537,6 +592,12 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     return r;
   };
 
+  const registrarCancelamentos: StoreContextType["registrarCancelamentos"] = async (aplicar) => {
+    const r = await api.post<any>(`/api/manutencao/registrar-cancelamentos?aplicar=${aplicar}`);
+    if (aplicar) await refreshAll();
+    return r;
+  };
+
   const diagnosticoVinculos: StoreContextType["diagnosticoVinculos"] = async () =>
     api.get<any>("/api/manutencao/diagnostico-vinculos");
 
@@ -668,6 +729,9 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
         updateAppointment,
         deleteAppointment,
         markAttendance,
+        suspensoes,
+        criarSuspensao,
+        desfazerSuspensao,
         updateConfig,
         addConfigItem,
         updateConfigItem,
@@ -686,6 +750,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
         undoImport,
         markClientReviewed,
         limparProntuariosVazios,
+        registrarCancelamentos,
         realinharAutoria,
         removerDuplicatasDeGrupo,
         gerarProntuariosDeGrupo,

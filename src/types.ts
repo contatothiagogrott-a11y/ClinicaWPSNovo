@@ -1,3 +1,4 @@
+import type { Attendance } from "./lib/attendance";
 export type Role = "SUPERVISOR" | "ADMIN" | "PSICO";
 
 export interface UserCapacity {
@@ -160,7 +161,13 @@ export interface Client {
   instruments?: InstrumentApplication[];
 }
 
-export type AttendanceStatus = "PRESENTE" | "FALTA_JUSTIFICADA" | "FALTA_NAO_JUSTIFICADA";
+/**
+ * Vocabulário ANTIGO de presença, mantido porque existem registros gravados
+ * com estes valores. Os novos usam `Attendance` (src/lib/attendance.ts), que é
+ * a mesma lista usada pela agenda e pelo servidor.
+ */
+export type AttendanceStatusLegado = "PRESENTE" | "FALTA_JUSTIFICADA" | "FALTA_NAO_JUSTIFICADA";
+export type AttendanceStatus = AttendanceStatusLegado | Attendance;
 
 export interface RecordVersion {
   id: string;
@@ -171,7 +178,9 @@ export interface RecordVersion {
 export interface SessionRecord {
   appointmentId?: string;
   /** Natureza do registro: atendimento, triagem de grupo, entrevista, devolutiva. */
-  sessionType?: "ATENDIMENTO" | "ACOLHIMENTO" | "TRIAGEM_GRUPO" | "ENTREVISTA" | "DEVOLUTIVA";
+  sessionType?: "ATENDIMENTO" | "ACOLHIMENTO" | "TRIAGEM_GRUPO" | "ENTREVISTA" | "DEVOLUTIVA" | "SUSPENSAO";
+  /** Período de suspensão que gerou este registro, quando for o caso. */
+  suspensionId?: string;
   /** Número do encontro dentro do grupo (1º, 2º...), separado da contagem individual. */
   groupSessionNumber?: number;
   id: string;
@@ -260,14 +269,12 @@ export interface Appointment {
    * registro clínico.
    */
   appointmentType?: "ATENDIMENTO" | "ACOLHIMENTO" | "TRIAGEM_GRUPO" | "ENTREVISTA" | "DEVOLUTIVA" | "REUNIAO";
-  attendance?:
-    | "PENDENTE"
-    | "COMPARECEU"
-    | "FALTA_JUSTIFICADA"
-    | "FALTA_INJUSTIFICADA"
-    | "CANCELADO_PACIENTE"
-    | "CANCELADO_PROFISSIONAL"
-    | "REAGENDADO";
+  /**
+   * Situação do agendamento — lista única em src/lib/attendance.ts, a mesma
+   * usada pelo servidor. Estava duplicada aqui, e foi assim que o sistema
+   * passou a ter entendimentos diferentes do mesmo fato em telas diferentes.
+   */
+  attendance?: Attendance;
   sessionNumber?: number;
   id: string;
   clientId?: string;
@@ -326,4 +333,27 @@ export interface ClinicalDocument {
   authorName: string;
   createdAt: string;
   updatedAt: string;
+}
+
+
+/**
+ * Período em que os atendimentos ficaram suspensos — férias, licença ou
+ * afastamento, do paciente ou do profissional.
+ *
+ * `reason` só chega ao navegador de quem pode vê-lo (supervisor ou quem
+ * lançou). É campo livre e costuma conter dado de saúde, então a API o omite
+ * para os demais em vez de esconder na tela.
+ */
+export interface SuspensionPeriod {
+  id: string;
+  scope: "PACIENTE" | "PROFISSIONAL";
+  clientId?: string | null;
+  psicoId?: string | null;
+  psicoName?: string | null;
+  startDate: string;
+  endDate: string;
+  reason?: string;
+  createdByName: string;
+  createdAt: string;
+  revokedAt?: string | null;
 }

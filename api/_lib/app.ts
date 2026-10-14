@@ -1,6 +1,13 @@
 import crypto from "crypto";
 import express, { type Request, type Response, type NextFunction } from "express";
 import { prisma } from "./prisma.js";
+import {
+  NAO_CONSOME_SESSAO_SQL,
+  TEXTO_DO_REGISTRO,
+  consomeSessao,
+  naoOcorreu,
+  ehSuspensao,
+} from "./attendance.js";
 import { encryptField, decryptField } from "./crypto.js";
 import {
   hashPassword,
@@ -18,7 +25,7 @@ import {
   lembreteDeAtendimento, resumoDoDia, pacienteAtribuido,
 } from "./push.js";
 import { checkRateLimit, registerFailure, registerSuccess, rateLimitKey } from "./rateLimit.js";
-import { parseDateInput, parseLocalDateTime, startOfDayBRT, formatBR } from "./datetime.js";
+import { parseDateInput, parseLocalDateTime, startOfDayBRT, formatBR, toISO } from "./datetime.js";
 import { computeRetentionUntil, describeRetention } from "./retention.js";
 import {
   type Actor,
@@ -358,11 +365,8 @@ async function maybeIncrementCompletedSessions(
   isNowDraft: boolean,
   attendance?: string | null
 ) {
-  const naoHouveEncontro =
-    attendance &&
-    ["FALTA_JUSTIFICADA", "FALTA_INJUSTIFICADA", "CANCELADO_PACIENTE", "CANCELADO_PROFISSIONAL", "REAGENDADO"]
-      .includes(attendance);
-  if (naoHouveEncontro) return;
+  // Regra única em api/_lib/attendance.ts — inclui SUSPENSO (férias).
+  if (!consomeSessao(attendance)) return;
 
   // Sessão de grupo TAMBÉM consome o pacote do paciente: é atendimento
   // prestado pelo setor, independentemente da modalidade.
@@ -410,17 +414,7 @@ async function recalcularSessoesRealizadas(clientId: string): Promise<number> {
       clientId,
       isDraft: false,
       // Falta, cancelamento e reagendamento não são sessão realizada.
-      NOT: {
-        attendance: {
-          in: [
-            "FALTA_JUSTIFICADA",
-            "FALTA_INJUSTIFICADA",
-            "CANCELADO_PACIENTE",
-            "CANCELADO_PROFISSIONAL",
-            "REAGENDADO",
-          ],
-        },
-      },
+      NOT: { attendance: { in: NAO_CONSOME_SESSAO_SQL } },
     },
   });
 
@@ -1802,6 +1796,44 @@ app.post(
       }
     }
 
+    /**
+     * QUEM CONDUZ — validado no servidor, não só na tela.
+     *
+     * Compromissos que não são atendimento comum (acolhimento emergencial,
+     * triagem de grupo, entrevista, devolutiva) EXIGEM profissional designado
+     * explicitamente. Sem isso o registro nasceria atribuído a quem operou a
+     * agenda, e era essa a razão de todos os acolhimentos aparecerem sob uma
+     * única pessoa.
+     *
+     * Compliance — Resolução CFP nº 001/2009, art. 1º, e Resolução CFP
+     * nº 06/2019: o registro e o documento dele decorrente pertencem a quem
+     * PRESTOU o serviço. Um valor assumido pelo sistema produziria prontuário
+     * atribuído a profissional que não realizou o atendimento, o que é
+     * inveracidade documental — falta ética, não apenas erro de dado.
+     * LGPD Art. 6º, V (qualidade): o vínculo autor–atendimento passa a ser
+     * sempre um ato declarado, nunca inferido.
+     */
+    const tipoSolicitado = b.appointmentType || "ATENDIMENTO";
+    if (tipoSolicitado !== "ATENDIMENTO" && !b.psicoId) {
+      res.status(400).json({
+        error: "Informe o profissional que vai conduzir este compromisso.",
+      });
+      return;
+    }
+    if (b.psicoId) {
+      const condutor = await prisma.user.findUnique({
+        where: { id: b.psicoId },
+        select: { role: true },
+      });
+      // Só quem tem CRP atende: o Administrativo não pode ser designado.
+      if (!condutor || !["PSICO", "SUPERVISOR"].includes(condutor.role)) {
+        res.status(400).json({
+          error: "O profissional designado precisa ser psicólogo ou supervisor.",
+        });
+        return;
+      }
+    }
+
     const appt = await prisma.appointment.create({
       data: {
         clientId: b.clientId || null,
@@ -2117,98 +2149,185 @@ app.patch(
 );
 
 /**
- * Fecha o prontuário pendente conforme a situação do agendamento.
+ * Registra no prontuário o desfecho do agendamento.
  *
- * O rascunho é criado no agendamento e só faz sentido enquanto se espera uma
- * evolução. Se o encontro NÃO ACONTECEU — cancelado, reagendado ou falta — não
- * há evolução a escrever, e deixar o rascunho aberto faz o sistema cobrar para
- * sempre um registro que nunca virá.
+ * REGRA NOVA — TODO DESFECHO DEIXA RASTRO
+ * =======================================
+ * Antes, só a FALTA virava registro. Cancelamento, reagendamento e suspensão
+ * tinham o rascunho em branco APAGADO, e o prontuário ficava sem vestígio de
+ * que aquele horário existiu. Quem lesse o documento meses depois via um
+ * intervalo de semanas sem explicação nenhuma.
  *
- * Falta e cancelamento não são a mesma coisa:
+ * Isso é lacuna documental. O art. 1º da Resolução CFP nº 001/2009 trata o
+ * prontuário como o registro do CURSO do acompanhamento — não apenas dos
+ * encontros que deram certo. Saber que houve três cancelamentos seguidos pelo
+ * paciente é informação clínica relevante, e a ausência dela empobrece o
+ * documento que o psicólogo assina.
  *
- *  - FALTA é dado clínico do acompanhamento e PERMANECE no prontuário, com o
- *    registro de que o paciente não compareceu (o CFP trata a frequência como
- *    parte do acompanhamento). O rascunho é fechado com esse texto.
+ * Agora, qualquer desfecho diferente de "compareceu" fecha um registro com
+ * texto descritivo e com a presença gravada no próprio registro. A presença
+ * gravada é o que impede a contagem como sessão realizada (ver
+ * `recalcularSessoesRealizadas`): a ocorrência APARECE no prontuário e NÃO
+ * consome sessão do pacote do paciente.
  *
- *  - CANCELAMENTO e REAGENDAMENTO são movimentação de agenda, não atendimento.
- *    O rascunho VAZIO é removido — não houve ato clínico a registrar. Se o
- *    profissional já tiver escrito algo, o registro é preservado.
+ * Três garantias:
+ *
+ *  1. O que o profissional já escreveu NUNCA é sobrescrito. Se houver texto,
+ *     só a marcação de presença é atualizada.
+ *  2. Se o rascunho não existir — caso das séries recorrentes, em que só a
+ *     primeira ocorrência nasce com rascunho — o registro é CRIADO.
+ *  3. O texto é descritivo, nunca interpretativo. "Cancelado pelo paciente" é
+ *     fato; qualquer leitura clínica disso cabe ao profissional escrever.
  */
-async function resolverProntuarioPorPresenca(appt: any): Promise<void> {
+async function resolverProntuarioPorPresenca(
+  appt: any,
+  suspensionId?: string | null
+): Promise<void> {
   const situacao = appt.attendance;
   if (!situacao || situacao === "PENDENTE" || situacao === "COMPARECEU") return;
+  if (!appt.clientId) return;
+
+  const texto = TEXTO_DO_REGISTRO[situacao as keyof typeof TEXTO_DO_REGISTRO];
+  if (!texto) return; // situação desconhecida: não inventa registro
 
   const rascunho = await prisma.sessionRecord.findFirst({
-    where: { appointmentId: appt.id, isDraft: true },
+    where: { appointmentId: appt.id },
     include: { versions: true },
   });
-  if (!rascunho) return;
+
+  if (!rascunho) {
+    // Série recorrente: as ocorrências seguintes não nascem com rascunho.
+    await prisma.sessionRecord.create({
+      data: {
+        clientId: appt.clientId,
+        psicoId: appt.psicoId,
+        date: appt.date,
+        notesEnc: encryptField(texto),
+        isDraft: false,
+        attendance: situacao,
+        appointmentId: appt.id,
+        sessionType: appt.appointmentType || "ATENDIMENTO",
+        groupId: appt.groupId ?? null,
+        suspensionId: suspensionId ?? null,
+      },
+    });
+    return;
+  }
 
   const temConteudo =
     !!decryptField(rascunho.notesEnc) ||
     !!decryptField(rascunho.privateNotesEnc) ||
     (rascunho.versions ?? []).length > 0;
 
-  const ehFalta = situacao === "FALTA_JUSTIFICADA" || situacao === "FALTA_INJUSTIFICADA";
-
-  if (ehFalta) {
-    if (temConteudo) return; // já há registro escrito: não sobrescreve
-    const texto =
-      situacao === "FALTA_JUSTIFICADA"
-        ? "Paciente não compareceu ao atendimento — falta justificada."
-        : "Paciente não compareceu ao atendimento — falta sem justificativa.";
-    // Fecha o registro SEM contar como sessão realizada — a presença gravada
-    // no próprio registro impede o incremento (ver maybeIncrementCompletedSessions).
-    await prisma.sessionRecord.update({
-      where: { id: rascunho.id },
-      data: { notesEnc: encryptField(texto), isDraft: false, attendance: situacao },
-    });
-    return;
-  }
-
-  // Cancelado ou reagendado: sem ato clínico.
-  if (!temConteudo) {
-    await prisma.sessionRecord.delete({ where: { id: rascunho.id } }).catch(() => {});
-  }
+  await prisma.sessionRecord.update({
+    where: { id: rascunho.id },
+    data: {
+      // Evolução escrita pelo profissional é intocável — só a presença muda.
+      ...(temConteudo ? {} : { notesEnc: encryptField(texto) }),
+      isDraft: false,
+      attendance: situacao,
+      ...(suspensionId ? { suspensionId } : {}),
+    },
+  });
 }
 
 /**
- * Encontro de GRUPO cancelado ou reagendado.
+ * Encontro de GRUPO que não aconteceu.
  *
- * Um encontro de grupo gera um prontuário pendente para CADA integrante. Se o
- * encontro não acontece, todos ficariam cobrando um registro que nunca virá —
- * e o registro coletivo também.
+ * Mesma regra do atendimento individual: o encontro desfeito passa a DEIXAR
+ * RASTRO, em vez de ser apagado. Antes, cancelar um encontro removia o
+ * prontuário pendente de cada integrante, e o processo grupal ficava com
+ * buracos no documento de todo mundo.
  *
- * Remove apenas os que estão em branco: o que já foi escrito permanece.
+ * O art. 5º da Resolução CFP nº 001/2009 exige documentação individual de cada
+ * participante somada à do grupo. Um encontro desmarcado faz parte do curso do
+ * processo, então entra nas duas camadas: no registro coletivo e na ficha de
+ * cada integrante.
+ *
+ * O que já foi escrito por alguém nunca é sobrescrito.
  */
-async function resolverEncontroDeGrupoPorPresenca(appt: any): Promise<void> {
+async function resolverEncontroDeGrupoPorPresenca(
+  appt: any,
+  suspensionId?: string | null
+): Promise<void> {
   const situacao = appt.attendance;
   if (!situacao || situacao === "PENDENTE" || situacao === "COMPARECEU") return;
   if (!appt.groupId) return;
+  if (!naoOcorreu(situacao)) return;
 
-  const naoOcorreu = ["CANCELADO_PACIENTE", "CANCELADO_PROFISSIONAL", "REAGENDADO"].includes(situacao);
-  if (!naoOcorreu) return;
+  const texto = TEXTO_DO_REGISTRO[situacao as keyof typeof TEXTO_DO_REGISTRO];
+  if (!texto) return;
+  const textoDoGrupo = texto.replace("Atendimento", "Encontro do grupo");
 
-  // Prontuários individuais daquele encontro.
+  // ---- Prontuários individuais dos integrantes daquele encontro -----------
   const individuais = await prisma.sessionRecord.findMany({
-    where: { appointmentId: appt.id, groupId: appt.groupId, isDraft: true },
+    where: { appointmentId: appt.id, groupId: appt.groupId },
     include: { versions: true },
   });
-  const removiveis = individuais
-    .filter((r: any) =>
-      !decryptField(r.notesEnc) && !decryptField(r.privateNotesEnc) && (r.versions ?? []).length === 0
-    )
-    .map((r: any) => r.id);
-  if (removiveis.length) {
-    await prisma.sessionRecord.deleteMany({ where: { id: { in: removiveis } } });
+
+  if (individuais.length === 0) {
+    // Nenhum registro ainda (série recorrente): cria um por integrante ativo.
+    const grupo = await prisma.group.findUnique({
+      where: { id: appt.groupId },
+      include: { members: true },
+    });
+    const membros = (grupo?.members ?? []).filter((m: any) => !m.exitedAt);
+    if (membros.length) {
+      await prisma.sessionRecord.createMany({
+        data: membros.map((m: any) => ({
+          clientId: m.clientId,
+          psicoId: appt.psicoId,
+          date: appt.date,
+          notesEnc: encryptField(textoDoGrupo),
+          isDraft: false,
+          attendance: situacao,
+          appointmentId: appt.id,
+          groupId: appt.groupId,
+          sessionType: "ATENDIMENTO",
+          suspensionId: suspensionId ?? null,
+        })),
+      });
+    }
+  } else {
+    for (const r of individuais) {
+      const temConteudo =
+        !!decryptField(r.notesEnc) ||
+        !!decryptField(r.privateNotesEnc) ||
+        (r.versions ?? []).length > 0;
+      await prisma.sessionRecord.update({
+        where: { id: r.id },
+        data: {
+          ...(temConteudo ? {} : { notesEnc: encryptField(textoDoGrupo) }),
+          isDraft: false,
+          attendance: situacao,
+          ...(suspensionId ? { suspensionId } : {}),
+        },
+      });
+    }
   }
 
-  // Registro coletivo do encontro.
+  // ---- Registro coletivo do encontro -------------------------------------
   const coletivo = await prisma.groupRecord.findFirst({
-    where: { appointmentId: appt.id, isDraft: true },
+    where: { appointmentId: appt.id },
   });
-  if (coletivo && !decryptField(coletivo.contentEnc)) {
-    await prisma.groupRecord.delete({ where: { id: coletivo.id } }).catch(() => {});
+  if (coletivo) {
+    if (!decryptField(coletivo.contentEnc)) {
+      await prisma.groupRecord.update({
+        where: { id: coletivo.id },
+        data: { contentEnc: encryptField(textoDoGrupo), isDraft: false },
+      });
+    }
+  } else {
+    await prisma.groupRecord.create({
+      data: {
+        groupId: appt.groupId,
+        authorId: appt.psicoId,
+        sessionDate: appt.date,
+        contentEnc: encryptField(textoDoGrupo),
+        isDraft: false,
+        appointmentId: appt.id,
+      },
+    });
   }
 }
 
@@ -3463,9 +3582,7 @@ app.post(
     const agendamentosExistentes = new Set(agendamentos.map((a: any) => a.id));
     const naoAconteceram = new Set(
       agendamentos
-        .filter((a: any) =>
-          ["CANCELADO_PACIENTE", "CANCELADO_PROFISSIONAL", "REAGENDADO"].includes(a.attendance)
-        )
+        .filter((a: any) => naoOcorreu(a.attendance))
         .map((a: any) => a.id)
     );
 
@@ -3497,8 +3614,8 @@ app.post(
         const orfao = !!s.appointmentId && !agendamentosExistentes.has(s.appointmentId);
         const futuro = new Date(s.date) > agora;
         // Encontro cancelado ou reagendado: não houve atendimento a registrar.
-        const naoOcorreu = !!s.appointmentId && naoAconteceram.has(s.appointmentId);
-        return orfao || futuro || naoOcorreu;
+        const encontroDesfeito = !!s.appointmentId && naoAconteceram.has(s.appointmentId);
+        return orfao || futuro || encontroDesfeito;
       })
       .map((s: any) => s.id);
 
@@ -3513,8 +3630,8 @@ app.post(
         if (decryptField(g.contentEnc)) return false;
         const orfao = !!g.appointmentId && !agendamentosExistentes.has(g.appointmentId);
         const futuro = new Date(g.sessionDate) > agora;
-        const naoOcorreu = !!g.appointmentId && naoAconteceram.has(g.appointmentId);
-        return orfao || futuro || naoOcorreu;
+        const encontroDesfeito = !!g.appointmentId && naoAconteceram.has(g.appointmentId);
+        return orfao || futuro || encontroDesfeito;
       })
       .map((g: any) => g.id);
 
@@ -3776,7 +3893,7 @@ app.post(
       if (!grupo) continue;
 
       // Encontros cancelados ou reagendados não precisam de documentação.
-      if (["CANCELADO_PACIENTE", "CANCELADO_PROFISSIONAL", "REAGENDADO"].includes(appt.attendance ?? "")) {
+      if (naoOcorreu(appt.attendance)) {
         continue;
       }
 
@@ -4083,7 +4200,7 @@ app.post(
     });
     let recriados = 0;
     for (const appt of futuros) {
-      if (["CANCELADO_PACIENTE", "CANCELADO_PROFISSIONAL", "REAGENDADO"].includes(appt.attendance ?? "")) continue;
+      if (naoOcorreu(appt.attendance)) continue;
       const existe = await prisma.sessionRecord.findFirst({
         where: { clientId: req.params.clientId, groupId: req.params.id, date: appt.date },
         select: { id: true },
@@ -4279,17 +4396,7 @@ app.post(
         by: ["clientId"],
         where: {
           isDraft: false,
-          NOT: {
-            attendance: {
-              in: [
-                "FALTA_JUSTIFICADA",
-                "FALTA_INJUSTIFICADA",
-                "CANCELADO_PACIENTE",
-                "CANCELADO_PROFISSIONAL",
-                "REAGENDADO",
-              ],
-            },
-          },
+          NOT: { attendance: { in: NAO_CONSOME_SESSAO_SQL } },
         },
         _count: { _all: true },
       }),
@@ -4455,6 +4562,475 @@ app.get(
       take: 200,
     });
     res.json({ exclusoes: registros.map(mapAccessLog) });
+  })
+);
+
+/**
+ * CORREÇÃO — cancelamentos antigos que sumiram do prontuário
+ * ==========================================================
+ *
+ * Até a versão anterior, cancelar ou reagendar um atendimento APAGAVA o
+ * prontuário pendente em branco. O prontuário desses pacientes ficou com
+ * intervalos sem explicação: quem lê o documento vê três semanas sem registro
+ * e não tem como saber se houve interrupção, abandono ou simples remarcação.
+ *
+ * Os agendamentos, porém, continuam no banco com a marcação de desfecho. Dá
+ * para reconstruir o que foi apagado a partir deles, sem inventar nada: a data,
+ * o profissional e o motivo do não comparecimento estão todos lá.
+ *
+ * A rota roda em dois tempos, como as demais rotinas de manutenção:
+ * `?aplicar=true` só depois de conferir a prévia.
+ *
+ * Compliance: Res. CFP nº 001/2009, art. 1º — o prontuário registra o curso do
+ * acompanhamento, não apenas os encontros realizados. LGPD Art. 6º, V
+ * (qualidade): o documento passa a refletir o que de fato ocorreu na agenda.
+ */
+app.post(
+  "/api/manutencao/registrar-cancelamentos",
+  asyncHandler(async (req, res) => {
+    const session = requireSession(req, res, ["SUPERVISOR", "ADMIN"]);
+    if (!session) return;
+    const aplicar = req.query.aplicar === "true";
+
+    const semRegistro = await prisma.appointment.findMany({
+      where: {
+        clientId: { not: null },
+        attendance: { in: NAO_CONSOME_SESSAO_SQL },
+      },
+      orderBy: { date: "asc" },
+    });
+
+    const idsComRegistro = new Set(
+      (
+        await prisma.sessionRecord.findMany({
+          where: { appointmentId: { in: semRegistro.map((a: any) => a.id) } },
+          select: { appointmentId: true },
+        })
+      ).map((r: any) => r.appointmentId)
+    );
+
+    const aCriar = semRegistro.filter((a: any) => !idsComRegistro.has(a.id));
+
+    const porSituacao = new Map<string, number>();
+    const porPaciente = new Map<string, number>();
+    for (const a of aCriar) {
+      porSituacao.set(a.attendance, (porSituacao.get(a.attendance) ?? 0) + 1);
+      porPaciente.set(a.clientId, (porPaciente.get(a.clientId) ?? 0) + 1);
+    }
+
+    if (!aplicar) {
+      res.json({
+        previa: true,
+        totalDeOcorrenciasSemRegistro: aCriar.length,
+        pacientesAfetados: porPaciente.size,
+        porSituacao: Object.fromEntries(porSituacao),
+        aviso:
+          "Nada foi alterado. Rode de novo com aplicar=true para gravar os registros.",
+      });
+      return;
+    }
+
+    const dados = aCriar
+      .map((a: any) => {
+        const texto = TEXTO_DO_REGISTRO[a.attendance as keyof typeof TEXTO_DO_REGISTRO];
+        if (!texto) return null;
+        return {
+          clientId: a.clientId,
+          psicoId: a.psicoId,
+          date: a.date,
+          notesEnc: encryptField(a.groupId ? texto.replace("Atendimento", "Encontro do grupo") : texto),
+          isDraft: false,
+          attendance: a.attendance,
+          appointmentId: a.id,
+          groupId: a.groupId ?? null,
+          sessionType: a.appointmentType || "ATENDIMENTO",
+        };
+      })
+      .filter(Boolean) as any[];
+
+    if (dados.length) await prisma.sessionRecord.createMany({ data: dados });
+
+    // A contagem não muda (nenhuma dessas situações consome sessão), mas o
+    // recálculo garante que o número exibido confira com o que está gravado.
+    for (const cid of porPaciente.keys()) await recalcularSessoesRealizadas(cid);
+
+    res.json({
+      previa: false,
+      registrosCriados: dados.length,
+      pacientesAfetados: porPaciente.size,
+      porSituacao: Object.fromEntries(porSituacao),
+    });
+  })
+);
+
+// ---------------------------------------------------------------------------
+// SUSPENSÃO DE ATENDIMENTOS POR PERÍODO
+// ---------------------------------------------------------------------------
+
+/**
+ * Agendamentos atingidos por uma suspensão.
+ *
+ * Só entram os que AINDA NÃO TÊM DESFECHO (pendentes). Um atendimento que já
+ * foi marcado como realizado, falta ou cancelamento é fato consumado: suspender
+ * um período não pode reescrever o que já aconteceu dentro dele.
+ *
+ * ESCOPO PACIENTE atinge apenas os atendimentos INDIVIDUAIS da pessoa. Um
+ * encontro de grupo continua acontecendo para os demais integrantes — a
+ * ausência daquele participante é presença do encontro, não suspensão do grupo.
+ *
+ * ESCOPO PROFISSIONAL atinge tudo que ele conduz, individual e grupo: se quem
+ * conduz está afastado, o encontro não ocorre para ninguém.
+ */
+async function agendamentosDaSuspensao(susp: {
+  scope: string;
+  clientId?: string | null;
+  psicoId?: string | null;
+  startDate: Date;
+  endDate: Date;
+}) {
+  const janela = {
+    date: { gte: susp.startDate, lte: susp.endDate },
+    OR: [{ attendance: null }, { attendance: "PENDENTE" }],
+  };
+  if (susp.scope === "PACIENTE") {
+    return prisma.appointment.findMany({
+      where: { ...janela, clientId: susp.clientId ?? "", groupId: null },
+    });
+  }
+  return prisma.appointment.findMany({
+    where: { ...janela, psicoId: susp.psicoId ?? "" },
+  });
+}
+
+function textoDaSuspensao(
+  scope: string,
+  inicio: Date,
+  fim: Date,
+  motivo: string,
+  quantos: number
+): string {
+  const quem =
+    scope === "PACIENTE"
+      ? "por afastamento do paciente"
+      : "por afastamento do profissional";
+  const linhas = [
+    `Atendimentos suspensos ${quem}.`,
+    `Período: de ${formatBR(inicio)} até ${formatBR(fim)}.`,
+    `Motivo: ${motivo || "não informado"}.`,
+    `${quantos} atendimento(s) do período não foram realizados por este motivo.`,
+  ];
+  return linhas.join("\n");
+}
+
+app.get(
+  "/api/suspensoes",
+  asyncHandler(async (req, res) => {
+    const session = requireSession(req, res);
+    if (!session) return;
+
+    const todas = await prisma.suspensionPeriod.findMany({
+      orderBy: { startDate: "desc" },
+      take: 300,
+      include: { createdBy: true, psico: true },
+    });
+
+    /**
+     * Minimização de dados (LGPD Art. 6º, III): o MOTIVO só vai para quem
+     * precisa dele. É campo livre e costuma conter dado de saúde — "licença
+     * para tratamento", "cirurgia marcada". O Administrativo opera a agenda
+     * sem precisar saber a razão clínica do afastamento.
+     */
+    const podeVerMotivo = session.role === "SUPERVISOR";
+
+    res.json({
+      suspensoes: todas.map((s: any) => ({
+        id: s.id,
+        scope: s.scope,
+        clientId: s.clientId,
+        psicoId: s.psicoId,
+        psicoName: s.psico?.name ?? null,
+        startDate: toDateOnlyBRT(s.startDate),
+        endDate: toDateOnlyBRT(s.endDate),
+        reason:
+          podeVerMotivo || s.createdById === session.userId
+            ? decryptField(s.reasonEnc)
+            : undefined,
+        createdByName: s.createdBy?.name ?? "",
+        createdAt: toISO(s.createdAt),
+        revokedAt: s.revokedAt ? toISO(s.revokedAt) : null,
+      })),
+    });
+  })
+);
+
+app.post(
+  "/api/suspensoes",
+  asyncHandler(async (req, res) => {
+    const session = requireSession(req, res);
+    if (!session) return;
+    const b = req.body ?? {};
+
+    const scope = b.scope === "PACIENTE" ? "PACIENTE" : "PROFISSIONAL";
+    const inicio = startOfDayBRT(String(b.startDate ?? ""));
+    const fimDia = parseDateInput(b.endDate);
+    if (!inicio || !fimDia) {
+      res.status(400).json({ error: "Informe a data de início e a data de término." });
+      return;
+    }
+    // Fim do dia de término: um atendimento às 17h do último dia está dentro.
+    const fim = new Date(fimDia.getTime());
+    fim.setUTCHours(fim.getUTCHours() + 12);
+    if (fim < inicio) {
+      res.status(400).json({ error: "A data de término não pode ser anterior à de início." });
+      return;
+    }
+
+    const clientId = scope === "PACIENTE" ? String(b.clientId ?? "") : null;
+    const psicoId = scope === "PROFISSIONAL" ? String(b.psicoId ?? "") : null;
+    if (scope === "PACIENTE" && !clientId) {
+      res.status(400).json({ error: "Informe o paciente que será suspenso." });
+      return;
+    }
+    if (scope === "PROFISSIONAL" && !psicoId) {
+      res.status(400).json({ error: "Informe o profissional que será suspenso." });
+      return;
+    }
+
+    /**
+     * QUEM PODE SUSPENDER.
+     *
+     * O psicólogo suspende a PRÓPRIA agenda e os pacientes de quem é
+     * responsável. Suspender a agenda de um colega, ou o acompanhamento de um
+     * paciente de outro profissional, é decisão de gestão — fica com
+     * Supervisor e Administrativo, que é quem responde pela escala do setor.
+     */
+    const ehGestao = session.role === "SUPERVISOR" || session.role === "ADMIN";
+    if (!ehGestao) {
+      if (scope === "PROFISSIONAL" && psicoId !== session.userId) {
+        res.status(403).json({ error: "Você só pode suspender a sua própria agenda." });
+        return;
+      }
+      if (scope === "PACIENTE") {
+        const alvo = await prisma.client.findUnique({
+          where: { id: clientId! },
+          select: { assignedPsicoId: true },
+        });
+        if (alvo?.assignedPsicoId !== session.userId) {
+          res.status(403).json({ error: "Você só pode suspender pacientes sob sua responsabilidade." });
+          return;
+        }
+      }
+    }
+
+    const motivo = String(b.reason ?? "").trim();
+    const situacao = scope === "PACIENTE" ? "SUSPENSO_PACIENTE" : "SUSPENSO_PROFISSIONAL";
+
+    const susp = await prisma.suspensionPeriod.create({
+      data: {
+        scope,
+        clientId,
+        psicoId,
+        startDate: inicio,
+        endDate: fim,
+        reasonEnc: encryptField(motivo),
+        createdById: session.userId,
+      },
+    });
+
+    const afetados = await agendamentosDaSuspensao({
+      scope, clientId, psicoId, startDate: inicio, endDate: fim,
+    });
+
+    if (afetados.length) {
+      await prisma.appointment.updateMany({
+        where: { id: { in: afetados.map((a: any) => a.id) } },
+        data: { attendance: situacao },
+      });
+    }
+
+    /**
+     * Rascunhos pendentes do período.
+     *
+     * Ficariam cobrando para sempre uma evolução que nunca virá. Os VAZIOS são
+     * removidos porque a entrada de suspensão os substitui com mais
+     * informação; os que já têm texto escrito são preservados e apenas
+     * recebem a marcação, porque evolução escrita jamais é descartada.
+     */
+    const idsAfetados = afetados.map((a: any) => a.id);
+    if (idsAfetados.length) {
+      const rascunhos = await prisma.sessionRecord.findMany({
+        where: { appointmentId: { in: idsAfetados } },
+        include: { versions: true },
+      });
+      const vazios = rascunhos.filter(
+        (r: any) =>
+          !decryptField(r.notesEnc) &&
+          !decryptField(r.privateNotesEnc) &&
+          (r.versions ?? []).length === 0
+      );
+      if (vazios.length) {
+        await prisma.sessionRecord.deleteMany({ where: { id: { in: vazios.map((r: any) => r.id) } } });
+      }
+      const comTexto = rascunhos.filter((r: any) => !vazios.some((v: any) => v.id === r.id));
+      for (const r of comTexto) {
+        await prisma.sessionRecord.update({
+          where: { id: r.id },
+          data: { isDraft: false, attendance: situacao, suspensionId: susp.id },
+        });
+      }
+    }
+
+    /**
+     * UMA entrada de prontuário por paciente atingido, cobrindo o período
+     * inteiro — e não uma linha por semana ausente. É o registro que torna o
+     * intervalo explicável para quem ler o documento depois
+     * (Res. CFP nº 001/2009, art. 1º).
+     */
+    const pacientesAtingidos = new Set<string>();
+    for (const a of afetados) if (a.clientId) pacientesAtingidos.add(a.clientId);
+    if (scope === "PACIENTE" && clientId) pacientesAtingidos.add(clientId);
+
+    const autorDoRegistro = psicoId || session.userId;
+    const condutorValido = await prisma.user.findUnique({
+      where: { id: autorDoRegistro },
+      select: { role: true },
+    });
+    const psicoDoRegistro =
+      condutorValido && ["PSICO", "SUPERVISOR"].includes(condutorValido.role)
+        ? autorDoRegistro
+        : null;
+
+    for (const cid of pacientesAtingidos) {
+      const quantos = afetados.filter((a: any) => a.clientId === cid).length;
+      const dono =
+        psicoDoRegistro ??
+        (await prisma.client.findUnique({ where: { id: cid }, select: { assignedPsicoId: true } }))
+          ?.assignedPsicoId;
+      if (!dono) continue; // sem profissional identificável, não se cria registro clínico
+      await prisma.sessionRecord.create({
+        data: {
+          clientId: cid,
+          psicoId: dono,
+          date: inicio,
+          notesEnc: encryptField(textoDaSuspensao(scope, inicio, fimDia, motivo, quantos)),
+          isDraft: false,
+          attendance: situacao,
+          sessionType: "SUSPENSAO",
+          suspensionId: susp.id,
+        },
+      });
+      // Metainformação apenas — o motivo NUNCA entra na trilha de auditoria.
+      await logClinicalRecord(cid, actorOf(session), "REGISTRO", new Date());
+      await recalcularSessoesRealizadas(cid);
+    }
+
+    res.status(201).json({
+      suspensao: { id: susp.id },
+      agendamentosAfetados: afetados.length,
+      pacientesAtingidos: pacientesAtingidos.size,
+    });
+  })
+);
+
+app.delete(
+  "/api/suspensoes/:id",
+  asyncHandler(async (req, res) => {
+    const session = requireSession(req, res);
+    if (!session) return;
+
+    const susp = await prisma.suspensionPeriod.findUnique({ where: { id: req.params.id } });
+    if (!susp) {
+      res.status(404).json({ error: "Suspensão não encontrada." });
+      return;
+    }
+    if (susp.revokedAt) {
+      res.status(409).json({ error: "Esta suspensão já foi desfeita." });
+      return;
+    }
+    const ehGestao = session.role === "SUPERVISOR" || session.role === "ADMIN";
+    if (!ehGestao && susp.createdById !== session.userId) {
+      res.status(403).json({ error: "Só quem lançou a suspensão, o supervisor ou o administrativo podem desfazê-la." });
+      return;
+    }
+
+    /**
+     * DESFAZER = voltar ao estado anterior, sem apagar o que foi escrito.
+     *
+     * Os agendamentos marcados por ESTA suspensão voltam a pendente; as
+     * entradas que ELA criou saem do prontuário; e qualquer evolução escrita
+     * por um profissional é preservada, apenas perdendo a marcação de
+     * suspensão. O período em si permanece no banco, marcado como desfeito —
+     * desfazer é um ato, e atos sobre prontuário deixam rastro.
+     */
+    const situacao = susp.scope === "PACIENTE" ? "SUSPENSO_PACIENTE" : "SUSPENSO_PROFISSIONAL";
+    const janela: any = {
+      date: { gte: susp.startDate, lte: susp.endDate },
+      attendance: situacao,
+    };
+    if (susp.scope === "PACIENTE") { janela.clientId = susp.clientId; janela.groupId = null; }
+    else { janela.psicoId = susp.psicoId; }
+
+    const revertidos = await prisma.appointment.updateMany({
+      where: janela,
+      data: { attendance: "PENDENTE" },
+    });
+
+    const registros = await prisma.sessionRecord.findMany({
+      where: { suspensionId: susp.id },
+      include: { versions: true },
+    });
+
+    /**
+     * O QUE PODE SER APAGADO AO DESFAZER.
+     *
+     * Só o que o SISTEMA escreveu: a entrada-resumo da suspensão e os textos
+     * automáticos. Qualquer outra coisa é evolução de profissional e nunca é
+     * descartada — perde só a marcação.
+     *
+     * A verificação é por COMPARAÇÃO COM O TEXTO GERADO, não por "está vazio".
+     * Um critério de vazio apagaria uma evolução curta que o profissional
+     * escreveu e não chegou a versionar — destruindo registro clínico num
+     * comando de desfazer.
+     */
+    const geradoPeloSistema = (r: any): boolean => {
+      if (r.sessionType === "SUSPENSAO") return true;
+      const texto = decryptField(r.notesEnc).trim();
+      if (!texto) return true;
+      if (decryptField(r.privateNotesEnc).trim()) return false;
+      if ((r.versions ?? []).length > 0) return false;
+      const automaticos = Object.values(TEXTO_DO_REGISTRO).flatMap(t => [
+        t as string,
+        (t as string).replace("Atendimento", "Encontro do grupo"),
+      ]);
+      return automaticos.includes(texto);
+    };
+
+    const semTexto = registros.filter(geradoPeloSistema);
+    const clientesTocados = new Set<string>(registros.map((r: any) => r.clientId));
+
+    if (semTexto.length) {
+      await prisma.sessionRecord.deleteMany({ where: { id: { in: semTexto.map((r: any) => r.id) } } });
+    }
+    const preservados = registros.filter((r: any) => !semTexto.some((x: any) => x.id === r.id));
+    for (const r of preservados) {
+      await prisma.sessionRecord.update({
+        where: { id: r.id },
+        data: { attendance: null, isDraft: true, suspensionId: null },
+      });
+    }
+
+    await prisma.suspensionPeriod.update({
+      where: { id: susp.id },
+      data: { revokedAt: new Date(), revokedById: session.userId },
+    });
+
+    for (const cid of clientesTocados) await recalcularSessoesRealizadas(cid);
+
+    res.json({
+      agendamentosRevertidos: revertidos.count,
+      registrosRemovidos: semTexto.length,
+      registrosPreservados: preservados.length,
+    });
   })
 );
 
