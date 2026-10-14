@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from "react";
 import { Outlet, NavLink, useLocation, Navigate } from "react-router-dom";
-import { LayoutDashboard, Users, UserCog, Settings, Calendar, Clock, LogOut, ChevronDown, ChevronRight, ShieldAlert, Bell, X } from "lucide-react";
+import { LayoutDashboard, Users, UserCog, Settings, Calendar, Clock, LogOut, ChevronDown, ChevronRight, ShieldAlert, Bell, X, AlertTriangle } from "lucide-react";
 import { useStore } from "../contexts/StoreContext";
 import { cn } from "../lib/utils";
 import { APP_SHORT_NAME } from "../lib/branding";
@@ -19,7 +19,7 @@ interface ApptNotification {
 }
 
 export default function Layout() {
-  const { currentUser, setCurrentUser, users, appointments, clients, mustChangePassword } = useStore();
+  const { currentUser, setCurrentUser, users, appointments, clients, mustChangePassword, erroDeCarregamento, recarregar } = useStore();
   const location = useLocation();
   const [idleWarning, setIdleWarning] = useState(0);
   const [temVersaoNova, setTemVersaoNova] = useState(false);
@@ -343,6 +343,33 @@ export default function Layout() {
       {/* Main Content Area */}
       <main className="flex-1 flex flex-col min-w-0 overflow-y-auto pb-24 md:pb-0 pt-8 mt-1 lg:mt-5 bg-slate-50 relative">
         <div className="flex-1 w-full max-w-7xl mx-auto p-4 sm:p-6 lg:p-8">
+          {/*
+            AVISO DE FALHA DE CARREGAMENTO.
+
+            Fica acima de TODA tela, não só do painel. Sem ele, uma falha de
+            leitura do banco aparecia como "nenhum paciente cadastrado" — e
+            quem olhasse concluiria que os dados sumiram.
+          */}
+          {erroDeCarregamento && (
+            <div className="mb-6 bg-red-50 border-2 border-red-200 rounded-2xl p-5 flex flex-col sm:flex-row sm:items-center gap-4">
+              <div className="bg-red-100 text-red-700 p-3 rounded-xl shrink-0 self-start">
+                <AlertTriangle size={22} />
+              </div>
+              <div className="flex-1 min-w-0">
+                <h3 className="font-bold text-red-900">Falha ao carregar os dados</h3>
+                <p className="text-sm text-red-800 mt-1 leading-relaxed">{erroDeCarregamento}</p>
+                <p className="text-xs text-red-700 mt-2 font-semibold">
+                  O que você vê nas telas agora pode estar incompleto ou desatualizado.
+                </p>
+              </div>
+              <button
+                onClick={() => { void recarregar(); }}
+                className="shrink-0 bg-red-600 hover:bg-red-700 text-white font-bold px-5 py-2.5 rounded-xl text-sm transition-colors"
+              >
+                Tentar de novo
+              </button>
+            </div>
+          )}
           <Outlet />
         </div>
       </main>

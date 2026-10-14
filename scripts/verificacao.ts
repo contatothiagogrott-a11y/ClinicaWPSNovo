@@ -348,5 +348,69 @@ check("Log NÃO contém o telefone", serializado.includes("48999"), false);
   })(), true);
 }
 
+// ---------------------------------------------------------------------------
+// O BANCO PRECISA TER TUDO QUE O CÓDIGO ESPERA
+// ---------------------------------------------------------------------------
+// INCIDENTE QUE ORIGINOU ESTE TESTE: o schema.prisma ganhou uma tabela e uma
+// coluna novas, mas nenhuma migration foi criada para elas. A Vercel publicou,
+// o `prisma migrate deploy` não tinha nada para aplicar, e o banco ficou sem a
+// coluna. A partir daí TODA consulta de prontuário passou a falhar, o
+// /api/bootstrap devolveu erro 500 e o app exibiu as telas vazias — parecendo
+// que os pacientes tinham sumido.
+//
+// Nada disso chegou perto de um teste, porque o código compilava e os testes
+// rodavam sem tocar no banco. Este teste compara o schema com as migrations:
+// se houver tabela no schema que nenhuma migration cria, ele falha AQUI, antes
+// de publicar.
+{
+  const fs = await import("fs");
+  const path = await import("path");
+
+  const schema = fs.readFileSync("prisma/schema.prisma", "utf-8");
+  const modelos = [...schema.matchAll(/^model\s+(\w+)\s*\{/gm)].map(m => m[1]);
+
+  const dirMigrations = "prisma/migrations";
+  let sqlDeTodas = "";
+  if (fs.existsSync(dirMigrations)) {
+    for (const pasta of fs.readdirSync(dirMigrations)) {
+      const arquivo = path.join(dirMigrations, pasta, "migration.sql");
+      if (fs.existsSync(arquivo)) sqlDeTodas += fs.readFileSync(arquivo, "utf-8") + "\n";
+    }
+  }
+
+  // A migration inicial (a que cria User e Client) vive no repositório do
+  // GitHub, não nas cópias de trabalho. Sem ela, a conferência completa daria
+  // falso alarme — então o teste só roda no repositório de verdade.
+  const temBaseline = /CREATE TABLE\s+(IF NOT EXISTS\s+)?"User"/i.test(sqlDeTodas);
+
+  if (!sqlDeTodas.trim() || !temBaseline) {
+    console.log(
+      "AVISO | Cópia sem a migration inicial — conferência completa do banco pulada.\n" +
+      "        No repositório do GitHub este teste roda por inteiro e falha se\n" +
+      "        faltar migration para alguma tabela do schema."
+    );
+  } else {
+    const semMigration = modelos.filter(
+      m => !new RegExp(`CREATE TABLE\\s+(IF NOT EXISTS\\s+)?"${m}"`, "i").test(sqlDeTodas)
+    );
+    check(
+      `Banco: toda tabela do schema tem migration${semMigration.length ? " — FALTAM: " + semMigration.join(", ") : ""}`,
+      semMigration.length,
+      0
+    );
+
+    // Colunas acrescentadas depois da criação da tabela: as que o código novo
+    // usa e que já causaram o incidente.
+    const colunasCriticas: Array<[string, string]> = [
+      ["SessionRecord", "suspensionId"],
+    ];
+    for (const [tabela, coluna] of colunasCriticas) {
+      const temNoAlter = new RegExp(`ALTER TABLE\\s+"${tabela}"[^;]*"${coluna}"`, "is").test(sqlDeTodas);
+      const temNoCreate = new RegExp(`CREATE TABLE\\s+(IF NOT EXISTS\\s+)?"${tabela}"[^;]*"${coluna}"`, "is").test(sqlDeTodas);
+      check(`Banco: ${tabela}.${coluna} existe em alguma migration`, temNoAlter || temNoCreate, true);
+    }
+  }
+}
+
 console.log(`\n${falhas === 0 ? "TODOS OS TESTES PASSARAM" : falhas + " FALHA(S)"}\n`);
 process.exit(falhas === 0 ? 0 : 1);

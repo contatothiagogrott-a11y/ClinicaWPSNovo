@@ -28,6 +28,11 @@ const EMPTY_CONFIG: AppConfig = { affiliations: [], allocations: [], rooms: [], 
 
 interface StoreContextType extends StoreState {
   isLoading: boolean;
+  /** Mensagem de falha de carregamento, quando houver. Null = tudo certo. */
+  erroDeCarregamento: string | null;
+  /** Falso enquanto nenhuma carga tiver dado certo: a tela não pode dizer "nada cadastrado". */
+  jaCarregouAlgumaVez: boolean;
+  recarregar: () => Promise<void>;
   login: (email: string, password: string) => Promise<{ ok: boolean; error?: string }>;
   setCurrentUser: (user: User | null) => void; // setCurrentUser(null) = logout
   addClient: (client: Omit<Client, "id" | "history" | "completedSessions">) => Promise<void>;
@@ -172,6 +177,24 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
   const [lastSyncedAt, setLastSyncedAt] = useState<Date | null>(null);
   const [mustChangePassword, setMustChangePassword] = useState(false);
 
+  /**
+   * FALHA AO CARREGAR — precisa ser VISÍVEL.
+   *
+   * INCIDENTE QUE ORIGINOU ISTO: uma coluna faltando no banco fez
+   * /api/bootstrap devolver erro 500. O `catch` abaixo tratava só 401 e 423 e
+   * engolia o resto em silêncio — o app continuava com as listas vazias do
+   * estado inicial e exibia "nenhum paciente cadastrado".
+   *
+   * Num sistema clínico isso é perigoso de verdade: o profissional conclui que
+   * o paciente não existe, ou que perdeu os dados. Lista vazia e falha de
+   * carregamento são coisas diferentes e precisam parecer diferentes.
+   *
+   * LGPD Art. 6º, V (qualidade dos dados): exibir ausência onde houve falha de
+   * leitura apresenta ao usuário uma informação falsa sobre o próprio acervo.
+   */
+  const [erroDeCarregamento, setErroDeCarregamento] = useState<string | null>(null);
+  const [jaCarregouAlgumaVez, setJaCarregouAlgumaVez] = useState(false);
+
   const applyBootstrap = (data: BootstrapResponse) => {
     setUsers(data.users);
     setClients(data.clients);
@@ -194,15 +217,31 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     try {
       const data = await api.get<BootstrapResponse>("/api/bootstrap");
       applyBootstrap(data);
+      setErroDeCarregamento(null);
+      setJaCarregouAlgumaVez(true);
     } catch (err) {
       if (err instanceof ApiError && err.status === 401) {
         setCurrentUserState(null);
+        return;
       }
       // 423 = senha provisória pendente de troca. Não é erro: o app mostra a
       // tela de troca de senha e só libera o restante depois disso.
       if (err instanceof ApiError && err.status === 423) {
         setMustChangePassword(true);
+        return;
       }
+      /**
+       * Qualquer outra falha é ERRO DE VERDADE e precisa aparecer.
+       *
+       * Os dados em memória são MANTIDOS: se a última carga deu certo, é
+       * melhor mostrar o que se tinha, com aviso de que está desatualizado, do
+       * que esvaziar a tela. E nenhuma tela deve gravar nada enquanto isso.
+       */
+      setErroDeCarregamento(
+        err instanceof ApiError && err.status >= 500
+          ? "O servidor não conseguiu ler o banco de dados. Os seus dados não foram perdidos — o sistema é que não está conseguindo carregá-los. Avise o responsável técnico antes de cadastrar qualquer coisa."
+          : "Não foi possível carregar os dados do servidor. Verifique a conexão e tente novamente."
+      );
     }
   }, []);
 
@@ -704,6 +743,9 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
         clinicalClientIds,
         currentUser,
         isLoading,
+        erroDeCarregamento,
+        jaCarregouAlgumaVez,
+        recarregar: refreshAll,
         mustChangePassword,
         lastSyncedAt,
         syncNow: syncIfIdle,
